@@ -28,17 +28,48 @@ def _check_keys(config: Config) -> list[str]:
     return problems
 
 
+_instance_mutex = None
+
+
+def already_running() -> bool:
+    """Return True when another Mirabel Voice process holds the app mutex.
+
+    The mutex handle stays open for the life of this process, so the next
+    launch sees it. A second running copy would paste every dictation twice.
+    """
+    global _instance_mutex  # noqa: PLW0603 - the handle must outlive this call
+    try:
+        import ctypes
+
+        kernel32 = ctypes.windll.kernel32
+        _instance_mutex = kernel32.CreateMutexW(
+            None, False, "Local\\MirabelVoiceSingleInstance"
+        )
+        return kernel32.GetLastError() == 183  # ERROR_ALREADY_EXISTS
+    except Exception:  # noqa: BLE001 - never block startup over the guard
+        return False
+
+
 def _show_error_box(message: str) -> None:
     """Show a Windows message box, so errors are visible without a console."""
+    _show_box(
+        f"{message}\n\nRun setup.ps1 to store the keys, then start "
+        "Mirabel Voice again.",
+        icon=0x10,  # MB_ICONERROR
+    )
+
+
+def _show_info_box(message: str) -> None:
+    """Show an informational Windows message box."""
+    _show_box(message, icon=0x40)  # MB_ICONINFORMATION
+
+
+def _show_box(message: str, icon: int) -> None:
     try:
         import ctypes
 
         ctypes.windll.user32.MessageBoxW(
-            None,
-            f"{message}\n\nRun setup.ps1 to store the keys, then start "
-            "Mirabel Voice again.",
-            "Mirabel Voice cannot start",
-            0x10,  # MB_ICONERROR
+            None, message, "Mirabel Voice", icon
         )
     except Exception:  # noqa: BLE001 - a failed dialog must not mask the exit code
         pass
@@ -85,6 +116,16 @@ def main(argv: list[str] | None = None) -> int:
 
         for device in list_input_devices():
             print(f"[{device['index']}] {device['name']}")
+        return 0
+
+    if already_running():
+        message = (
+            "Mirabel Voice is already running. Look for the microphone "
+            "icon near the clock (click the ^ arrow if it is hidden)."
+        )
+        print(message, file=sys.stderr)
+        if not args.no_tray:
+            _show_info_box(message)
         return 0
 
     load_api_keys()
