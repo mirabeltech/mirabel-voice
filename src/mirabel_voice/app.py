@@ -16,17 +16,22 @@ from __future__ import annotations
 
 import logging
 import threading
+import time
 from typing import Callable
 
 from .audio import Recorder
 from .cleanup import Cleaner
 from .config import Config
 from .dictionary import all_words
-from .hotkey import HotkeyListener
+from .hotkey import HotkeyListener, UnknownHotkeyError
 from .inject import TextInjector
 from .transcribe import TranscriptionError, Transcriber
 
 log = logging.getLogger(__name__)
+
+# The wait before a re-paste, so the user can release the combo keys.
+# A paste sent while Shift and Alt are still down becomes Ctrl+Shift+Alt+V.
+PASTE_LAST_DELAY_SECONDS = 0.4
 
 STATE_IDLE = "idle"
 STATE_RECORDING = "recording"
@@ -73,8 +78,8 @@ class VoiceApp:
         self.state = STATE_IDLE
         self.last_text = ""
         self._listener: HotkeyListener | None = None
-        self._extra_hotkeys = None
         self._worker: threading.Thread | None = None
+        self._paste_thread: threading.Thread | None = None
 
     def _set_state(self, state: str, detail: str = "") -> None:
         """Record the new state and tell the tray icon about it."""
@@ -96,21 +101,22 @@ class VoiceApp:
         except Exception:  # noqa: BLE001 - sound is optional
             pass
 
-    def start_recording(self) -> None:
-        """Open the microphone."""
+    def start_recording(self) -> bool:
+        """Open the microphone. Return True when a recording started."""
         if self.state == STATE_RECORDING:
-            return
+            return True
         if self._worker is not None and self._worker.is_alive():
             log.info("The previous transcript is still in progress.")
-            return
+            return False
         try:
             self.recorder.start()
         except Exception as error:  # noqa: BLE001
             log.exception("The microphone did not open.")
             self._set_state(STATE_ERROR, f"Microphone error: {error}")
-            return
+            return False
         self._set_state(STATE_RECORDING)
         self._beep(880, 60)
+        return True
 
     def stop_recording(self) -> None:
         """Close the microphone and process the audio in a worker thread."""
@@ -136,13 +142,25 @@ class VoiceApp:
         self._worker.start()
 
     def paste_last(self) -> None:
-        """Send the previous transcript to the active window again."""
+        """Send the previous transcript to the active window again.
+
+        The paste runs on its own thread after a short wait, so the user
+        can release the combo keys and the keyboard hook stays responsive.
+        """
         if not self.last_text:
             return
-        try:
-            self.injector.send(self.last_text)
-        except Exception:  # noqa: BLE001 - a re-paste must never crash the app
-            log.exception("The re-paste failed.")
+
+        def worker() -> None:
+            time.sleep(PASTE_LAST_DELAY_SECONDS)
+            try:
+                self.injector.send(self.last_text)
+            except Exception:  # noqa: BLE001 - a re-paste must never crash the app
+                log.exception("The re-paste failed.")
+
+        self._paste_thread = threading.Thread(
+            target=worker, name="mirabel-voice-paste-last", daemon=True
+        )
+        self._paste_thread.start()
 
     def cancel_recording(self) -> None:
         """Throw away the current recording."""
@@ -186,38 +204,29 @@ class VoiceApp:
             on_start=self.start_recording,
             on_stop=self.stop_recording,
             on_cancel=self.cancel_recording,
-            on_lock=lambda: self._set_state(
-                STATE_RECORDING, "Hands-free. Press the hotkey to stop."
-            ),
+            on_lock=self._show_hands_free,
         )
+        spec = self.config.paste_last_hotkey
+        if spec:
+            try:
+                self._listener.add_binding(spec, self.paste_last)
+            except UnknownHotkeyError as error:
+                log.warning("The paste-last hotkey is not valid: %s", error)
         self._listener.start()
-        self._start_paste_last_binding()
         log.info(
             "Ready. Hotkey: %s (%s mode).", self.config.hotkey, self.config.mode
         )
 
-    def _start_paste_last_binding(self) -> None:
-        """Register the paste-last key combination, if one is set."""
-        spec = self.config.paste_last_hotkey
-        if not spec:
-            return
-        from pynput import keyboard
-
-        try:
-            self._extra_hotkeys = keyboard.GlobalHotKeys({spec: self.paste_last})
-            self._extra_hotkeys.start()
-        except ValueError as error:
-            log.warning("The paste-last hotkey '%s' is not valid: %s", spec, error)
-            self._extra_hotkeys = None
+    def _show_hands_free(self) -> None:
+        """Update the tray only when a recording is really running."""
+        if self.state == STATE_RECORDING:
+            self._set_state(STATE_RECORDING, "Hands-free. Press the hotkey to stop.")
 
     def stop(self) -> None:
-        """Stop the hotkey listeners and close the microphone."""
+        """Stop the hotkey listener and close the microphone."""
         if self._listener is not None:
             self._listener.stop()
             self._listener = None
-        if self._extra_hotkeys is not None:
-            self._extra_hotkeys.stop()
-            self._extra_hotkeys = None
         if self.recorder.is_recording:
             self.recorder.cancel()
 

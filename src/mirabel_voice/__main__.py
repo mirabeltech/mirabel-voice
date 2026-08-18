@@ -28,6 +28,22 @@ def _check_keys(config: Config) -> list[str]:
     return problems
 
 
+def _show_error_box(message: str) -> None:
+    """Show a Windows message box, so errors are visible without a console."""
+    try:
+        import ctypes
+
+        ctypes.windll.user32.MessageBoxW(
+            None,
+            f"{message}\n\nRun setup.ps1 to store the keys, then start "
+            "Mirabel Voice again.",
+            "Mirabel Voice cannot start",
+            0x10,  # MB_ICONERROR
+        )
+    except Exception:  # noqa: BLE001 - a failed dialog must not mask the exit code
+        pass
+
+
 def main(argv: list[str] | None = None) -> int:
     """Start the app. Return the process exit code."""
     parser = argparse.ArgumentParser(
@@ -73,9 +89,13 @@ def main(argv: list[str] | None = None) -> int:
 
     load_api_keys()
     config = Config.load()
-    for problem in _check_keys(config):
+    problems = _check_keys(config)
+    for problem in problems:
         print(f"Setup problem: {problem}", file=sys.stderr)
-    if any("OPENAI_API_KEY" in p for p in _check_keys(config)):
+    if any("OPENAI_API_KEY" in p for p in problems):
+        # Under pythonw (the Desktop shortcut) stderr is invisible, so a
+        # silent exit would look like the app simply not starting.
+        _show_error_box("\n\n".join(problems))
         return 2
 
     app = VoiceApp(config)

@@ -10,26 +10,37 @@ Write-Host ""
 Write-Host "Mirabel Voice setup" -ForegroundColor Cyan
 Write-Host "-------------------"
 
-# 1. Find Python.
-$python = Get-Command python -ErrorAction SilentlyContinue
-if (-not $python) {
-    Write-Host "Python is not installed. Install Python 3.10 or newer from python.org, then run this script again." -ForegroundColor Red
+# 1. Find a real Python 3.10+. On a fresh Windows PC, "python" can be a
+# Microsoft Store stub that prints nothing and installs nothing.
+$installMessage = "Python 3.10 or newer is not installed. Install it from python.org (check 'Add python.exe to PATH'), then run this script again."
+$version = ""
+try { $version = & python -c "import sys; print('{}.{}'.format(*sys.version_info[:2]))" 2>$null } catch {}
+if (-not $version) {
+    Write-Host $installMessage -ForegroundColor Red
     exit 1
 }
-$version = & python -c "import sys; print('{}.{}'.format(*sys.version_info[:2]))"
+$parts = $version.Trim().Split(".")
+if ([int]$parts[0] -lt 3 -or ([int]$parts[0] -eq 3 -and [int]$parts[1] -lt 10)) {
+    Write-Host "Found Python $version, but $installMessage" -ForegroundColor Red
+    exit 1
+}
 Write-Host "Found Python $version"
 
-# 2. Create the private environment for the app.
+# 2. Create the private environment for the app (first run only).
 $venv = Join-Path $root ".venv"
-if (-not (Test-Path (Join-Path $venv "Scripts\python.exe"))) {
+$venvPython = Join-Path $venv "Scripts\python.exe"
+if (-not (Test-Path $venvPython)) {
     Write-Host "Creating the app environment..."
     & python -m venv $venv
+    if (-not (Test-Path $venvPython)) {
+        Write-Host "The environment was not created. $installMessage" -ForegroundColor Red
+        exit 1
+    }
+    & $venvPython -m pip install --quiet --upgrade pip
 }
-$venvPython = Join-Path $venv "Scripts\python.exe"
 
 # 3. Install the app.
 Write-Host "Installing Mirabel Voice (this can take a minute)..."
-& $venvPython -m pip install --quiet --upgrade pip
 & $venvPython -m pip install --quiet -e $root
 Write-Host "Installed." -ForegroundColor Green
 

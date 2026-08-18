@@ -162,6 +162,64 @@ def test_escape_cancels_and_unlocks_a_locked_recording():
     assert listener.is_active is False
 
 
+def test_a_quick_repress_after_a_long_dictation_does_not_lock():
+    listener, events, clock = make_locking_listener()
+    tap(listener, clock, duration=20.0)   # a real dictation, held for 20 s
+    clock.tick(0.2)                       # user immediately starts the next one
+    listener.handle_press(Key.ctrl)
+    listener.handle_press(Key.cmd)
+    assert listener.is_locked is False
+    clock.tick(3.0)
+    listener.handle_release(Key.cmd)      # release must still stop it
+    assert events.log == ["start", "stop", "start", "stop"]
+
+
+def test_a_refused_start_leaves_the_listener_inactive():
+    events = Events()
+    clock = FakeClock()
+
+    def refusing_start():
+        events.log.append("start-refused")
+        return False
+
+    listener = HotkeyListener(
+        hotkey="ctrl+win",
+        mode="hold",
+        on_start=refusing_start,
+        on_stop=events.stop,
+        clock=clock,
+    )
+    listener.handle_press(Key.ctrl)
+    listener.handle_press(Key.cmd)
+    assert listener.is_active is False
+    assert listener.is_locked is False
+    listener.handle_release(Key.cmd)
+    assert events.log == ["start-refused"]  # no stop for a start that failed
+
+
+def test_an_extra_binding_fires_when_its_combo_is_complete():
+    fired = []
+    listener, events, clock = make_locking_listener()
+    listener.add_binding("shift+alt+z", lambda: fired.append("paste"))
+    listener.handle_press(Key.shift)
+    listener.handle_press(Key.alt)
+    assert fired == []
+    listener.handle_press(KeyCode.from_char("z"))
+    assert fired == ["paste"]
+    listener.handle_press(KeyCode.from_char("z"))  # OS key repeat
+    assert fired == ["paste"]
+    listener.handle_release(KeyCode.from_char("z"))
+    listener.handle_press(KeyCode.from_char("z"))  # a second deliberate press
+    assert fired == ["paste", "paste"]
+    assert events.log == []  # the main hotkey never engaged
+
+
+def test_an_extra_binding_uses_the_same_grammar_as_the_main_hotkey():
+    listener, events, clock = make_locking_listener()
+    with pytest.raises(UnknownHotkeyError):
+        listener.add_binding("<shift>+<alt>+z", lambda: None)
+
+
 def test_toggle_mode_switches_on_each_full_press():
     listener, events = make_listener(mode="toggle")
     listener.handle_press(Key.ctrl)

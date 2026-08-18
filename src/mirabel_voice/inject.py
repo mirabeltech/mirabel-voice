@@ -11,6 +11,7 @@ Two methods are available:
 from __future__ import annotations
 
 import logging
+import threading
 import time
 
 log = logging.getLogger(__name__)
@@ -33,6 +34,9 @@ class TextInjector:
         self.restore_clipboard = restore_clipboard
         self._keyboard = keyboard
         self._clipboard = clipboard
+        # One paste at a time: the dictation worker and a paste-last press
+        # must not interleave their clipboard copy/paste/restore steps.
+        self._send_lock = threading.Lock()
 
     @property
     def keyboard(self):  # noqa: ANN201
@@ -56,14 +60,15 @@ class TextInjector:
         """Insert the text at the cursor of the active window."""
         if not text:
             return
-        if self.method == "type":
-            self._send_as_keystrokes(text)
-            return
-        try:
-            self._send_as_paste(text)
-        except Exception as error:  # noqa: BLE001 - a paste can fail on locked clipboards
-            log.warning("Paste failed, sending keystrokes instead: %s", error)
-            self._send_as_keystrokes(text)
+        with self._send_lock:
+            if self.method == "type":
+                self._send_as_keystrokes(text)
+                return
+            try:
+                self._send_as_paste(text)
+            except Exception as error:  # noqa: BLE001 - a paste can fail on locked clipboards
+                log.warning("Paste failed, sending keystrokes instead: %s", error)
+                self._send_as_keystrokes(text)
 
     def _send_as_paste(self, text: str) -> None:
         """Copy the text and send Ctrl+V."""

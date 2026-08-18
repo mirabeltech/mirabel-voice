@@ -134,11 +134,15 @@ def test_an_injection_failure_reports_an_error():
     assert app.state == STATE_ERROR
 
 
-def test_paste_last_sends_the_previous_transcript_again():
+def test_paste_last_sends_the_previous_transcript_again(monkeypatch):
+    import mirabel_voice.app as app_module
+
+    monkeypatch.setattr(app_module, "PASTE_LAST_DELAY_SECONDS", 0)
     injector = CapturingInjector()
     app = make_app(injector=injector)
     run_cycle(app)
     app.paste_last()
+    app._paste_thread.join(timeout=5)
     assert injector.sent == ["Hello world.", "Hello world."]
 
 
@@ -146,8 +150,25 @@ def test_paste_last_before_any_dictation_does_nothing():
     injector = CapturingInjector()
     app = make_app(injector=injector)
     app.paste_last()
+    assert app._paste_thread is None
     assert injector.sent == []
     assert app.state == STATE_IDLE
+
+
+def test_a_refused_start_reports_false_to_the_listener():
+    app = make_app()
+    app.start_recording()
+    app.stop_recording()          # a worker is now processing
+    app._worker.join(timeout=5)   # let it finish to keep the test honest
+    assert app.start_recording() is True
+
+    class NeverFinishing:
+        def is_alive(self):
+            return True
+
+    app._worker = NeverFinishing()
+    app.state = STATE_IDLE
+    assert app.start_recording() is False
 
 
 def test_cancel_discards_the_recording():

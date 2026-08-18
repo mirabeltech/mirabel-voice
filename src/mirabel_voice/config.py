@@ -50,7 +50,8 @@ def load_api_keys(base: Path | None = None) -> None:
     if not target.exists():
         return
     try:
-        raw = json.loads(target.read_text(encoding="utf-8"))
+        # utf-8-sig also accepts the BOM that Windows PowerShell writes.
+        raw = json.loads(target.read_text(encoding="utf-8-sig"))
     except (OSError, json.JSONDecodeError):
         return
     for field_name, env_name in KEY_FIELDS.items():
@@ -80,7 +81,7 @@ class Config:
             transcript if Claude is slower than this value.
         custom_words: Names and terms that the models must spell correctly.
         paste_last_hotkey: The key combination that pastes the last
-            transcript again. Uses the pynput GlobalHotKeys format.
+            transcript again. Uses the same format as hotkey.
         inject_method: "paste" uses the clipboard and Ctrl+V. "type" sends
             each character as a keystroke.
         restore_clipboard: True puts your old clipboard content back after
@@ -100,7 +101,7 @@ class Config:
     cleanup_model: str = "claude-haiku-4-5"
     cleanup_timeout: float = 20.0
     custom_words: list[str] = field(default_factory=list)
-    paste_last_hotkey: str = "<shift>+<alt>+z"
+    paste_last_hotkey: str = "shift+alt+z"
     inject_method: str = "paste"
     restore_clipboard: bool = True
     play_sounds: bool = True
@@ -113,7 +114,7 @@ class Config:
             cfg = cls()
             cfg.save(target)
             return cfg
-        raw = json.loads(target.read_text(encoding="utf-8"))
+        raw = json.loads(target.read_text(encoding="utf-8-sig"))
         known = {f.name for f in fields(cls)}
         return cls(**{k: v for k, v in raw.items() if k in known})
 

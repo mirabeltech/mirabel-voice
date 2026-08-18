@@ -46,10 +46,8 @@ class FakeMessagesAPI:
 
 
 class FakeAnthropic:
-    def __init__(self, response=None, error=None, beta_error=None):
+    def __init__(self, response=None, error=None):
         self.messages = FakeMessagesAPI(response, error)
-        self.beta_messages = FakeMessagesAPI(response, beta_error or error)
-        self.beta = SimpleNamespace(messages=self.beta_messages)
         self.options = []
 
     def with_options(self, **kwargs):

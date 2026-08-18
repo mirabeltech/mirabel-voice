@@ -48,13 +48,15 @@ In the same `config.json`, change `language`:
 "language": "hi"
 ```
 
-Use `"hi"` for Hindi, `"te"` for Telugu, `"en"` for English. Your text comes back in the language you spoke — mixed English-Hindi stays mixed.
+Use `"hi"` for Hindi, `"te"` for Telugu, `"en"` for English. The cleanup step never translates what you said.
+
+If you often mix languages in one sentence (English-Hindi, for example), use `"language": null` instead. The transcriber then detects the language itself instead of forcing one.
 
 ## Good to know
 
 - **Privacy:** your audio is processed in the cloud (OpenAI for speech, Anthropic for cleanup) under terms that exclude training on your data. The app saves nothing to disk — no audio, no history.
 - **Best for prose, not code:** speaking prompts, emails, and messages works great. Dictating brackets and symbols does not.
-- The hotkey can be changed in `config.json` (`"hotkey": "ctrl+win"`) — for example `"f9"` or `"ctrl+alt+space"`.
+- The hotkeys can be changed in `config.json` — for example `"hotkey": "f9"` or `"paste_last_hotkey": "ctrl+alt+v"`. Both use the same format: key names joined with `+`.
 
 ## Something is wrong?
 

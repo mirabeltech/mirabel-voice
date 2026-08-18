@@ -11,8 +11,7 @@ def test_load_writes_defaults_when_no_file_exists(tmp_path):
     assert config.mode == "hold"
     assert config.cleanup_enabled is True
     assert config.cleanup_model == "claude-haiku-4-5"
-    assert config.paste_last_hotkey == "<shift>+<alt>+z"
-    assert not hasattr(config, "cleanup_effort")
+    assert config.paste_last_hotkey == "shift+alt+z"
 
 
 def test_save_and_load_round_trip(tmp_path):
@@ -47,6 +46,16 @@ def test_environment_variables_win_over_the_keys_file(tmp_path, monkeypatch):
     import os
 
     assert os.environ["OPENAI_API_KEY"] == "sk-from-env"
+
+
+def test_keys_written_by_powershell_with_a_bom_still_load(tmp_path, monkeypatch):
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    payload = json.dumps({"openai_api_key": "sk-bom"}).encode("utf-8")
+    (tmp_path / "keys.json").write_bytes(b"\xef\xbb\xbf" + payload)
+    load_api_keys(tmp_path)
+    import os
+
+    assert os.environ["OPENAI_API_KEY"] == "sk-bom"
 
 
 def test_a_missing_keys_file_is_not_an_error(tmp_path, monkeypatch):
