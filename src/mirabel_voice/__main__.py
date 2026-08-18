@@ -8,7 +8,7 @@ import os
 import sys
 
 from .app import VoiceApp
-from .config import Config, config_path
+from .config import Config, config_path, load_api_keys
 
 LOG_FORMAT = "%(asctime)s  %(levelname)-7s %(message)s"
 
@@ -71,6 +71,7 @@ def main(argv: list[str] | None = None) -> int:
             print(f"[{device['index']}] {device['name']}")
         return 0
 
+    load_api_keys()
     config = Config.load()
     for problem in _check_keys(config):
         print(f"Setup problem: {problem}", file=sys.stderr)

@@ -29,6 +29,36 @@ def config_path() -> Path:
     return config_dir() / "config.json"
 
 
+def keys_path(base: Path | None = None) -> Path:
+    """Return the full path of the API keys file."""
+    return (base or config_dir()) / "keys.json"
+
+
+KEY_FIELDS = {
+    "openai_api_key": "OPENAI_API_KEY",
+    "anthropic_api_key": "ANTHROPIC_API_KEY",
+}
+
+
+def load_api_keys(base: Path | None = None) -> None:
+    """Read keys.json and fill the missing environment variables.
+
+    An environment variable that is already set always wins. A missing or
+    unreadable keys file is not an error.
+    """
+    target = keys_path(base)
+    if not target.exists():
+        return
+    try:
+        raw = json.loads(target.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return
+    for field_name, env_name in KEY_FIELDS.items():
+        value = raw.get(field_name)
+        if value and not os.environ.get(env_name):
+            os.environ[env_name] = str(value)
+
+
 @dataclass
 class Config:
     """All user settings.
@@ -46,10 +76,11 @@ class Config:
         language: A two-letter language code, or None to detect it.
         cleanup_enabled: True sends the transcript to Claude for a cleanup.
         cleanup_model: The Claude model that does the cleanup.
-        cleanup_effort: Claude thinking effort. "low" keeps the delay small.
         cleanup_timeout: Seconds to wait for Claude. The app uses the raw
             transcript if Claude is slower than this value.
         custom_words: Names and terms that the models must spell correctly.
+        paste_last_hotkey: The key combination that pastes the last
+            transcript again. Uses the pynput GlobalHotKeys format.
         inject_method: "paste" uses the clipboard and Ctrl+V. "type" sends
             each character as a keystroke.
         restore_clipboard: True puts your old clipboard content back after
@@ -57,7 +88,7 @@ class Config:
         play_sounds: True plays a short beep on start and on stop.
     """
 
-    hotkey: str = "ctrl_r"
+    hotkey: str = "ctrl+win"
     mode: str = "hold"
     sample_rate: int = 16000
     input_device: str | int | None = None
@@ -66,10 +97,10 @@ class Config:
     transcribe_model: str = "whisper-1"
     language: str | None = "en"
     cleanup_enabled: bool = True
-    cleanup_model: str = "claude-opus-5"
-    cleanup_effort: str = "low"
+    cleanup_model: str = "claude-haiku-4-5"
     cleanup_timeout: float = 20.0
     custom_words: list[str] = field(default_factory=list)
+    paste_last_hotkey: str = "<shift>+<alt>+z"
     inject_method: str = "paste"
     restore_clipboard: bool = True
     play_sounds: bool = True

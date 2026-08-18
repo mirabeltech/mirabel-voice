@@ -4,10 +4,12 @@ The listener works in every program, not only in a Mirabel Voice window.
 
 Hotkey names use the pynput names. Examples:
 
-* "ctrl_r" - the right Ctrl key (the default)
-* "alt_r" - the right Alt key
+* "ctrl+win" - the Ctrl and Windows keys together (the default)
+* "ctrl_r" - the right Ctrl key
 * "f9" - a function key
 * "ctrl+alt+space" - a combination. Every key must be down at the same time.
+
+The names "win", "windows", and "super" all mean the Windows key.
 """
 
 from __future__ import annotations
@@ -19,6 +21,9 @@ log = logging.getLogger(__name__)
 
 MODE_HOLD = "hold"
 MODE_TOGGLE = "toggle"
+
+# pynput names the Windows key "cmd". Accept the names people expect.
+KEY_ALIASES = {"win": "cmd", "windows": "cmd", "super": "cmd"}
 
 
 class UnknownHotkeyError(ValueError):
@@ -38,6 +43,7 @@ def parse_hotkey(spec: str):  # noqa: ANN201 - returns a frozenset of pynput key
         name = part.strip()
         if not name:
             continue
+        name = KEY_ALIASES.get(name, name)
         if hasattr(Key, name):
             keys.add(getattr(Key, name))
         elif len(name) == 1:

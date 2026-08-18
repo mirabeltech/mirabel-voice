@@ -60,7 +60,6 @@ class VoiceApp:
         )
         self.cleaner = cleaner or Cleaner(
             model=config.cleanup_model,
-            effort=config.cleanup_effort,
             timeout=config.cleanup_timeout,
             custom_words=config.custom_words,
         )
