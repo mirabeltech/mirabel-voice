@@ -1,0 +1,84 @@
+"""Stand-in objects for the network and the keyboard."""
+
+from __future__ import annotations
+
+from types import SimpleNamespace
+
+
+class FakeTranscriptionsAPI:
+    def __init__(self, text="um so this is a test", error=None):
+        self.text = text
+        self.error = error
+        self.calls = []
+
+    def create(self, **kwargs):
+        self.calls.append(kwargs)
+        if self.error is not None:
+            raise self.error
+        return self.text
+
+
+class FakeOpenAI:
+    def __init__(self, text="um so this is a test", error=None):
+        self.transcriptions = FakeTranscriptionsAPI(text, error)
+        self.audio = SimpleNamespace(transcriptions=self.transcriptions)
+
+
+def text_response(text, stop_reason="end_turn"):
+    """Build an object shaped like an Anthropic response."""
+    return SimpleNamespace(
+        content=[SimpleNamespace(type="text", text=text)],
+        stop_reason=stop_reason,
+    )
+
+
+class FakeMessagesAPI:
+    def __init__(self, response=None, error=None):
+        self.response = response
+        self.error = error
+        self.calls = []
+
+    def create(self, **kwargs):
+        self.calls.append(kwargs)
+        if self.error is not None:
+            raise self.error
+        return self.response
+
+
+class FakeAnthropic:
+    def __init__(self, response=None, error=None, beta_error=None):
+        self.messages = FakeMessagesAPI(response, error)
+        self.beta_messages = FakeMessagesAPI(response, beta_error or error)
+        self.beta = SimpleNamespace(messages=self.beta_messages)
+        self.options = []
+
+    def with_options(self, **kwargs):
+        self.options.append(kwargs)
+        return self
+
+
+class FakeClipboard:
+    def __init__(self, content=""):
+        self.content = content
+        self.history = []
+
+    def copy(self, text):
+        self.content = text
+        self.history.append(text)
+
+    def paste(self):
+        return self.content
+
+
+class FakeKeyboard:
+    def __init__(self):
+        self.events = []
+
+    def press(self, key):
+        self.events.append(("press", key))
+
+    def release(self, key):
+        self.events.append(("release", key))
+
+    def type(self, text):
+        self.events.append(("type", text))
