@@ -31,7 +31,7 @@ def _check_keys(config: Config) -> list[str]:
 _instance_mutex = None
 
 
-def already_running() -> bool:
+def already_running(name: str = "Local\\MirabelVoiceSingleInstance") -> bool:
     """Return True when another Mirabel Voice process holds the app mutex.
 
     The mutex handle stays open for the life of this process, so the next
@@ -42,9 +42,7 @@ def already_running() -> bool:
         import ctypes
 
         kernel32 = ctypes.windll.kernel32
-        _instance_mutex = kernel32.CreateMutexW(
-            None, False, "Local\\MirabelVoiceSingleInstance"
-        )
+        _instance_mutex = kernel32.CreateMutexW(None, False, name)
         return kernel32.GetLastError() == 183  # ERROR_ALREADY_EXISTS
     except Exception:  # noqa: BLE001 - never block startup over the guard
         return False

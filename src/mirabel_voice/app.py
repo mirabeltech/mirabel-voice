@@ -213,9 +213,35 @@ class VoiceApp:
             except UnknownHotkeyError as error:
                 log.warning("The paste-last hotkey is not valid: %s", error)
         self._listener.start()
+        self._warm_connections()
         log.info(
             "Ready. Hotkey: %s (%s mode).", self.config.hotkey, self.config.mode
         )
+
+    def _warm_connections(self) -> None:
+        """Open the network connections before the first dictation.
+
+        The first request to each API pays one to two extra seconds for
+        connection setup. A cheap background call at startup pays that cost
+        while the user is not waiting.
+        """
+
+        def ping() -> None:
+            try:
+                self.transcriber.client.models.list()
+            except Exception:  # noqa: BLE001 - warming up is best-effort
+                log.debug("The OpenAI warm-up call failed.", exc_info=True)
+            try:
+                self.cleaner.client.messages.count_tokens(
+                    model=self.cleaner.model,
+                    messages=[{"role": "user", "content": "hi"}],
+                )
+            except Exception:  # noqa: BLE001
+                log.debug("The Anthropic warm-up call failed.", exc_info=True)
+
+        threading.Thread(
+            target=ping, name="mirabel-voice-warmup", daemon=True
+        ).start()
 
     def _show_hands_free(self) -> None:
         """Update the tray only when a recording is really running."""

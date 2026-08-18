@@ -16,7 +16,7 @@ import time
 
 log = logging.getLogger(__name__)
 
-PASTE_SETTLE_SECONDS = 0.15
+PASTE_SETTLE_SECONDS = 0.05
 CLIPBOARD_RESTORE_SECONDS = 0.35
 
 
