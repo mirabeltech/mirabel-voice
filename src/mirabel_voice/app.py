@@ -21,6 +21,7 @@ from typing import Callable
 from .audio import Recorder
 from .cleanup import Cleaner
 from .config import Config
+from .dictionary import all_words
 from .hotkey import HotkeyListener
 from .inject import TextInjector
 from .transcribe import TranscriptionError, Transcriber
@@ -53,15 +54,16 @@ class VoiceApp:
             device=config.input_device,
             max_seconds=config.max_seconds,
         )
+        words = all_words(config.custom_words)
         self.transcriber = transcriber or Transcriber(
             model=config.transcribe_model,
             language=config.language,
-            custom_words=config.custom_words,
+            custom_words=words,
         )
         self.cleaner = cleaner or Cleaner(
             model=config.cleanup_model,
             timeout=config.cleanup_timeout,
-            custom_words=config.custom_words,
+            custom_words=words,
         )
         self.injector = injector or TextInjector(
             method=config.inject_method,
@@ -71,6 +73,7 @@ class VoiceApp:
         self.state = STATE_IDLE
         self.last_text = ""
         self._listener: HotkeyListener | None = None
+        self._extra_hotkeys = None
         self._worker: threading.Thread | None = None
 
     def _set_state(self, state: str, detail: str = "") -> None:
@@ -132,6 +135,15 @@ class VoiceApp:
         )
         self._worker.start()
 
+    def paste_last(self) -> None:
+        """Send the previous transcript to the active window again."""
+        if not self.last_text:
+            return
+        try:
+            self.injector.send(self.last_text)
+        except Exception:  # noqa: BLE001 - a re-paste must never crash the app
+            log.exception("The re-paste failed.")
+
     def cancel_recording(self) -> None:
         """Throw away the current recording."""
         if self.state != STATE_RECORDING:
@@ -174,17 +186,38 @@ class VoiceApp:
             on_start=self.start_recording,
             on_stop=self.stop_recording,
             on_cancel=self.cancel_recording,
+            on_lock=lambda: self._set_state(
+                STATE_RECORDING, "Hands-free. Press the hotkey to stop."
+            ),
         )
         self._listener.start()
+        self._start_paste_last_binding()
         log.info(
             "Ready. Hotkey: %s (%s mode).", self.config.hotkey, self.config.mode
         )
 
+    def _start_paste_last_binding(self) -> None:
+        """Register the paste-last key combination, if one is set."""
+        spec = self.config.paste_last_hotkey
+        if not spec:
+            return
+        from pynput import keyboard
+
+        try:
+            self._extra_hotkeys = keyboard.GlobalHotKeys({spec: self.paste_last})
+            self._extra_hotkeys.start()
+        except ValueError as error:
+            log.warning("The paste-last hotkey '%s' is not valid: %s", spec, error)
+            self._extra_hotkeys = None
+
     def stop(self) -> None:
-        """Stop the hotkey listener and close the microphone."""
+        """Stop the hotkey listeners and close the microphone."""
         if self._listener is not None:
             self._listener.stop()
             self._listener = None
+        if self._extra_hotkeys is not None:
+            self._extra_hotkeys.stop()
+            self._extra_hotkeys = None
         if self.recorder.is_recording:
             self.recorder.cancel()
 

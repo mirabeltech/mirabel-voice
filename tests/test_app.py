@@ -134,6 +134,22 @@ def test_an_injection_failure_reports_an_error():
     assert app.state == STATE_ERROR
 
 
+def test_paste_last_sends_the_previous_transcript_again():
+    injector = CapturingInjector()
+    app = make_app(injector=injector)
+    run_cycle(app)
+    app.paste_last()
+    assert injector.sent == ["Hello world.", "Hello world."]
+
+
+def test_paste_last_before_any_dictation_does_nothing():
+    injector = CapturingInjector()
+    app = make_app(injector=injector)
+    app.paste_last()
+    assert injector.sent == []
+    assert app.state == STATE_IDLE
+
+
 def test_cancel_discards_the_recording():
     app = make_app()
     app.start_recording()

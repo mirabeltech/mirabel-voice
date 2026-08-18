@@ -15,6 +15,7 @@ The names "win", "windows", and "super" all mean the Windows key.
 from __future__ import annotations
 
 import logging
+import time
 from typing import Callable
 
 log = logging.getLogger(__name__)
@@ -24,6 +25,9 @@ MODE_TOGGLE = "toggle"
 
 # pynput names the Windows key "cmd". Accept the names people expect.
 KEY_ALIASES = {"win": "cmd", "windows": "cmd", "super": "cmd"}
+
+# A second press within this window after a release locks hands-free mode.
+DOUBLE_TAP_SECONDS = 0.5
 
 
 class UnknownHotkeyError(ValueError):
@@ -62,7 +66,8 @@ class HotkeyListener:
     """Call on_start and on_stop when the user works the hotkey.
 
     In "hold" mode the listener calls on_start when every hotkey key goes
-    down, and on_stop when one of them comes up. In "toggle" mode each full
+    down, and on_stop when one of them comes up. A quick double-tap locks
+    the recording open; the next press stops it. In "toggle" mode each full
     press switches between the two.
     """
 
@@ -73,6 +78,8 @@ class HotkeyListener:
         on_start: Callable[[], None],
         on_stop: Callable[[], None],
         on_cancel: Callable[[], None] | None = None,
+        on_lock: Callable[[], None] | None = None,
+        clock: Callable[[], float] | None = None,
     ) -> None:
         self.spec = hotkey
         self.keys = parse_hotkey(hotkey)
@@ -80,14 +87,23 @@ class HotkeyListener:
         self.on_start = on_start
         self.on_stop = on_stop
         self.on_cancel = on_cancel
+        self.on_lock = on_lock
+        self._clock = clock or time.monotonic
         self._down: set = set()
         self._active = False
+        self._locked = False
+        self._last_release = float("-inf")
         self._listener = None
 
     @property
     def is_active(self) -> bool:
         """Return True while the listener treats the hotkey as engaged."""
         return self._active
+
+    @property
+    def is_locked(self) -> bool:
+        """Return True while a double-tap holds the recording open."""
+        return self._locked
 
     def _canonical(self, key):  # noqa: ANN001, ANN202
         """Return the key in the form that matches the parsed hotkey."""
@@ -117,12 +133,16 @@ class HotkeyListener:
             return
         was_complete = self._down >= set(self.keys)
         self._down.discard(resolved)
-        if self.mode == MODE_HOLD and was_complete and self._active:
-            self._active = False
-            self._safe(self.on_stop)
+        if self.mode != MODE_HOLD or not was_complete or not self._active:
+            return
+        if self._locked:
+            return  # The double-tap holds the recording open.
+        self._active = False
+        self._last_release = self._clock()
+        self._safe(self.on_stop)
 
     def _engage(self) -> None:
-        """Start, or in toggle mode switch, the recording."""
+        """Start, stop a locked recording, or in toggle mode switch."""
         if self.mode == MODE_TOGGLE:
             if self._active:
                 self._active = False
@@ -131,9 +151,18 @@ class HotkeyListener:
                 self._active = True
                 self._safe(self.on_start)
             return
+        if self._locked and self._active:
+            self._locked = False
+            self._active = False
+            self._safe(self.on_stop)
+            return
         if not self._active:
+            if self._clock() - self._last_release <= DOUBLE_TAP_SECONDS:
+                self._locked = True
             self._active = True
             self._safe(self.on_start)
+            if self._locked and self.on_lock is not None:
+                self._safe(self.on_lock)
 
     def _handle_other_key(self, key) -> None:  # noqa: ANN001
         """Cancel an active recording when the user presses Esc."""
@@ -141,6 +170,7 @@ class HotkeyListener:
 
         if key is Key.esc and self._active and self.on_cancel is not None:
             self._active = False
+            self._locked = False
             self._down.clear()
             self._safe(self.on_cancel)
 

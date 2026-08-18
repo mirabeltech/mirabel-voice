@@ -1,0 +1,23 @@
+{
+  "comment": "Mirabel product and domain terms. Hand-curated so dictation spells them correctly for every user. Personal words go in config.json, not here.",
+  "terms": [
+    "Mirabel",
+    "Mirabel Technologies",
+    "Magazine Manager",
+    "Newspaper Manager",
+    "Digital Media Manager",
+    "Marketing Manager",
+    "ChargeBrite",
+    "MagHub",
+    "Digital Studio",
+    "Mirabel Mobile",
+    "Mirabel Connect",
+    "Mirabel Send",
+    "Mirabel Mail",
+    "AdShuttle",
+    "InDesign",
+    "QuickBooks",
+    "MKM",
+    "CRM"
+  ]
+}
