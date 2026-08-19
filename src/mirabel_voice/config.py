@@ -89,9 +89,10 @@ class Config:
             the cursor while you speak.
         live_insert: True types the words straight into the program you
             are using while you speak, then replaces them with the clean
-            version. It gives the fastest feel. It also means the app
-            deletes and retypes text, so it is off until the pilot proves
-            it is safe in the programs people use.
+            version. It needs a hotkey with no Ctrl, Alt, Shift, or Windows
+            key in it, because Windows refuses typed characters while such
+            a key is held. With a modifier hotkey the words go to the
+            preview window instead.
         inject_method: "paste" uses the clipboard and Ctrl+V. "type" sends
             each character as a keystroke.
         restore_clipboard: True puts your old clipboard content back after
@@ -99,7 +100,7 @@ class Config:
         play_sounds: True plays a short beep on start and on stop.
     """
 
-    hotkey: str = "ctrl+win"
+    hotkey: str = "insert"
     mode: str = "hold"
     sample_rate: int = 16000
     input_device: str | int | None = None
@@ -115,7 +116,7 @@ class Config:
     streaming_enabled: bool = True
     streaming_model: str = "gpt-live-transcribe"
     show_overlay: bool = True
-    live_insert: bool = False
+    live_insert: bool = True
     inject_method: str = "paste"
     restore_clipboard: bool = True
     play_sounds: bool = True

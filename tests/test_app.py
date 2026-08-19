@@ -66,7 +66,11 @@ def make_app(
     cleanup_enabled=True,
     transcribe_error=None,
 ):
-    config = Config(play_sounds=False, cleanup_enabled=cleanup_enabled)
+    # live_insert off: these tests are about the paste path, and a real
+    # LiveTyper would type into whatever window is focused right now.
+    config = Config(
+        play_sounds=False, cleanup_enabled=cleanup_enabled, live_insert=False
+    )
     openai_client = FakeOpenAI(text=transcript, error=transcribe_error)
     anthropic_client = FakeAnthropic(response=text_response(cleaned))
     app = VoiceApp(
@@ -200,7 +204,9 @@ class FakeStream:
 
 
 def make_streaming_app(stream, injector=None, transcript="um hello world"):
-    config = Config(play_sounds=False, streaming_enabled=True)
+    config = Config(
+        play_sounds=False, streaming_enabled=True, live_insert=False
+    )
     openai_client = FakeOpenAI(text=transcript)
     anthropic_client = FakeAnthropic(response=text_response("Hello world."))
     return VoiceApp(

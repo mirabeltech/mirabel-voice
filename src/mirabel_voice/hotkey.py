@@ -4,9 +4,9 @@ The listener works in every program, not only in a Mirabel Voice window.
 
 Hotkey names use the pynput names. Examples:
 
-* "ctrl+win" - the Ctrl and Windows keys together (the default)
+* "insert" - the Insert key (the default)
+* "scroll_lock", "pause" - other keys that are usually free
 * "ctrl_r" - the right Ctrl key
-* "f9" - a function key
 * "ctrl+alt+space" - a combination. Every key must be down at the same time.
 
 The names "win", "windows", and "super" all mean the Windows key.

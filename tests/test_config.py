@@ -7,11 +7,14 @@ def test_load_writes_defaults_when_no_file_exists(tmp_path):
     target = tmp_path / "config.json"
     config = Config.load(target)
     assert target.exists()
-    assert config.hotkey == "ctrl+win"
+    assert config.hotkey == "insert"
     assert config.mode == "hold"
     assert config.cleanup_enabled is True
     assert config.cleanup_model == "claude-haiku-4-5"
     assert config.paste_last_hotkey == "shift+alt+z"
+    # Insert has no modifier in it, so the words can type themselves
+    # straight into the text box.
+    assert config.live_insert is True
 
 
 def test_save_and_load_round_trip(tmp_path):

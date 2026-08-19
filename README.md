@@ -2,61 +2,59 @@
 
 Speak instead of type — in any program on your PC.
 
-Hold **Ctrl+Win**, say what you want to write, and release. One to two seconds later, your words appear at your cursor as clean, finished text: no "um"s, correct punctuation, ready to send. It works in Claude, ChatGPT, VS Code, Outlook, Teams, and every other program with a text box.
+Hold **Insert**, say what you want to write, and let go. Your words appear where you were typing, tidied up: no "um"s, correct punctuation, ready to send. It works in Claude, ChatGPT, VS Code, Outlook, Teams, and anywhere else with a text box.
 
-## Install (about 3 minutes)
+## Install
 
-1. Ask Tommy for the two API keys.
-2. Open PowerShell and run these three lines:
+Open PowerShell and paste these three lines:
 
-   ```powershell
-   git clone https://github.com/mirabeltech/mirabel-voice.git
-   cd mirabel-voice
-   powershell -ExecutionPolicy Bypass -File setup.ps1
-   ```
+```powershell
+git clone https://github.com/mirabeltech/mirabel-voice.git
+cd mirabel-voice
+powershell -ExecutionPolicy Bypass -File setup.ps1
+```
 
-3. The script asks for the two keys and puts a **Mirabel Voice** shortcut on your Desktop. Double-click it. A small microphone icon appears near your clock.
+Setup asks for two keys — ask Tommy for them — checks that they work, and starts the app. A microphone icon appears near your clock, and Mirabel Voice starts with Windows from then on.
 
-That is the whole install.
+That is the whole install. Takes about three minutes.
 
 ## How to use it
 
+Click into any text box, hold **Insert**, and speak. Let go when you finish.
+
+You will see your words appear as you talk. When you let go, they are replaced by the tidied version.
+
 | You want to | Do this |
 |---|---|
-| Dictate | Click into a text box. Hold **Ctrl+Win** and speak. Release. |
-| Dictate hands-free | Tap **Ctrl+Win** twice quickly. Speak as long as you like. Press **Ctrl+Win** once to finish. |
-| Throw away a recording | Press **Esc** while recording. Nothing is sent. |
-| Paste the last dictation again | Press **Shift+Alt+Z**. Useful if it landed in the wrong window. |
+| Dictate | Hold **Insert** and speak |
+| Dictate hands-free | Tap **Insert** twice quickly, speak, then press **Insert** once to finish |
+| Throw away a recording | Press **Esc** while speaking |
+| Paste the last dictation again | Press **Shift+Alt+Z** |
 
-Speak naturally. Say "new paragraph" or "new line" to shape the text. If you misspeak, just correct yourself ("send it Tuesday — scratch that — Wednesday"); the correction is applied for you.
+Speak naturally. Say "new paragraph" or "new line" to shape the text. If you misspeak, just correct yourself — "send it Tuesday, scratch that, Wednesday" — and the correction is applied for you.
 
-**You see your words as you speak.** A small dark box appears near the bottom of the screen showing what has been heard so far. It is a preview only — nothing is typed into your program until you release the key, because the cleanup needs your whole sentence to remove the "um"s and apply your corrections.
+The icon near your clock shows what is happening: **grey** ready, **red** listening, **blue** writing, **orange** something went wrong. Right-click it to turn the tidying off, copy the last text, or quit.
 
-### Typing straight into your document
+## Changing your key
 
-**This needs a key with no Ctrl, Alt, Shift, or Windows in it.** Windows will not accept typed characters while you hold a modifier key, so with `Ctrl+Win` the words can only go to the preview box.
-
-Pick your key with this — press the key you want and it saves the choice:
+Insert is the default because it is free on most computers. If it clashes with something you use, pick another:
 
 ```powershell
 .venv\Scripts\python.exe scripts\pick_hotkey.py
 ```
 
-Choose a key that does nothing else on your computer. Laptops often use the F-keys for volume, brightness, and screenshots, so `scroll_lock`, `pause`, or `insert` are usually safer. Restart Mirabel Voice afterwards, then hold your key and speak.
+Press the key you want and it saves your choice. Restart Mirabel Voice afterwards.
 
+Two things to know when you choose:
 
-The words type themselves as you speak, and when you release the key they are replaced by the tidied version.
-
-Two things to know before you turn it on:
-
-- **Do not click into another window while speaking.** If you do, the app stops and leaves the raw words where they landed rather than deleting text in a document it no longer owns. Press **Shift+Alt+Z** to paste the clean version where you want it.
-- It works by deleting and retyping its own words. It is well behaved in ordinary text boxes, but a program that reformats as you type — or autocorrects — can confuse it. Try it in the programs you use before you rely on it.
-
-The tray icon shows what the app is doing: **grey** ready, **red** recording, **blue** writing your text, **orange** something failed. Right-click it to switch the AI cleanup on or off, copy the last text, or quit.
+- **Avoid the F keys.** Laptops use them for volume, brightness, and screenshots.
+- **A key with Ctrl, Alt, Shift, or Windows in it still works for dictation, but your words cannot appear as you speak.** Windows will not accept typed characters while such a key is held, so the words show in a small preview window instead and arrive in your text box when you let go. `scroll_lock` and `pause` are good plain alternatives.
 
 ## Your words, spelled right
 
-Mirabel product names (ChargeBrite, MagHub, Magazine Manager, ...) are built in and spell correctly from day one. To add your own terms — client names, coworkers — right-click the tray icon, choose **Open the settings folder**, and add them to `custom_words` in `config.json`:
+Mirabel names — ChargeBrite, MagHub, Magazine Manager and the rest — are built in and spell correctly from the start.
+
+To add your own words, right-click the icon near your clock, choose **Open the settings folder**, and edit `config.json`:
 
 ```json
 "custom_words": ["Acme Publishing", "Priya Ramesh"]
@@ -64,27 +62,27 @@ Mirabel product names (ChargeBrite, MagHub, Magazine Manager, ...) are built in 
 
 ## Dictating in Hindi or Telugu
 
-In the same `config.json`, change `language`:
+In the same `config.json`:
 
 ```json
 "language": "hi"
 ```
 
-Use `"hi"` for Hindi, `"te"` for Telugu, `"en"` for English. The cleanup step never translates what you said.
+Use `"hi"` for Hindi, `"te"` for Telugu, `"en"` for English. Your words come back in the language you spoke; nothing is ever translated.
 
-If you often mix languages in one sentence (English-Hindi, for example), use `"language": null` instead. The transcriber then detects the language itself instead of forcing one.
+If you often mix languages in one sentence, use `"language": null` instead and the app works out the language itself.
 
 ## Good to know
 
-- **Privacy:** your audio is processed in the cloud (OpenAI for speech, Anthropic for cleanup) under terms that exclude training on your data. The app saves nothing to disk — no audio, no history.
-- **Best for prose, not code:** speaking prompts, emails, and messages works great. Dictating brackets and symbols does not.
-- **Live words cost more.** Streaming runs about $0.017 per minute of speech instead of $0.003. To go back to the cheaper, slightly slower way, set `"streaming_enabled": false` in `config.json`. To keep the speed but hide the preview box, set `"show_overlay": false`.
-- If the network drops mid-sentence, the app quietly falls back to sending the recording after you release. You still get your text.
-- The hotkeys can be changed in `config.json` — for example `"hotkey": "f9"` or `"paste_last_hotkey": "ctrl+alt+v"`. Both use the same format: key names joined with `+`.
+- **Privacy.** Your speech is processed in the cloud, under terms that exclude training on your data. Nothing is saved on your computer — no recordings, no history.
+- **Prose, not code.** Prompts, emails, and messages work very well. Dictating brackets and symbols does not.
+- **Do not click into another window while speaking.** If you do, the app leaves the untidied words where they landed instead of editing a document it no longer owns. Press **Shift+Alt+Z** to put the clean version where you want it.
+- **If the internet drops** mid-sentence, the app quietly falls back to sending the recording when you let go. You still get your text.
 
 ## Something is wrong?
 
-- **No text appears:** check the tray icon. Orange means an error — hover over it to read what happened. Most often the network or a key problem.
-- **Text landed in the wrong window:** press **Shift+Alt+Z** in the right window.
-- **First run shows a key error:** run `setup.ps1` again and re-enter the keys.
+- **Nothing appears.** Look at the icon near your clock. Orange means an error; hover over it to read what happened. Usually the network or a key.
+- **Your text landed in the wrong window.** Press **Shift+Alt+Z** in the right one.
+- **Your key does nothing.** It may be one your laptop keeps for itself. Run the key picker above and choose another.
+- **Words appear in a small box instead of your text box.** Your key has Ctrl, Alt, Shift, or Windows in it. Pick a plain key.
 - Still stuck? Message Tommy.
