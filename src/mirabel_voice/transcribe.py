@@ -45,10 +45,9 @@ class Transcriber:
         Raises:
             TranscriptionError: The API call failed.
         """
-        payload = recording.to_wav_bytes()
         request = {
             "model": self.model,
-            "file": ("speech.wav", payload, "audio/wav"),
+            "file": recording.for_upload(),
             "response_format": "text",
         }
         if self.language:

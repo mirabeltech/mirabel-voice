@@ -110,6 +110,18 @@ It does not give you per-person usage figures, and it means one leak needs a rot
 
 Step 3 needs the delete first. Both the installer and setup leave an existing keys file alone, so that nobody's working setup is overwritten by accident.
 
+## When somebody says it is slow
+
+Run this from the install folder. It proves the audio encoder loaded, which
+is the difference between sending 155 kB and sending 1.4 MB per dictation:
+
+```powershell
+& "$env:LOCALAPPDATA\Programs\Mirabel Voice\MirabelVoiceConsole.exe" --check-audio
+```
+
+A copy with a broken encoder still dictates. It just sends about nine times
+more audio and never says so, which shows up as a slow first second.
+
 ## Watching the cost
 
 Set spending limits on both dashboards before you hand the app out. Nothing else caps what the app can spend.

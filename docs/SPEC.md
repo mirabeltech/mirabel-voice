@@ -39,7 +39,7 @@ Tray icon states: grey ready, red recording, blue processing, orange error. Menu
 ## Pipeline
 
 1. **Capture** — 16 kHz mono from the default mic while the hotkey is down. No audio discarded at the start (Wispr's top complaint). Recordings under 0.4 s or silent are dropped.
-2. **Transcribe** — one WAV to the OpenAI Whisper API (`whisper-1`), with the user's language and dictionary terms as a spelling prompt. Fallback model if multilingual accuracy disappoints: `gpt-4o-transcribe` (config change only).
+2. **Transcribe** — the recording goes to the OpenAI API as **Ogg Opus**, with the user's language and dictionary terms as a spelling prompt. Opus is about 11% of the WAV size, measured on 43.6 s of speech, with **no word-level difference** in the transcript; it therefore uploads faster and fits inside the 6 MB request limit a relay would impose, even at the full five-minute recording cap. A recording that will not encode is sent as WAV rather than lost. (`OGG/VORBIS` is not an option: libsndfile 1.2.2 kills the process when asked for it.) Fallback model if multilingual accuracy disappoints: `gpt-4o-transcribe` (config change only).
 3. **Clean up** — transcript to `claude-haiku-4-5`. Contract: remove fillers; apply self-corrections ("scratch that"); punctuate; apply spoken layout commands ("new paragraph"); never add, remove, translate, summarize, or answer the text. On any failure or timeout, the raw transcript is used — dictation is never lost.
 4. **Insert** — clipboard paste (Ctrl+V) into the focused window, previous clipboard restored; keystroke-typing fallback for paste-blocking apps.
 
