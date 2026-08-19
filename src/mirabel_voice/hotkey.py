@@ -67,17 +67,24 @@ def parse_hotkey(spec: str):  # noqa: ANN201 - returns a frozenset of pynput key
 
 
 def key_id(key):  # noqa: ANN001, ANN201
-    """Return one comparable form for a key.
+    """Return one comparable value for a key.
 
-    pynput reports the same physical key in two shapes. A named key such
-    as f9 arrives as Key.f9 from the settings but as a plain code from the
-    keyboard listener, and the two do not compare equal. Every key is
-    therefore reduced to its code before any comparison. Without this, a
-    hotkey with no modifier in it never fires at all.
+    Two shapes of the same key reach us. The settings give a named key
+    such as Key.insert, while the keyboard listener gives a key code that
+    also carries the scan code of the physical key. pynput compares scan
+    codes, so those two never match, and a hotkey built from the settings
+    would never fire. Comparing the plain character or key number instead
+    makes both shapes agree.
     """
-    from pynput.keyboard import Key
+    from pynput.keyboard import Key, KeyCode
 
-    return key.value if isinstance(key, Key) else key
+    if isinstance(key, Key):
+        key = key.value
+    if isinstance(key, KeyCode):
+        if key.char:
+            return ("char", key.char.lower())
+        return ("vk", key.vk)
+    return key
 
 
 def esc_id():  # noqa: ANN201
