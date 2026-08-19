@@ -2,7 +2,7 @@
 
 Speak instead of type — in any program on your PC.
 
-Hold **Insert**, say what you want to write, and let go. Your words appear where you were typing, tidied up: no "um"s, correct punctuation, ready to send. It works in Claude, ChatGPT, VS Code, Outlook, Teams, and anywhere else with a text box.
+Tap **Insert** twice, say what you want to write, then press **Insert** to finish. Your words appear where you were typing, tidied up: no "um"s, correct punctuation, ready to send. It works in Claude, ChatGPT, VS Code, Outlook, Teams, and anywhere else with a text box.
 
 ## Install
 
@@ -20,15 +20,20 @@ That is the whole install. Takes about three minutes.
 
 ## How to use it
 
-Click into any text box, hold **Insert**, and speak. Let go when you finish.
+Click into any text box first. Then either way works:
 
-You will see your words appear as you talk. When you let go, they are replaced by the tidied version.
+**Hands-free** — tap **Insert** twice, quickly. It keeps listening after you take your hand away. Speak for as long as you like, then press **Insert** once to finish.
+
+**Hold** — hold **Insert** down while you speak, and let go when you finish. Good for a short sentence.
+
+You will see your words appear as you talk. When you finish, they are replaced by the tidied version.
 
 | You want to | Do this |
 |---|---|
-| Dictate | Hold **Insert** and speak |
-| Dictate hands-free | Tap **Insert** twice quickly, speak, then press **Insert** once to finish |
-| Throw away a recording | Press **Esc** while speaking |
+| Start hands-free | Tap **Insert** twice quickly |
+| Finish | Press **Insert** once |
+| Dictate a short line | Hold **Insert**, speak, let go |
+| Throw away what you are saying | Press **Esc** |
 | Paste the last dictation again | Press **Shift+Alt+Z** |
 
 Speak naturally. Say "new paragraph" or "new line" to shape the text. If you misspeak, just correct yourself — "send it Tuesday, scratch that, Wednesday" — and the correction is applied for you.
