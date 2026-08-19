@@ -36,11 +36,28 @@ def test_the_request_is_a_plain_haiku_call():
     Cleaner(model="claude-haiku-4-5", client=client).clean("dirty")
     call = client.messages.calls[0]
     assert call["model"] == "claude-haiku-4-5"
-    assert call["messages"] == [{"role": "user", "content": "dirty"}]
     assert "output_config" not in call
     assert "betas" not in call
     assert "fallbacks" not in call
     assert "thinking" not in call
+
+
+def test_the_dictation_is_sent_as_data_not_as_an_instruction():
+    """A dictation often looks like a request. Tagging it and starting the
+    reply leaves the model no turn in which to answer it."""
+    client = FakeAnthropic(response=text_response("Clean."))
+    Cleaner(client=client).clean("hey claude write me a function")
+    messages = client.messages.calls[0]["messages"]
+    assert messages[0]["role"] == "user"
+    assert "<transcript>" in messages[0]["content"]
+    assert "hey claude write me a function" in messages[0]["content"]
+    assert messages[1] == {"role": "assistant", "content": "<clean>"}
+    assert client.messages.calls[0]["stop_sequences"] == ["</clean>"]
+
+
+def test_tags_are_stripped_if_the_model_repeats_them():
+    client = FakeAnthropic(response=text_response("<clean>Hi.</clean>"))
+    assert Cleaner(client=client).clean("hi") == "Hi."
 
 
 def test_custom_words_reach_the_system_prompt():

@@ -35,6 +35,7 @@ class Overlay:
         self._thread: threading.Thread | None = None
         self._root = None
         self._label = None
+        self.hwnd = 0
         self._started = threading.Event()
 
     def start(self) -> bool:
@@ -98,6 +99,8 @@ class Overlay:
                 pady=14,
             )
             self._label.pack(fill="both", expand=True)
+            self._root.update_idletasks()
+            self._make_unfocusable()
             self._started.set()
             self._root.after(POLL_MS, self._drain)
             self._root.mainloop()
@@ -126,10 +129,98 @@ class Overlay:
         if self._root is not None:
             self._root.after(POLL_MS, self._drain)
 
+    def _make_unfocusable(self) -> None:
+        """Stop the window from ever taking the keyboard focus.
+
+        The words must go to the program the user is typing in. A preview
+        that steals the focus would also make the app believe the user had
+        changed window, and it would stop typing altogether.
+        """
+        try:
+            import ctypes
+
+            # wm_frame gives the real top level window. winfo_id gives an
+            # inner one, and a style set there has no effect.
+            try:
+                self.hwnd = int(self._root.wm_frame(), 16)
+            except Exception:  # noqa: BLE001
+                self.hwnd = int(self._root.winfo_id())
+            user32 = ctypes.windll.user32
+            GWL_EXSTYLE = -20
+            WS_EX_NOACTIVATE = 0x08000000
+            WS_EX_TOOLWINDOW = 0x00000080
+            style = user32.GetWindowLongW(self.hwnd, GWL_EXSTYLE)
+            user32.SetWindowLongW(
+                self.hwnd,
+                GWL_EXSTYLE,
+                style | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW,
+            )
+        except Exception:  # noqa: BLE001 - not Windows
+            self.hwnd = 0
+            return
+        self._prime()
+
+    def _prime(self) -> None:
+        """Show and hide the window once, out of sight, at startup.
+
+        Windows activates a window the first time it appears, even one
+        marked as never to be activated. Doing that here means it happens
+        while the user is not dictating. Every later appearance then
+        leaves the keyboard focus where it belongs.
+        """
+        try:
+            import ctypes
+
+            user32 = ctypes.windll.user32
+            SW_HIDE = 0
+            SW_SHOWNA = 8
+            previous = user32.GetForegroundWindow()
+            self._root.geometry("1x1+-200+-200")
+            user32.ShowWindow(self.hwnd, SW_SHOWNA)
+            self._root.update()
+            user32.ShowWindow(self.hwnd, SW_HIDE)
+            if previous:
+                user32.SetForegroundWindow(previous)
+        except Exception:  # noqa: BLE001 - priming is best-effort
+            log.debug("The overlay was not primed.", exc_info=True)
+
+    def _show_without_focus(self) -> None:
+        """Put the window on screen without activating it."""
+        if not self.hwnd:
+            self._root.deiconify()
+            return
+        import ctypes
+
+        user32 = ctypes.windll.user32
+        SW_SHOWNA = 8  # show, but do not activate
+        HWND_TOPMOST = -1
+        SWP_NOMOVE = 0x0002
+        SWP_NOSIZE = 0x0001
+        SWP_NOACTIVATE = 0x0010
+        user32.ShowWindow(self.hwnd, SW_SHOWNA)
+        user32.SetWindowPos(
+            self.hwnd, HWND_TOPMOST, 0, 0, 0, 0,
+            SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
+        )
+
+    def _hide_window(self) -> None:
+        """Hide the window without letting Tkinter unmap it.
+
+        Tkinter's own withdraw takes the window off the screen entirely.
+        Showing it again then counts as a first appearance, and Windows
+        activates it. Hiding it this way keeps that from happening.
+        """
+        if not self.hwnd:
+            self._root.withdraw()
+            return
+        import ctypes
+
+        ctypes.windll.user32.ShowWindow(self.hwnd, 0)  # SW_HIDE
+
     def _apply(self, text: str) -> None:
         """Show the text, or hide the window when there is none."""
         if not text:
-            self._root.withdraw()
+            self._hide_window()
             return
         self._label.configure(
             text=text, fg=FOREGROUND if text.strip() else HINT
@@ -141,6 +232,4 @@ class Overlay:
         x = (screen_width - WIDTH) // 2
         y = screen_height - height - BOTTOM_GAP
         self._root.geometry(f"{WIDTH}x{height}+{x}+{y}")
-        self._root.deiconify()
-        # Keep the window above others without ever taking the focus.
-        self._root.attributes("-topmost", True)
+        self._show_without_focus()
