@@ -24,7 +24,7 @@ from .cleanup import Cleaner
 from .config import Config
 from .dictionary import all_words
 from .hotkey import HotkeyListener, UnknownHotkeyError
-from .inject import TextInjector
+from .inject import LiveTyper, TextInjector, foreground_window
 from .streaming import SAMPLE_RATE as STREAM_RATE
 from .streaming import StreamingSession
 from .streaming import available as streaming_available
@@ -42,6 +42,10 @@ STATE_WORKING = "working"
 STATE_ERROR = "error"
 
 SILENCE_PEAK = 0.01  # Below this level the microphone captured nothing.
+
+
+class _FocusMoved(Exception):
+    """The user changed window, so the app must not edit any text."""
 
 
 class VoiceApp:
@@ -86,6 +90,10 @@ class VoiceApp:
         )
         self._on_state = on_state
         self.on_partial: Callable[[str], None] | None = None
+        self.live_insert = config.live_insert and self.streaming
+        self.typer = LiveTyper(self.injector) if self.live_insert else None
+        self._focus = foreground_window
+        self._focus_at_start = 0
         self.state = STATE_IDLE
         self.last_text = ""
         self._session = None
@@ -124,6 +132,9 @@ class VoiceApp:
         # Nothing may delay the recording: the first word matters most.
         self._session = None
         self.recorder.on_chunk = None
+        # Remember the window we type into. If it changes, we must not
+        # delete anything: those characters belong to somebody else now.
+        self._focus_at_start = self._focus()
         try:
             self.recorder.start()
         except Exception as error:  # noqa: BLE001
@@ -188,10 +199,29 @@ class VoiceApp:
         session, self._session = self._session, None
         if session is not None:
             session.cancel()
-        self._show_partial("")
+        self._erase_live_words()
+        if self.on_partial is not None:
+            self._show_partial("")
+
+    def _erase_live_words(self) -> None:
+        """Take back the words the app typed, if it may still do so."""
+        if self.typer is None or not self.typer.typed:
+            return
+        if self._focus() != self._focus_at_start:
+            self.typer.typed = ""  # another window owns them now
+            return
+        try:
+            self.typer.clear()
+        except Exception:  # noqa: BLE001
+            log.debug("The live words were not removed.", exc_info=True)
 
     def _show_partial(self, text: str) -> None:
-        """Pass the words heard so far to the overlay."""
+        """Show the words heard so far, live."""
+        if self.typer is not None and self._focus() == self._focus_at_start:
+            try:
+                self.typer.show(text)
+            except Exception:  # noqa: BLE001 - typing must not break dictation
+                log.debug("A live keystroke failed.", exc_info=True)
         if self.on_partial is None:
             return
         try:
@@ -292,7 +322,9 @@ class VoiceApp:
 
         self.last_text = text
         try:
-            self.injector.send(text)
+            self._deliver(text)
+        except _FocusMoved:
+            return  # _deliver already explained what happened
         except Exception as error:  # noqa: BLE001
             log.exception("The text did not reach the window.")
             self._set_state(STATE_ERROR, f"Could not insert the text: {error}")
@@ -300,6 +332,28 @@ class VoiceApp:
 
         words = len(text.split())
         self._set_state(STATE_IDLE, f"Inserted {words} words.")
+
+    def _deliver(self, text: str) -> None:
+        """Put the finished text where the user was typing.
+
+        When the app typed words live, it swaps its own words for the
+        clean ones. If the focus moved to another window, it changes
+        nothing at all: the spoken words stay where they landed, and we
+        never delete characters in a window we did not write to.
+        """
+        if self.typer is None:
+            self.injector.send(text)
+            return
+        if self._focus() != self._focus_at_start:
+            log.warning("The window changed. Leaving the spoken words as they are.")
+            self.typer.typed = ""
+            self._set_state(
+                STATE_ERROR,
+                "You changed window, so the words were left as spoken. "
+                "Press the paste-last hotkey for the clean version.",
+            )
+            raise _FocusMoved
+        self.typer.replace_with(text)
 
     def start(self) -> None:
         """Begin to listen for the hotkey."""

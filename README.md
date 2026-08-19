@@ -32,6 +32,15 @@ Speak naturally. Say "new paragraph" or "new line" to shape the text. If you mis
 
 **You see your words as you speak.** A small dark box appears near the bottom of the screen showing what has been heard so far. It is a preview only — nothing is typed into your program until you release the key, because the cleanup needs your whole sentence to remove the "um"s and apply your corrections.
 
+### Typing straight into your document
+
+If you would rather watch the words land in the actual text box, set `"live_insert": true` in `config.json`. The words then type themselves as you speak, and when you release the key they are replaced by the tidied version.
+
+Two things to know before you turn it on:
+
+- **Do not click into another window while speaking.** If you do, the app stops and leaves the raw words where they landed rather than deleting text in a document it no longer owns. Press **Shift+Alt+Z** to paste the clean version where you want it.
+- It works by deleting and retyping its own words. It is well behaved in ordinary text boxes, but a program that reformats as you type — or autocorrects — can confuse it. Try it in the programs you use before you rely on it.
+
 The tray icon shows what the app is doing: **grey** ready, **red** recording, **blue** writing your text, **orange** something failed. Right-click it to switch the AI cleanup on or off, copy the last text, or quit.
 
 ## Your words, spelled right

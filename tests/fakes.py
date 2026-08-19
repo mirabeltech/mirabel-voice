@@ -69,14 +69,37 @@ class FakeClipboard:
 
 
 class FakeKeyboard:
-    def __init__(self):
+    """Records keystrokes and keeps a model of the resulting text field.
+
+    The model understands backspace and Ctrl+V, so tests can assert on
+    what the user would actually end up seeing.
+    """
+
+    def __init__(self, existing="", clipboard=None):
         self.events = []
+        self.field = existing
+        self.clipboard = clipboard
+        self._ctrl_down = False
 
     def press(self, key):
         self.events.append(("press", key))
+        name = getattr(key, "name", key)
+        if name == "backspace":
+            self.field = self.field[:-1]
+        elif name == "ctrl":
+            self._ctrl_down = True
+        elif key == "v" and self._ctrl_down and self.clipboard is not None:
+            self.field += self.clipboard.paste()
 
     def release(self, key):
         self.events.append(("release", key))
+        if getattr(key, "name", key) == "ctrl":
+            self._ctrl_down = False
 
     def type(self, text):
         self.events.append(("type", text))
+        self.field += text
+
+    def tap(self, key):
+        self.press(key)
+        self.release(key)

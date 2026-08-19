@@ -87,6 +87,11 @@ class Config:
         streaming_model: The live transcription model.
         show_overlay: True shows the live words in a small window near
             the cursor while you speak.
+        live_insert: True types the words straight into the program you
+            are using while you speak, then replaces them with the clean
+            version. It gives the fastest feel. It also means the app
+            deletes and retypes text, so it is off until the pilot proves
+            it is safe in the programs people use.
         inject_method: "paste" uses the clipboard and Ctrl+V. "type" sends
             each character as a keystroke.
         restore_clipboard: True puts your old clipboard content back after
@@ -110,6 +115,7 @@ class Config:
     streaming_enabled: bool = True
     streaming_model: str = "gpt-live-transcribe"
     show_overlay: bool = True
+    live_insert: bool = False
     inject_method: str = "paste"
     restore_clipboard: bool = True
     play_sounds: bool = True

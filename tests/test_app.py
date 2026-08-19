@@ -258,6 +258,82 @@ def test_live_words_reach_the_overlay():
     assert seen == ["word "]
 
 
+class RecordingTyper:
+    """Captures what live typing would have done."""
+
+    def __init__(self):
+        self.typed = ""
+        self.shown = []
+        self.replaced = None
+        self.cleared = False
+
+    def show(self, text):
+        self.shown.append(text)
+        self.typed = text
+
+    def clear(self):
+        self.cleared = True
+        self.typed = ""
+
+    def replace_with(self, text):
+        self.replaced = text
+        self.typed = ""
+
+
+def make_live_app(stream, typer, focus=(111, 111)):
+    config = Config(
+        play_sounds=False, streaming_enabled=True, live_insert=True
+    )
+    app = VoiceApp(
+        config=config,
+        recorder=FakeRecorder(loud_recording()),
+        transcriber=Transcriber(client=FakeOpenAI(text="um hello world")),
+        cleaner=Cleaner(client=FakeAnthropic(response=text_response("Hello world."))),
+        injector=CapturingInjector(),
+        stream=stream,
+    )
+    app.typer = typer
+    handles = list(focus)
+    app._focus = lambda: handles.pop(0) if handles else focus[-1]
+    return app
+
+
+def test_live_words_are_typed_and_then_corrected():
+    typer = RecordingTyper()
+    stream = FakeStream()
+    app = make_live_app(stream, typer)
+    app.start_recording()
+    stream.send(b"\x00\x00")
+    assert typer.shown == ["word "]
+    app.stop_recording()
+    app._worker.join(timeout=5)
+    assert typer.replaced == "Hello world."
+
+
+def test_a_changed_window_leaves_the_spoken_words_alone():
+    typer = RecordingTyper()
+    stream = FakeStream()
+    # Focus starts on one window and moves to another before the release.
+    app = make_live_app(stream, typer, focus=(111, 222))
+    app.start_recording()
+    stream.send(b"\x00\x00")
+    app.stop_recording()
+    app._worker.join(timeout=5)
+    assert typer.replaced is None  # nothing was deleted in the wrong window
+    assert app.injector.sent == []  # and nothing was pasted twice
+    assert app.state == STATE_ERROR
+
+
+def test_cancel_removes_the_live_words():
+    typer = RecordingTyper()
+    stream = FakeStream()
+    app = make_live_app(stream, typer)
+    app.start_recording()
+    stream.send(b"\x00\x00")
+    app.cancel_recording()
+    assert typer.cleared is True
+
+
 def test_cancel_discards_the_recording():
     app = make_app()
     app.start_recording()
