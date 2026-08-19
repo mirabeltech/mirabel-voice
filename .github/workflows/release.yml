@@ -63,6 +63,9 @@ jobs:
         shell: pwsh
         run: |
           $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          # Some directives need Inno Setup 6.3 or newer. Say which
+          # version ran, so a failure here is readable.
+          Write-Host "Inno Setup $((Get-Item $iscc).VersionInfo.ProductVersion)"
           & $iscc /Q "/DAppVersion=${{ steps.prep.outputs.version }}" packaging\installer.iss
           if ($LASTEXITCODE -ne 0) { exit 1 }
 

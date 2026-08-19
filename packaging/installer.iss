@@ -67,6 +67,17 @@ Filename: "{sys}\taskkill.exe"; Parameters: "/F /IM {#AppExe}"; Flags: runhidden
 var
   KeyPage: TInputQueryWizardPage;
 
+{ A blank line inside a message box.
+
+  Never start a source line with #13#10. The Inno preprocessor reads any
+  line whose first character is a hash as one of its own directives, and
+  the compile fails with "Unknown preprocessor directive". This function
+  keeps the hash away from the start of a line. }
+function Gap(): String;
+begin
+  Result := #13#10 + #13#10;
+end;
+
 function KeysTarget(): String;
 begin
   Result := ExpandConstant('{userappdata}\MirabelVoice\keys.json');
@@ -171,11 +182,10 @@ begin
     SW_HIDE, ewWaitUntilTerminated, ResultCode) then
     Exit;
   if ResultCode <> 0 then
-    MsgBox('One of the keys was not accepted.' + #13#10#13#10 +
+    MsgBox('One of the keys was not accepted.' + Gap() +
       'Mirabel Voice is installed, but dictation will not work until the ' +
       'keys are right. Delete this file and run the installer again:' +
-      #13#10#13#10 + KeysTarget(),
-      mbError, MB_OK);
+      Gap() + KeysTarget(), mbError, MB_OK);
 end;
 
 procedure CurStepChanged(CurStep: TSetupStep);

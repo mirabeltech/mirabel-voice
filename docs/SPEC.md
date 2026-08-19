@@ -17,7 +17,7 @@ An internal dictation tool for the organization. Hold `Ctrl+Win`, speak, release
 
 - Sub-second latency (requires streaming audio during speech — v2).
 - Mac support (planned v1.x; keep modules portable).
-- Packaged installer, code signing, auto-update.
+- Code signing, auto-update. (The packaged installer was moved into scope on 2026-08-19 — see #11.)
 - Snippets, styles/tones, screen-context awareness, voice editing of existing text.
 - A relay server for API keys (revisit if pilot succeeds).
 
@@ -62,7 +62,11 @@ A seed file of hand-curated Mirabel terms ships with the app (Mirabel, Magazine 
 
 ## Distribution
 
-Pilot: `git clone` + `setup.ps1` (creates venv, installs, prompts for keys, offers a Startup shortcut). Packaging (PyInstaller exe) waits until the pilot proves demand.
+Pilot: a packaged installer, `MirabelVoiceSetup-x.y.z.exe`, from a public GitHub Release (#11). PyInstaller packs the app, Inno Setup wraps it, GitHub Actions publishes it on a `v*` tag. It installs per user, so it needs no administrator password, and it collects and validates the two keys itself.
+
+It ships unsigned, so Windows shows "Windows protected your PC" and people click through. A certificate is the next step, not this one.
+
+Developers still use `git clone` + `setup.ps1` (creates venv, installs, prompts for keys, offers a Startup shortcut). Both paths produce the same app.
 
 ## Cost
 
