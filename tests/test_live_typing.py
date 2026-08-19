@@ -74,3 +74,25 @@ def test_clear_removes_only_what_was_typed():
     typer.clear()
     assert keyboard.field == "keep this"
     assert typer.typed == ""
+
+
+def test_identical_clean_text_changes_nothing_on_screen():
+    """The cleanup often returns exactly what was typed. Deleting and
+    retyping it would make the text flicker for no reason."""
+    typer, keyboard = make_typer(existing="Note: ")
+    typer.show("Hello world.")
+    keyboard.events.clear()
+    typer.replace_with("Hello world.")
+    assert keyboard.events == []
+    assert keyboard.field == "Note: Hello world."
+
+
+def test_only_the_changed_tail_is_rewritten():
+    typer, keyboard = make_typer()
+    typer.show("send it on tuesday")
+    keyboard.events.clear()
+    typer.replace_with("send it on Wednesday.")
+    assert keyboard.field == "send it on Wednesday."
+    # "send it on " is shared, so only the tail is deleted and retyped.
+    backspaces = sum(1 for e in keyboard.events if e[0] == "press")
+    assert backspaces == len("tuesday")

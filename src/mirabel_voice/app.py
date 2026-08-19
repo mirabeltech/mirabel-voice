@@ -98,6 +98,7 @@ class VoiceApp:
         self.live_insert = config.live_insert and self.streaming
         self.typer = LiveTyper(self.injector) if self.live_insert else None
         self._focus = foreground_window
+        self._modifiers_held = modifiers_held
         self._focus_at_start = 0
         self.state = STATE_IDLE
         self.last_text = ""
@@ -242,7 +243,7 @@ class VoiceApp:
         return bool(
             text
             and self.typer is not None
-            and not modifiers_held()
+            and not self._modifiers_held()
             and self._focus() == self._focus_at_start
         )
 

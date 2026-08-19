@@ -303,9 +303,21 @@ class LiveTyper:
         self.typed = ""
 
     def replace_with(self, text: str) -> None:
-        """Swap the typed words for the finished ones."""
-        self.clear()
-        self.injector.send(text)
+        """Put the finished words in place of the typed ones.
+
+        Only the part that differs is touched. The cleanup often returns
+        the same words that were already on screen, and deleting and
+        retyping them would make the text flicker for no reason.
+        """
+        if not self.typed:
+            self.injector.send(text)
+            return
+        shared = _common_prefix(self.typed, text)
+        self.injector.backspace(len(self.typed) - shared)
+        remainder = text[shared:]
+        if remainder:
+            self._emit(remainder)
+        self.typed = ""
 
 
 def _common_prefix(left: str, right: str) -> int:

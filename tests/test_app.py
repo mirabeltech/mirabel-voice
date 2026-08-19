@@ -293,6 +293,9 @@ def make_live_app(stream, typer, focus=(111, 111)):
         stream=stream,
     )
     app.typer = typer
+    # Unit tests must not depend on what is physically held on the machine
+    # running them.
+    app._modifiers_held = lambda: False
     handles = list(focus)
     app._focus = lambda: handles.pop(0) if handles else focus[-1]
     return app
