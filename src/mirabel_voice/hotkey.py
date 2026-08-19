@@ -66,6 +66,27 @@ def parse_hotkey(spec: str):  # noqa: ANN201 - returns a frozenset of pynput key
     return frozenset(keys)
 
 
+def key_id(key):  # noqa: ANN001, ANN201
+    """Return one comparable form for a key.
+
+    pynput reports the same physical key in two shapes. A named key such
+    as f9 arrives as Key.f9 from the settings but as a plain code from the
+    keyboard listener, and the two do not compare equal. Every key is
+    therefore reduced to its code before any comparison. Without this, a
+    hotkey with no modifier in it never fires at all.
+    """
+    from pynput.keyboard import Key
+
+    return key.value if isinstance(key, Key) else key
+
+
+def esc_id():  # noqa: ANN201
+    """Return the comparable form of the Esc key."""
+    from pynput.keyboard import Key
+
+    return key_id(Key.esc)
+
+
 class HotkeyListener:
     """Call on_start and on_stop when the user works the hotkey.
 
@@ -86,7 +107,7 @@ class HotkeyListener:
         clock: Callable[[], float] | None = None,
     ) -> None:
         self.spec = hotkey
-        self.keys = parse_hotkey(hotkey)
+        self.keys = frozenset(key_id(k) for k in parse_hotkey(hotkey))
         self.mode = mode if mode in (MODE_HOLD, MODE_TOGGLE) else MODE_HOLD
         self.on_start = on_start
         self.on_stop = on_stop
@@ -111,7 +132,11 @@ class HotkeyListener:
             UnknownHotkeyError: A part of the spec is not a known key.
         """
         self._bindings.append(
-            {"keys": parse_hotkey(spec), "callback": callback, "latched": False}
+            {
+                "keys": frozenset(key_id(k) for k in parse_hotkey(spec)),
+                "callback": callback,
+                "latched": False,
+            }
         )
 
     @property
@@ -126,12 +151,13 @@ class HotkeyListener:
 
     def _canonical(self, key):  # noqa: ANN001, ANN202
         """Return the key in the form that matches the parsed hotkey."""
+        resolved = key
         if self._listener is not None:
             try:
-                return self._listener.canonical(key)
+                resolved = self._listener.canonical(key)
             except Exception:  # noqa: BLE001 - some keys have no canonical form
-                return key
-        return key
+                resolved = key
+        return key_id(resolved)
 
     def handle_press(self, key) -> None:  # noqa: ANN001
         """Process one key-down event."""
@@ -207,9 +233,7 @@ class HotkeyListener:
 
     def _handle_other_key(self, key) -> None:  # noqa: ANN001
         """Cancel an active recording when the user presses Esc."""
-        from pynput.keyboard import Key
-
-        if key is Key.esc and self._active and self.on_cancel is not None:
+        if key == esc_id() and self._active and self.on_cancel is not None:
             self._active = False
             self._locked = False
             self._down.clear()

@@ -230,3 +230,31 @@ def test_toggle_mode_switches_on_each_full_press():
     listener.handle_press(Key.ctrl)
     listener.handle_press(Key.cmd)
     assert events.log == ["start", "stop"]
+
+
+def test_a_single_key_hotkey_fires_from_the_listener_form():
+    """pynput delivers f9 as a plain key code, not as Key.f9. Without
+    normalising the two forms, a hotkey with no modifier never fires."""
+    events = Events()
+    listener = HotkeyListener(
+        hotkey="f9", mode="hold", on_start=events.start, on_stop=events.stop
+    )
+    delivered = KeyCode.from_vk(Key.f9.value.vk)
+    listener.handle_press(delivered)
+    assert events.log == ["start"]
+    listener.handle_release(delivered)
+    assert events.log == ["start", "stop"]
+
+
+def test_escape_still_cancels_after_normalising():
+    events = Events()
+    listener = HotkeyListener(
+        hotkey="f9",
+        mode="hold",
+        on_start=events.start,
+        on_stop=events.stop,
+        on_cancel=events.cancel,
+    )
+    listener.handle_press(Key.f9)
+    listener.handle_press(Key.esc)
+    assert events.log == ["start", "cancel"]

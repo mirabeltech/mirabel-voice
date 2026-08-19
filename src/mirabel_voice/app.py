@@ -398,10 +398,27 @@ class VoiceApp:
             except UnknownHotkeyError as error:
                 log.warning("The paste-last hotkey is not valid: %s", error)
         self._listener.start()
+        if self.live_insert and self._hotkey_has_modifier():
+            log.info(
+                "Live typing needs a hotkey with no modifier in it, such as "
+                "f9. With %s the words appear in the preview window instead, "
+                "and the finished text arrives when you let go.",
+                self.config.hotkey,
+            )
         self._warm_connections()
         log.info(
             "Ready. Hotkey: %s (%s mode).", self.config.hotkey, self.config.mode
         )
+
+    def _hotkey_has_modifier(self) -> bool:
+        """Return True when the hotkey uses Ctrl, Alt, Shift, or Windows."""
+        parts = {p.strip() for p in self.config.hotkey.lower().split("+")}
+        modifiers = {
+            "ctrl", "ctrl_l", "ctrl_r", "alt", "alt_l", "alt_r", "alt_gr",
+            "shift", "shift_l", "shift_r", "cmd", "cmd_l", "cmd_r",
+            "win", "windows", "super",
+        }
+        return bool(parts & modifiers)
 
     def _warm_connections(self) -> None:
         """Open the network connections before the first dictation.

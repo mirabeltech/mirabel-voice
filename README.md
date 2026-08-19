@@ -34,7 +34,17 @@ Speak naturally. Say "new paragraph" or "new line" to shape the text. If you mis
 
 ### Typing straight into your document
 
-If you would rather watch the words land in the actual text box, set `"live_insert": true` in `config.json`. The words then type themselves as you speak, and when you release the key they are replaced by the tidied version.
+**This needs a hotkey with no Ctrl, Alt, Shift, or Windows key in it — `F9` is the one we use.** Windows will not accept typed characters while you hold a modifier key, so with `Ctrl+Win` the words can only go to the preview box. Set both of these in `config.json`:
+
+```json
+"hotkey": "f9",
+"live_insert": true
+```
+
+Then hold **F9**, speak, and let go.
+
+
+The words type themselves as you speak, and when you release the key they are replaced by the tidied version.
 
 Two things to know before you turn it on:
 
