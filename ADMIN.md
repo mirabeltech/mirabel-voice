@@ -93,6 +93,18 @@ Step 3 needs the delete first. Both the installer and setup leave an existing ke
 
 ## Watching the cost
 
-Set spending limits on both dashboards before you hand the app out. Live dictation runs about **$0.017 a minute**, so an hour of speech a day is roughly **$22 a month per person**.
+Set spending limits on both dashboards before you hand the app out. Nothing else caps what the app can spend.
 
-To halve it, set `"streaming_enabled": false` in a person's `config.json`. They lose the words-as-you-speak effect and wait about a second longer, and the cost drops to about $0.003 a minute.
+The app ships with the live view **off**. A minute of speech then costs about **$0.0058**: $0.003 for the transcription (`gpt-4o-mini-transcribe`) and $0.0028 for the Claude cleanup. Over 22 working days that gives:
+
+| Speech per day | Cost per person per month |
+|---|---|
+| 10 minutes | $1.28 |
+| 30 minutes | $3.83 |
+| 60 minutes | $7.66 |
+
+**Turning the live view on costs 3.4 times more.** Set `"streaming_enabled": true` in a person's `config.json` to show the words while they speak. The transcription model becomes `gpt-live-transcribe` at $0.017 a minute, and the same three rows become $4.36, $13.07, and $26.14. Give it to a new user for the first week if it helps them trust the tool, then turn it off again.
+
+To cut the cost further, right-click the icon near the clock and turn off **Clean up with Claude**. That saves $0.0028 a minute, which is about half of what the app costs with the live view off.
+
+For comparison, Wispr Flow Pro costs $15 a person a month, or $12 billed annually.

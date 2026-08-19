@@ -35,7 +35,7 @@ Setup sorts out the keys, checks that they work, and starts the app.
 
 Click into any text box. Press **Insert** once, speak, then press **Insert** again to finish.
 
-Your hands are free while you talk. You will see the words appear as you speak, and when you press Insert again they are replaced by the tidied version.
+Your hands are free while you talk. Press Insert again and the tidied text appears in your text box about two seconds later.
 
 | You want to | Do this |
 |---|---|
@@ -57,7 +57,7 @@ Press the key you want and it saves your choice. Restart Mirabel Voice afterward
 Two things to know when you choose:
 
 - **Avoid the F keys.** Laptops use them for volume, brightness, and screenshots.
-- **A key with Ctrl, Alt, Shift, or Windows in it still works for dictation, but your words cannot appear as you speak.** Windows will not accept typed characters while such a key is held, so the words show in a small preview window instead and arrive in your text box when you let go. `scroll_lock` and `pause` are good plain alternatives.
+- **Plain keys are best.** A key with Ctrl, Alt, Shift, or Windows in it also works for dictation. `scroll_lock` and `pause` are good plain alternatives.
 
 ## Your words, spelled right
 
