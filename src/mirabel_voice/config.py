@@ -82,6 +82,11 @@ class Config:
         custom_words: Names and terms that the models must spell correctly.
         paste_last_hotkey: The key combination that pastes the last
             transcript again. Uses the same format as hotkey.
+        streaming_enabled: True shows the words while you speak and makes
+            the wait after the hotkey shorter. It costs more per minute.
+        streaming_model: The live transcription model.
+        show_overlay: True shows the live words in a small window near
+            the cursor while you speak.
         inject_method: "paste" uses the clipboard and Ctrl+V. "type" sends
             each character as a keystroke.
         restore_clipboard: True puts your old clipboard content back after
@@ -102,6 +107,9 @@ class Config:
     cleanup_timeout: float = 20.0
     custom_words: list[str] = field(default_factory=list)
     paste_last_hotkey: str = "shift+alt+z"
+    streaming_enabled: bool = True
+    streaming_model: str = "gpt-live-transcribe"
+    show_overlay: bool = True
     inject_method: str = "paste"
     restore_clipboard: bool = True
     play_sounds: bool = True

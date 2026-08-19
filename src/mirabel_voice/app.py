@@ -25,6 +25,9 @@ from .config import Config
 from .dictionary import all_words
 from .hotkey import HotkeyListener, UnknownHotkeyError
 from .inject import TextInjector
+from .streaming import SAMPLE_RATE as STREAM_RATE
+from .streaming import StreamingSession
+from .streaming import available as streaming_available
 from .transcribe import TranscriptionError, Transcriber
 
 log = logging.getLogger(__name__)
@@ -52,10 +55,17 @@ class VoiceApp:
         cleaner: Cleaner | None = None,
         injector: TextInjector | None = None,
         on_state: Callable[[str, str], None] | None = None,
+        stream=None,  # noqa: ANN001 - a StreamingSession, or None to build one
     ) -> None:
         self.config = config
+        self._stream = stream
+        self.streaming = config.streaming_enabled and (
+            stream is not None or streaming_available()
+        )
+        # The live socket accepts one sample rate only.
+        rate = STREAM_RATE if self.streaming else config.sample_rate
         self.recorder = recorder or Recorder(
-            sample_rate=config.sample_rate,
+            sample_rate=rate,
             device=config.input_device,
             max_seconds=config.max_seconds,
         )
@@ -75,8 +85,10 @@ class VoiceApp:
             restore_clipboard=config.restore_clipboard,
         )
         self._on_state = on_state
+        self.on_partial: Callable[[str], None] | None = None
         self.state = STATE_IDLE
         self.last_text = ""
+        self._session = None
         self._listener: HotkeyListener | None = None
         self._worker: threading.Thread | None = None
         self._paste_thread: threading.Thread | None = None
@@ -108,34 +120,111 @@ class VoiceApp:
         if self._worker is not None and self._worker.is_alive():
             log.info("The previous transcript is still in progress.")
             return False
+        # The microphone opens first and the socket connects beside it.
+        # Nothing may delay the recording: the first word matters most.
+        self._session = None
+        self.recorder.on_chunk = None
         try:
             self.recorder.start()
         except Exception as error:  # noqa: BLE001
             log.exception("The microphone did not open.")
             self._set_state(STATE_ERROR, f"Microphone error: {error}")
             return False
+        self._open_stream()
+        self._warm_cleanup()
         self._set_state(STATE_RECORDING)
         self._beep(880, 60)
         return True
+
+    def _warm_cleanup(self) -> None:
+        """Open the cleanup connection while the user is still speaking.
+
+        A connection goes cold after a few idle minutes, and reopening it
+        costs more than the cleanup call itself. Speaking gives us free
+        time to pay that cost.
+        """
+        if not self.config.cleanup_enabled:
+            return
+
+        def ping() -> None:
+            try:
+                self.cleaner.client.messages.count_tokens(
+                    model=self.cleaner.model,
+                    messages=[{"role": "user", "content": "hi"}],
+                )
+            except Exception:  # noqa: BLE001 - warming up is best-effort
+                log.debug("The cleanup warm-up failed.", exc_info=True)
+
+        threading.Thread(
+            target=ping, name="mirabel-voice-warm-cleanup", daemon=True
+        ).start()
+
+    def _open_stream(self) -> None:
+        """Begin the live socket and feed it the microphone, if enabled.
+
+        Audio captured before the socket is ready is held and sent on
+        connect, so no speech is lost to connection time.
+        """
+        if not self.streaming:
+            return
+        session = self._stream or StreamingSession(
+            model=self.config.streaming_model,
+            keywords=self.transcriber.custom_words,
+            language=self.config.language,
+        )
+        session.on_delta = self._show_partial
+        try:
+            if not session.start():
+                return
+        except Exception:  # noqa: BLE001 - the upload path is the safety net
+            log.warning("The live socket did not start.", exc_info=True)
+            return
+        self._session = session
+        self.recorder.on_chunk = session.send
+
+    def _close_stream(self) -> None:
+        """Drop the live socket without asking for a transcript."""
+        self.recorder.on_chunk = None
+        session, self._session = self._session, None
+        if session is not None:
+            session.cancel()
+        self._show_partial("")
+
+    def _show_partial(self, text: str) -> None:
+        """Pass the words heard so far to the overlay."""
+        if self.on_partial is None:
+            return
+        try:
+            self.on_partial(text)
+        except Exception:  # noqa: BLE001 - the overlay must not break dictation
+            log.debug("A live word update failed.", exc_info=True)
 
     def stop_recording(self) -> None:
         """Close the microphone and process the audio in a worker thread."""
         if self.state != STATE_RECORDING:
             return
         recording = self.recorder.stop()
+        self.recorder.on_chunk = None
         self._beep(660, 60)
+        session, self._session = self._session, None
 
         if recording.duration < self.config.min_seconds:
+            if session is not None:
+                session.cancel()
+            self._show_partial("")
             self._set_state(STATE_IDLE, "That was too short.")
             return
         if recording.peak < SILENCE_PEAK:
+            if session is not None:
+                session.cancel()
+            self._show_partial("")
             self._set_state(STATE_IDLE, "The microphone captured no sound.")
             return
 
         self._set_state(STATE_WORKING)
         self._worker = threading.Thread(
             target=self._process,
-            args=(recording,),
+            args=(recording, session),
             name="mirabel-voice-worker",
             daemon=True,
         )
@@ -167,16 +256,32 @@ class VoiceApp:
         if self.state != STATE_RECORDING:
             return
         self.recorder.cancel()
+        self._close_stream()
         self._set_state(STATE_IDLE, "Cancelled.")
 
-    def _process(self, recording) -> None:  # noqa: ANN001
-        """Transcribe, clean, and inject one recording."""
-        try:
-            text = self.transcriber.transcribe(recording)
-        except TranscriptionError as error:
-            log.error("Transcription failed: %s", error)
-            self._set_state(STATE_ERROR, f"Transcription failed: {error}")
-            return
+    def _process(self, recording, session=None) -> None:  # noqa: ANN001
+        """Transcribe, clean, and inject one recording.
+
+        The live socket usually has the words already. The upload path
+        runs whenever it does not, so no dictation depends on the socket.
+        """
+        text = ""
+        if session is not None:
+            try:
+                text = session.finish() or ""
+            except Exception:  # noqa: BLE001 - fall back to the upload
+                log.warning("The live transcript failed.", exc_info=True)
+            if not text:
+                log.info("No live transcript. Uploading the audio instead.")
+        self._show_partial("")
+
+        if not text:
+            try:
+                text = self.transcriber.transcribe(recording)
+            except TranscriptionError as error:
+                log.error("Transcription failed: %s", error)
+                self._set_state(STATE_ERROR, f"Transcription failed: {error}")
+                return
 
         if not text:
             self._set_state(STATE_IDLE, "No words were heard.")

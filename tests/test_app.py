@@ -171,6 +171,93 @@ def test_a_refused_start_reports_false_to_the_listener():
     assert app.start_recording() is False
 
 
+class FakeStream:
+    """Stands in for the live transcription socket."""
+
+    def __init__(self, transcript="um hello world", start_ok=True, final_ok=True):
+        self.transcript = transcript
+        self.start_ok = start_ok
+        self.final_ok = final_ok
+        self.chunks = []
+        self.started = False
+        self.cancelled = False
+        self.on_delta = None
+
+    def start(self):
+        self.started = self.start_ok
+        return self.start_ok
+
+    def send(self, chunk):
+        self.chunks.append(chunk)
+        if self.on_delta is not None:
+            self.on_delta("word ")
+
+    def finish(self, timeout=10.0):
+        return self.transcript if self.final_ok else None
+
+    def cancel(self):
+        self.cancelled = True
+
+
+def make_streaming_app(stream, injector=None, transcript="um hello world"):
+    config = Config(play_sounds=False, streaming_enabled=True)
+    openai_client = FakeOpenAI(text=transcript)
+    anthropic_client = FakeAnthropic(response=text_response("Hello world."))
+    return VoiceApp(
+        config=config,
+        recorder=FakeRecorder(loud_recording()),
+        transcriber=Transcriber(client=openai_client),
+        cleaner=Cleaner(client=anthropic_client),
+        injector=injector or CapturingInjector(),
+        stream=stream,
+    )
+
+
+def test_streaming_transcript_is_cleaned_and_pasted():
+    stream = FakeStream(transcript="um hello world")
+    injector = CapturingInjector()
+    app = make_streaming_app(stream, injector)
+    run_cycle(app)
+    assert stream.started is True
+    assert injector.sent == ["Hello world."]
+
+
+def test_a_stream_that_cannot_connect_falls_back_to_upload():
+    stream = FakeStream(start_ok=False)
+    injector = CapturingInjector()
+    app = make_streaming_app(stream, injector)
+    run_cycle(app)
+    assert injector.sent == ["Hello world."]  # REST path still delivered
+
+
+def test_a_stream_that_fails_mid_utterance_falls_back_to_upload():
+    stream = FakeStream(final_ok=False)
+    injector = CapturingInjector()
+    app = make_streaming_app(stream, injector)
+    run_cycle(app)
+    assert injector.sent == ["Hello world."]
+
+
+def test_cancel_closes_the_stream_and_sends_nothing():
+    stream = FakeStream()
+    injector = CapturingInjector()
+    app = make_streaming_app(stream, injector)
+    app.start_recording()
+    app.cancel_recording()
+    assert stream.cancelled is True
+    assert injector.sent == []
+
+
+def test_live_words_reach_the_overlay():
+    seen = []
+    stream = FakeStream()
+    app = make_streaming_app(stream)
+    app.on_partial = seen.append
+    app.start_recording()
+    stream.send(b"\x00\x00")
+    assert seen == ["word "]
+
+
 def test_cancel_discards_the_recording():
     app = make_app()
     app.start_recording()

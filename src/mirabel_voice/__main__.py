@@ -157,12 +157,24 @@ def main(argv: list[str] | None = None) -> int:
 
     from .tray import Tray
 
+    overlay = None
+    if config.streaming_enabled and config.show_overlay:
+        from .overlay import Overlay
+
+        overlay = Overlay()
+        if overlay.start():
+            app.on_partial = overlay.update
+        else:
+            overlay = None
+
     tray = Tray(app)
     app.start()
     try:
         tray.run()
     finally:
         app.stop()
+        if overlay is not None:
+            overlay.stop()
     return 0
 
 

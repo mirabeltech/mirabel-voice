@@ -30,6 +30,8 @@ That is the whole install.
 
 Speak naturally. Say "new paragraph" or "new line" to shape the text. If you misspeak, just correct yourself ("send it Tuesday — scratch that — Wednesday"); the correction is applied for you.
 
+**You see your words as you speak.** A small dark box appears near the bottom of the screen showing what has been heard so far. It is a preview only — nothing is typed into your program until you release the key, because the cleanup needs your whole sentence to remove the "um"s and apply your corrections.
+
 The tray icon shows what the app is doing: **grey** ready, **red** recording, **blue** writing your text, **orange** something failed. Right-click it to switch the AI cleanup on or off, copy the last text, or quit.
 
 ## Your words, spelled right
@@ -56,6 +58,8 @@ If you often mix languages in one sentence (English-Hindi, for example), use `"l
 
 - **Privacy:** your audio is processed in the cloud (OpenAI for speech, Anthropic for cleanup) under terms that exclude training on your data. The app saves nothing to disk — no audio, no history.
 - **Best for prose, not code:** speaking prompts, emails, and messages works great. Dictating brackets and symbols does not.
+- **Live words cost more.** Streaming runs about $0.017 per minute of speech instead of $0.003. To go back to the cheaper, slightly slower way, set `"streaming_enabled": false` in `config.json`. To keep the speed but hide the preview box, set `"show_overlay": false`.
+- If the network drops mid-sentence, the app quietly falls back to sending the recording after you release. You still get your text.
 - The hotkeys can be changed in `config.json` — for example `"hotkey": "f9"` or `"paste_last_hotkey": "ctrl+alt+v"`. Both use the same format: key names joined with `+`.
 
 ## Something is wrong?

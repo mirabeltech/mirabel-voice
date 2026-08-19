@@ -6,7 +6,7 @@ requires-python = ">=3.10"
 dependencies = [
     "sounddevice>=0.4.6",
     "numpy>=1.26",
-    "openai>=1.40",
+    "openai[realtime]>=1.40",
     "anthropic>=0.40",
     "pynput>=1.7.7",
     "pystray>=0.19.5",
