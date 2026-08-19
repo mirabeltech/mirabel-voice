@@ -6,7 +6,8 @@ def make_typer(existing=""):
     clipboard = FakeClipboard()
     keyboard = FakeKeyboard(existing, clipboard=clipboard)
     typer = LiveTyper(
-        TextInjector(keyboard=keyboard, clipboard=clipboard)
+        TextInjector(keyboard=keyboard, clipboard=clipboard),
+        use_unicode=False,
     )
     return typer, keyboard
 
@@ -27,18 +28,30 @@ def test_only_the_new_words_are_typed():
     assert keyboard.events == [("type", " there")]
 
 
-def test_a_revised_word_replaces_only_the_changed_tail():
+def test_a_revision_is_left_for_the_final_correction():
+    """No deleting while the hotkey is held: a delete key plus the held
+    modifier would eat a whole word."""
     typer, keyboard = make_typer()
     typer.show("I met Anne")
     typer.show("I met Ann Marie")
+    assert keyboard.field == "I met Anne"  # untouched, no backspaces
+    assert not any(e[0] == "press" for e in keyboard.events)
+    typer.replace_with("I met Ann Marie.")
+    assert keyboard.field == "I met Ann Marie."
+
+
+def test_a_revision_applies_when_deleting_is_allowed():
+    typer, keyboard = make_typer()
+    typer.show("I met Anne")
+    typer.show("I met Ann Marie", allow_delete=True)
     assert keyboard.field == "I met Ann Marie"
 
 
 def test_typing_never_touches_text_that_was_already_there():
     typer, keyboard = make_typer(existing="Dear Priya, ")
     typer.show("thanks")
-    typer.show("thank you")
-    assert keyboard.field == "Dear Priya, thank you"
+    typer.show("thanks a lot")
+    assert keyboard.field == "Dear Priya, thanks a lot"
 
 
 def test_replace_swaps_the_typed_words_for_the_clean_ones():

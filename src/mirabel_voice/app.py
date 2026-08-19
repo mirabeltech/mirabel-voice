@@ -24,7 +24,12 @@ from .cleanup import Cleaner
 from .config import Config
 from .dictionary import all_words
 from .hotkey import HotkeyListener, UnknownHotkeyError
-from .inject import LiveTyper, TextInjector, foreground_window
+from .inject import (
+    LiveTyper,
+    TextInjector,
+    foreground_window,
+    modifiers_held,
+)
 from .streaming import SAMPLE_RATE as STREAM_RATE
 from .streaming import StreamingSession
 from .streaming import available as streaming_available
@@ -94,7 +99,6 @@ class VoiceApp:
         self.typer = LiveTyper(self.injector) if self.live_insert else None
         self._focus = foreground_window
         self._focus_at_start = 0
-        self._modifiers_freed = False
         self.state = STATE_IDLE
         self.last_text = ""
         self._session = None
@@ -136,7 +140,6 @@ class VoiceApp:
         # Remember the window we type into. If it changes, we must not
         # delete anything: those characters belong to somebody else now.
         self._focus_at_start = self._focus()
-        self._modifiers_freed = False
         try:
             self.recorder.start()
         except Exception as error:  # noqa: BLE001
@@ -148,24 +151,6 @@ class VoiceApp:
         self._set_state(STATE_RECORDING)
         self._beep(880, 60)
         return True
-
-    def _free_modifiers(self) -> None:
-        """Tell Windows the hotkey modifiers are up, before typing.
-
-        The user still holds them. If we do not do this, every letter we
-        type joins them into a system shortcut: Ctrl+Win+S opens Voice
-        Access, Ctrl+Win+D adds a desktop, and so on. The listener is
-        told to ignore the release, so the recording continues.
-        """
-        if self._modifiers_freed or self._listener is None:
-            return
-        self._modifiers_freed = True
-        for key in self._listener.held_keys():
-            self._listener.suppress_release(key)
-            try:
-                self.injector.keyboard.release(key)
-            except Exception:  # noqa: BLE001
-                log.debug("A modifier was not released.", exc_info=True)
 
     def _warm_cleanup(self) -> None:
         """Open the cleanup connection while the user is still speaking.
@@ -236,13 +221,33 @@ class VoiceApp:
             log.debug("The live words were not removed.", exc_info=True)
 
     def _show_partial(self, text: str) -> None:
-        """Show the words heard so far, live."""
-        if text and self.typer is not None and self._focus() == self._focus_at_start:
+        """Show the words heard so far, in the field or in the overlay.
+
+        Typing into the field only works while no modifier key is held.
+        With a hotkey such as Ctrl+Win that means it works in hands-free
+        mode, after a double-tap, and not while the keys are held down.
+        The overlay covers the rest, so words are always visible.
+        """
+        if self._can_type_live(text):
             try:
-                self._free_modifiers()
                 self.typer.show(text)
+                self._notify_overlay("")
+                return
             except Exception:  # noqa: BLE001 - typing must not break dictation
                 log.debug("A live keystroke failed.", exc_info=True)
+        self._notify_overlay(text)
+
+    def _can_type_live(self, text: str) -> bool:
+        """Return True when the words may go straight into the field."""
+        return bool(
+            text
+            and self.typer is not None
+            and not modifiers_held()
+            and self._focus() == self._focus_at_start
+        )
+
+    def _notify_overlay(self, text: str) -> None:
+        """Send the words to the small preview window, if there is one."""
         if self.on_partial is None:
             return
         try:

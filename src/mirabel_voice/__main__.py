@@ -158,7 +158,9 @@ def main(argv: list[str] | None = None) -> int:
     from .tray import Tray
 
     overlay = None
-    if config.streaming_enabled and config.show_overlay:
+    # The overlay also covers the times when typing into the field is
+    # impossible, such as while a modifier hotkey is held down.
+    if config.streaming_enabled and (config.show_overlay or config.live_insert):
         from .overlay import Overlay
 
         overlay = Overlay()

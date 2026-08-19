@@ -100,22 +100,7 @@ class HotkeyListener:
         self._last_tap_release = float("-inf")
         self._bindings: list[dict] = []
         self._pressed: set = set()
-        self._suppressed: set = set()
         self._listener = None
-
-    def held_keys(self) -> set:
-        """Return the hotkey keys that are down right now."""
-        return set(self._down)
-
-    def suppress_release(self, key) -> None:  # noqa: ANN001
-        """Ignore the next release of this key.
-
-        The app releases the modifier keys itself before it types, so
-        that letters do not combine into Windows shortcuts. That release
-        is not the user letting go, so it must not stop the recording.
-        """
-        if key in self._down:
-            self._suppressed.add(key)
 
     def add_binding(self, spec: str, callback: Callable[[], None]) -> None:
         """Watch an extra key combination and call the callback on it.
@@ -172,9 +157,6 @@ class HotkeyListener:
                 binding["latched"] = False
         if resolved not in self.keys:
             return
-        if resolved in self._suppressed:
-            self._suppressed.discard(resolved)
-            return  # the app released this key, not the user
         was_complete = self._down >= set(self.keys)
         self._down.discard(resolved)
         if self.mode != MODE_HOLD or not was_complete or not self._active:
@@ -210,7 +192,6 @@ class HotkeyListener:
             self._safe(self.on_stop)
             return
         if not self._active:
-            self._suppressed.clear()  # nothing stale from the last dictation
             wants_lock = (
                 self._clock() - self._last_tap_release <= DOUBLE_TAP_SECONDS
             )
