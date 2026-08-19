@@ -270,6 +270,18 @@ class LiveTyper:
         self.injector = injector
         self.use_unicode = use_unicode
         self.typed = ""
+        # Live words arrive on the socket thread while the finished text
+        # arrives on the worker thread. Without this lock the two can
+        # interleave, and the user is left with half the raw words still
+        # on screen followed by the clean ones.
+        self._lock = threading.Lock()
+        self._closed = False
+
+    def reopen(self) -> None:
+        """Allow live words again, at the start of the next dictation."""
+        with self._lock:
+            self._closed = False
+            self.typed = ""
 
     def _emit(self, text: str) -> None:
         """Put characters on screen without pressing any letter key."""
@@ -285,22 +297,25 @@ class LiveTyper:
         modifier and eat a whole word. A transcript that revises itself
         is left alone here; the correction at the end fixes everything.
         """
-        if text == self.typed:
-            return
-        shared = _common_prefix(self.typed, text)
-        if shared < len(self.typed):
-            if not allow_delete:
-                return  # wait for the final correction
-            self.injector.backspace(len(self.typed) - shared)
-        remainder = text[shared:]
-        if remainder:
-            self._emit(remainder)
-        self.typed = text
+        with self._lock:
+            if self._closed or text == self.typed:
+                return
+            shared = _common_prefix(self.typed, text)
+            if shared < len(self.typed):
+                if not allow_delete:
+                    return  # wait for the final correction
+                self.injector.backspace(len(self.typed) - shared)
+            remainder = text[shared:]
+            if remainder:
+                self._emit(remainder)
+            self.typed = text
 
     def clear(self) -> None:
         """Remove every character this typer wrote."""
-        self.injector.backspace(len(self.typed))
-        self.typed = ""
+        with self._lock:
+            self._closed = True
+            self.injector.backspace(len(self.typed))
+            self.typed = ""
 
     def replace_with(self, text: str) -> None:
         """Put the finished words in place of the typed ones.
@@ -309,15 +324,19 @@ class LiveTyper:
         the same words that were already on screen, and deleting and
         retyping them would make the text flicker for no reason.
         """
-        if not self.typed:
-            self.injector.send(text)
-            return
-        shared = _common_prefix(self.typed, text)
-        self.injector.backspace(len(self.typed) - shared)
-        remainder = text[shared:]
-        if remainder:
-            self._emit(remainder)
-        self.typed = ""
+        with self._lock:
+            # No more live words after this point. A late one would land
+            # after the finished text and read as a stutter.
+            self._closed = True
+            if not self.typed:
+                self.injector.send(text)
+                return
+            shared = _common_prefix(self.typed, text)
+            self.injector.backspace(len(self.typed) - shared)
+            remainder = text[shared:]
+            if remainder:
+                self._emit(remainder)
+            self.typed = ""
 
 
 def _common_prefix(left: str, right: str) -> int:

@@ -141,6 +141,8 @@ class VoiceApp:
         # Remember the window we type into. If it changes, we must not
         # delete anything: those characters belong to somebody else now.
         self._focus_at_start = self._focus()
+        if self.typer is not None:
+            self.typer.reopen()
         try:
             self.recorder.start()
         except Exception as error:  # noqa: BLE001

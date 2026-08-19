@@ -8,7 +8,7 @@ def test_load_writes_defaults_when_no_file_exists(tmp_path):
     config = Config.load(target)
     assert target.exists()
     assert config.hotkey == "insert"
-    assert config.mode == "hold"
+    assert config.mode == "toggle"
     assert config.cleanup_enabled is True
     assert config.cleanup_model == "claude-haiku-4-5"
     assert config.paste_last_hotkey == "shift+alt+z"

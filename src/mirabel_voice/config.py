@@ -66,8 +66,9 @@ class Config:
 
     Attributes:
         hotkey: The key you hold to record. See hotkey.py for the names.
-        mode: "hold" records while you hold the key. "toggle" starts and
-            stops on each press.
+        mode: "toggle" starts on one press and stops on the next, so you
+            can speak with your hands free. "hold" records only while you
+            hold the key down.
         sample_rate: Microphone sample rate in Hz. Whisper uses 16000.
         input_device: Microphone name or index. None selects the default
             Windows microphone.
@@ -101,7 +102,7 @@ class Config:
     """
 
     hotkey: str = "insert"
-    mode: str = "hold"
+    mode: str = "toggle"
     sample_rate: int = 16000
     input_device: str | int | None = None
     min_seconds: float = 0.4

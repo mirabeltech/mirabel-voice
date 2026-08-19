@@ -272,6 +272,11 @@ class RecordingTyper:
         self.shown = []
         self.replaced = None
         self.cleared = False
+        self.reopened = 0
+
+    def reopen(self):
+        self.reopened += 1
+        self.typed = ""
 
     def show(self, text):
         self.shown.append(text)

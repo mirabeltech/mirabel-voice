@@ -2,7 +2,7 @@
 
 Speak instead of type — in any program on your PC.
 
-Tap **Insert** twice, say what you want to write, then press **Insert** to finish. Your words appear where you were typing, tidied up: no "um"s, correct punctuation, ready to send. It works in Claude, ChatGPT, VS Code, Outlook, Teams, and anywhere else with a text box.
+Press **Insert**, say what you want to write, then press **Insert** again. Your words appear where you were typing, tidied up: no "um"s, correct punctuation, ready to send. It works in Claude, ChatGPT, VS Code, Outlook, Teams, and anywhere else with a text box.
 
 ## Install
 
@@ -20,19 +20,14 @@ That is the whole install. Takes about three minutes.
 
 ## How to use it
 
-Click into any text box first. Then either way works:
+Click into any text box. Press **Insert** once, speak, then press **Insert** again to finish.
 
-**Hands-free** — tap **Insert** twice, quickly. It keeps listening after you take your hand away. Speak for as long as you like, then press **Insert** once to finish.
-
-**Hold** — hold **Insert** down while you speak, and let go when you finish. Good for a short sentence.
-
-You will see your words appear as you talk. When you finish, they are replaced by the tidied version.
+Your hands are free while you talk. You will see the words appear as you speak, and when you press Insert again they are replaced by the tidied version.
 
 | You want to | Do this |
 |---|---|
-| Start hands-free | Tap **Insert** twice quickly |
-| Finish | Press **Insert** once |
-| Dictate a short line | Hold **Insert**, speak, let go |
+| Start | Press **Insert** |
+| Finish | Press **Insert** again |
 | Throw away what you are saying | Press **Esc** |
 | Paste the last dictation again | Press **Shift+Alt+Z** |
 

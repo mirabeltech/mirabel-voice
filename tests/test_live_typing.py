@@ -96,3 +96,23 @@ def test_only_the_changed_tail_is_rewritten():
     # "send it on " is shared, so only the tail is deleted and retyped.
     backspaces = sum(1 for e in keyboard.events if e[0] == "press")
     assert backspaces == len("tuesday")
+
+
+def test_late_live_words_cannot_land_after_the_finished_text():
+    """The socket thread can still deliver a word while the worker thread
+    is putting the finished text in place. A late word would appear after
+    it and read as a stutter."""
+    typer, keyboard = make_typer()
+    typer.show("shall we open a ne")
+    typer.replace_with("Shall we open a new tab.")
+    typer.show("shall we open a new tab")   # arrives too late
+    assert keyboard.field == "Shall we open a new tab."
+
+
+def test_the_next_dictation_starts_clean():
+    typer, keyboard = make_typer()
+    typer.show("first")
+    typer.replace_with("First.")
+    typer.reopen()
+    typer.show("second")
+    assert keyboard.field == "First.second"
