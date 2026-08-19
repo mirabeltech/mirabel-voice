@@ -6,7 +6,20 @@ Press **Insert**, say what you want to write, then press **Insert** again. Your 
 
 ## Install
 
-Open PowerShell and paste these three lines:
+**[Download Mirabel Voice](https://github.com/mirabeltech/mirabel-voice/releases/latest)** — take the `MirabelVoiceSetup` file and run it.
+
+Three things to expect:
+
+1. **Windows says "Windows protected your PC".** Click **More info**, then **Run anyway**. Windows says this about every program that has not paid for a certificate. Ours has not yet.
+2. **The installer asks for two keys.** Ask Tommy for them, and paste one into each box. It tests them before it finishes, so a wrong key is caught now rather than mid-sentence next week.
+3. **It does not ask for an administrator password.** Everything goes in your own profile.
+
+A microphone icon appears near your clock, and Mirabel Voice starts with Windows from then on. The whole thing takes about two minutes.
+
+To update later, download and run the newer file. Your settings and keys stay as they are.
+
+<details>
+<summary>Installing from the source code instead (for developers)</summary>
 
 ```powershell
 git clone https://github.com/mirabeltech/mirabel-voice.git
@@ -14,9 +27,9 @@ cd mirabel-voice
 powershell -ExecutionPolicy Bypass -File setup.ps1
 ```
 
-Setup sorts out the keys, checks that they work, and starts the app. If it asks you to paste two keys, ask Tommy for them. A microphone icon appears near your clock, and Mirabel Voice starts with Windows from then on.
+Setup sorts out the keys, checks that they work, and starts the app.
 
-That is the whole install. Takes about three minutes.
+</details>
 
 ## How to use it
 
@@ -33,15 +46,11 @@ Your hands are free while you talk. You will see the words appear as you speak, 
 
 Speak naturally. Say "new paragraph" or "new line" to shape the text. If you misspeak, just correct yourself — "send it Tuesday, scratch that, Wednesday" — and the correction is applied for you.
 
-The icon near your clock shows what is happening: **grey** ready, **red** listening, **blue** writing, **orange** something went wrong. Right-click it to turn the tidying off, copy the last text, or quit.
+The icon near your clock shows what is happening: **grey** ready, **red** listening, **blue** writing, **orange** something went wrong. Right-click it to turn the tidying off, copy the last text, change your dictation key, or quit.
 
 ## Changing your key
 
-Insert is the default because it is free on most computers. If it clashes with something you use, pick another:
-
-```powershell
-.venv\Scripts\python.exe scripts\pick_hotkey.py
-```
+Insert is the default because it is free on most computers. If it clashes with something you use, pick another: right-click the icon near your clock and choose **Change my dictation key**.
 
 Press the key you want and it saves your choice. Restart Mirabel Voice afterwards.
 
@@ -86,6 +95,10 @@ If you often mix languages in one sentence, use `"language": null` instead and t
 - **Your key does nothing.** It may be one your laptop keeps for itself. Run the key picker above and choose another.
 - **Words appear in a small box instead of your text box.** Your key has Ctrl, Alt, Shift, or Windows in it. Pick a plain key.
 - Still stuck? Message Tommy.
+
+## Removing it
+
+Open **Settings**, then **Apps**, find **Mirabel Voice**, and choose **Uninstall**. Your settings and keys stay in `%APPDATA%\MirabelVoice`, so a later install picks up where you left off. Delete that folder too if you want nothing left behind.
 
 ---
 

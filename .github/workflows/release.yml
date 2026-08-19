@@ -1,0 +1,96 @@
+name: Build and release
+
+# Every push to main builds the installer, so a broken build is found on
+# the day it breaks. Pushing a tag such as v0.2.0 also publishes it.
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install the app and the build tools
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]" pyinstaller
+
+      - name: Run the tests
+        run: pytest -q
+
+      - name: Write the icon and the version resource
+        id: prep
+        shell: pwsh
+        run: |
+          $version = (python packaging/prepare.py).Trim()
+          "version=$version" >> $env:GITHUB_OUTPUT
+          Write-Host "Version $version"
+
+      - name: Check that the tag matches the version in the code
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: pwsh
+        run: |
+          $tag = "${{ github.ref_name }}".TrimStart('v')
+          $code = "${{ steps.prep.outputs.version }}"
+          if ($tag -ne $code) {
+            Write-Host "::error::Tag $tag does not match __version__ $code. Update src/mirabel_voice/__init__.py, or tag the right version."
+            exit 1
+          }
+
+      - name: Pack the program
+        run: pyinstaller --noconfirm --clean --log-level WARN packaging/mirabel_voice.spec
+
+      - name: Install Inno Setup
+        run: choco install innosetup --no-progress -y
+
+      - name: Make the installer
+        shell: pwsh
+        run: |
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          # Some directives need Inno Setup 6.3 or newer. Say which
+          # version ran, so a failure here is readable.
+          Write-Host "Inno Setup $((Get-Item $iscc).VersionInfo.ProductVersion)"
+          & $iscc /Q "/DAppVersion=${{ steps.prep.outputs.version }}" packaging\installer.iss
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+
+      - name: Keep the installer for download
+        uses: actions/upload-artifact@v4
+        with:
+          name: MirabelVoiceSetup-${{ steps.prep.outputs.version }}
+          path: dist/MirabelVoiceSetup-*.exe
+          if-no-files-found: error
+
+      - name: Publish the release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/MirabelVoiceSetup-*.exe
+          generate_release_notes: true
+          body: |
+            ## Install
+
+            1. Download `MirabelVoiceSetup-${{ steps.prep.outputs.version }}.exe` below.
+            2. Run it. Windows says **"Windows protected your PC"**, because
+               the file is not signed. Click **More info**, then **Run anyway**.
+               This is expected.
+            3. Paste the two keys when the installer asks. Ask Tommy for them.
+            4. Click into any text box, press **Insert**, speak, press **Insert** again.
+
+            No administrator password is needed. The app installs in your own
+            profile and starts with Windows.

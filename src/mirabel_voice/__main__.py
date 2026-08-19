@@ -51,10 +51,21 @@ def already_running(name: str = "Local\\MirabelVoiceSingleInstance") -> bool:
 def _show_error_box(message: str) -> None:
     """Show a Windows message box, so errors are visible without a console."""
     _show_box(
-        f"{message}\n\nRun setup.ps1 to store the keys, then start "
-        "Mirabel Voice again.",
+        f"{message}\n\n{_how_to_fix_keys()}",
         icon=0x10,  # MB_ICONERROR
     )
+
+
+def _how_to_fix_keys() -> str:
+    """Return the repair step that suits how this copy was installed."""
+    if getattr(sys, "frozen", False):
+        # The installed app has no setup.ps1 beside it. The installer is
+        # the only thing that stores keys, so send the user back to it.
+        return (
+            "Run the Mirabel Voice installer again and enter the keys. "
+            "Ask Tommy for them."
+        )
+    return "Run setup.ps1 to store the keys, then start Mirabel Voice again."
 
 
 def _show_info_box(message: str) -> None:
@@ -95,6 +106,16 @@ def main(argv: list[str] | None = None) -> int:
         help="Print the path of the settings file and exit.",
     )
     parser.add_argument(
+        "--check-keys",
+        action="store_true",
+        help="Test the stored keys against both providers and exit.",
+    )
+    parser.add_argument(
+        "--pick-hotkey",
+        action="store_true",
+        help="Press a key to choose your dictation key, then exit.",
+    )
+    parser.add_argument(
         "--verbose", action="store_true", help="Print debug messages."
     )
     args = parser.parse_args(argv)
@@ -108,6 +129,18 @@ def main(argv: list[str] | None = None) -> int:
     if args.config:
         print(config_path())
         return 0
+
+    if args.check_keys:
+        from .keycheck import check_keys
+
+        ok, message = check_keys()
+        print(message)
+        return 0 if ok else 1
+
+    if args.pick_hotkey:
+        from .picker import pick_hotkey
+
+        return pick_hotkey()
 
     if args.list_devices:
         from .audio import list_input_devices
