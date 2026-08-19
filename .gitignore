@@ -12,3 +12,7 @@ dist/
 # Never commit API keys
 keys.json
 *.keys.json
+
+# Build inputs that packaging/prepare.py writes
+packaging/MirabelVoice.ico
+packaging/version_info.txt

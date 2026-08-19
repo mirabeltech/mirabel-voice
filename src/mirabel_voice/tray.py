@@ -13,6 +13,8 @@ from __future__ import annotations
 import logging
 import os
 import subprocess
+import sys
+from pathlib import Path
 
 from .app import STATE_ERROR, STATE_IDLE, STATE_RECORDING, STATE_WORKING, VoiceApp
 from .config import config_dir, config_path
@@ -49,6 +51,27 @@ def make_icon_image(state: str):  # noqa: ANN201 - returns a PIL image
     draw.arc((21, 28, 43, 46), start=0, end=180, fill=(255, 255, 255, 255), width=4)
     draw.line((32, 44, 32, 50), fill=(255, 255, 255, 255), width=4)
     return image
+
+
+def _picker_command() -> list[str] | None:
+    """Return the command that runs the key picker, or None.
+
+    The installed app and a copy running from the source tree need
+    different commands, and both need a program that owns a console.
+    """
+    if getattr(sys, "frozen", False):
+        # The installed app ships a console twin beside itself.
+        console = Path(sys.executable).with_name("MirabelVoiceConsole.exe")
+        return [str(console), "--pick-hotkey"] if console.exists() else None
+
+    # From source the app usually runs under pythonw.exe, which has no
+    # console. Its python.exe neighbour does.
+    python = Path(sys.executable)
+    if python.stem.lower() == "pythonw":
+        python = python.with_name("python.exe")
+    if not python.exists():
+        return None
+    return [str(python), "-m", "mirabel_voice", "--pick-hotkey"]
 
 
 class Tray:
@@ -88,6 +111,7 @@ class Tray:
                 checked=lambda _: self.app.config.cleanup_enabled,
             ),
             pystray.MenuItem("Copy the last text", self._copy_last),
+            pystray.MenuItem("Change my dictation key", self._pick_hotkey),
             pystray.MenuItem("Open the settings folder", self._open_config),
             pystray.Menu.SEPARATOR,
             pystray.MenuItem("Quit", self._quit),
@@ -108,6 +132,22 @@ class Tray:
             pyperclip.copy(self.app.last_text)
         except Exception:  # noqa: BLE001
             log.exception("The clipboard did not accept the text.")
+
+    def _pick_hotkey(self) -> None:
+        """Open the key picker in its own console window.
+
+        The picker has to read a keypress, so it cannot run inside this
+        app: this app is already listening for the dictation key.
+        """
+        command = _picker_command()
+        if command is None:
+            log.warning("The key picker could not be found.")
+            return
+        try:
+            # CREATE_NEW_CONSOLE. The app itself has no console to use.
+            subprocess.Popen(command, creationflags=0x00000010)  # noqa: S603
+        except OSError:
+            log.exception("The key picker did not start.")
 
     def _open_config(self) -> None:
         """Open the settings folder in File Explorer."""
