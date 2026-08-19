@@ -84,16 +84,18 @@ class Config:
         paste_last_hotkey: The key combination that pastes the last
             transcript again. Uses the same format as hotkey.
         streaming_enabled: True shows the words while you speak and makes
-            the wait after the hotkey shorter. It costs more per minute.
+            the wait after the hotkey shorter. It costs about six times more
+            per minute, so it ships off. show_overlay and live_insert do
+            nothing while it is off.
         streaming_model: The live transcription model.
         show_overlay: True shows the live words in a small window near
-            the cursor while you speak.
+            the cursor while you speak. Needs streaming_enabled.
         live_insert: True types the words straight into the program you
             are using while you speak, then replaces them with the clean
-            version. It needs a hotkey with no Ctrl, Alt, Shift, or Windows
-            key in it, because Windows refuses typed characters while such
-            a key is held. With a modifier hotkey the words go to the
-            preview window instead.
+            version. Needs streaming_enabled. It also needs a hotkey with no
+            Ctrl, Alt, Shift, or Windows key in it, because Windows refuses
+            typed characters while such a key is held. With a modifier
+            hotkey the words go to the preview window instead.
         inject_method: "paste" uses the clipboard and Ctrl+V. "type" sends
             each character as a keystroke.
         restore_clipboard: True puts your old clipboard content back after
@@ -114,7 +116,7 @@ class Config:
     cleanup_timeout: float = 20.0
     custom_words: list[str] = field(default_factory=list)
     paste_last_hotkey: str = "shift+alt+z"
-    streaming_enabled: bool = True
+    streaming_enabled: bool = False
     streaming_model: str = "gpt-live-transcribe"
     show_overlay: bool = True
     live_insert: bool = True

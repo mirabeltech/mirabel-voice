@@ -354,3 +354,22 @@ def test_cancel_discards_the_recording():
     app.cancel_recording()
     assert app.state == STATE_IDLE
     assert app.recorder.cancelled is True
+
+
+def test_live_typing_stays_off_when_streaming_is_off():
+    # The words that LiveTyper types come from the streaming partials.
+    # With streaming off there are none, so the app must not build a
+    # typer that would type into whatever window is focused.
+    config = Config(
+        play_sounds=False, streaming_enabled=False, live_insert=True
+    )
+    app = VoiceApp(
+        config=config,
+        recorder=FakeRecorder(loud_recording()),
+        transcriber=Transcriber(client=FakeOpenAI(text="hello")),
+        cleaner=Cleaner(client=FakeAnthropic(response=text_response("Hello."))),
+        injector=CapturingInjector(),
+    )
+    assert app.streaming is False
+    assert app.live_insert is False
+    assert app.typer is None

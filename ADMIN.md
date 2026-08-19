@@ -41,13 +41,12 @@ To remove the warning you need a code-signing certificate: about $200-400 a year
 
 ## Giving people the keys without them typing anything
 
-Both the installer and `setup.ps1` look in these places, in order, and stop at the first one:
+**You prepare the keys once. The people you send the app to do nothing with them.** They never see a key and never see a key page.
 
-1. `keys.json` sitting next to the installer (or next to `setup.ps1`)
-2. the path in the `MIRABEL_VOICE_KEYS` environment variable
-3. otherwise they ask the person to paste the keys
+### What you do, one time
 
-The file looks like this:
+1. Make one folder on a share that only the pilot users can open.
+2. Put `keys.json` in it:
 
 ```json
 {
@@ -56,23 +55,43 @@ The file looks like this:
 }
 ```
 
-Pick whichever way suits you:
+3. Put `MirabelVoiceSetup-x.y.z.exe` in the same folder.
+4. Send people that folder.
 
-**A shared folder.** Put `keys.json` somewhere everyone can read, then have people run one line before setup:
+### What each person does
+
+1. Open the folder.
+2. Double-click the installer.
+3. Click **More info**, then **Run anyway**, on the Windows warning.
+4. Click Next until it finishes.
+
+The installer finds `keys.json` beside itself and copies it to `%APPDATA%\MirabelVoice\keys.json`. It hides the key page because it no longer needs one.
+
+### The other two ways
+
+Both the installer and `setup.ps1` look in these places, in order, and stop at the first one:
+
+1. `keys.json` next to the installer (or next to `setup.ps1`) - the way above
+2. the path in the `MIRABEL_VOICE_KEYS` environment variable
+3. otherwise they ask the person to paste the keys
+
+Method 2 is the only one that asks a person to run something. Use it when the keys cannot sit next to the installer. Each person runs one line before setup:
 
 ```powershell
-$env:MIRABEL_VOICE_KEYS = "\yourserver\share\mirabel-voice\keys.json"
+$env:MIRABEL_VOICE_KEYS = "\\yourserver\share\mirabel-voice\keys.json"
 ```
 
-Windows file permissions decide who can read it, and you replace one file when you rotate the keys.
+Method 3 needs no preparation. Fine for two or three people you can hand the keys to yourself.
 
-**A folder with the installer in it.** Put `keys.json` and `MirabelVoiceSetup-x.y.z.exe` in the same folder and share that folder. The installer finds the keys and never asks. Simplest for people who do not have Git.
+### Keeping the file safe
 
-Never attach `keys.json` to a GitHub release. The repository is public, and so is everything on a release page.
+`keys.json` is plain text. Anyone who can open the folder can read both keys.
 
-**Neither.** Leave it out and setup asks for the keys. Fine for two or three people.
+- Share the folder with named people. Never with "anyone with the link".
+- Never email it, never post it in Teams or Slack, never attach it to a GitHub release. The repository is public, and so is every release page.
+- `keys.json` is in `.gitignore`, so it cannot be committed by accident. Never put it in the repository.
 
-`keys.json` is in `.gitignore`, so it cannot be committed by accident. Never put it in the repository.
+**Give each person their own key pair if you can.** Both dashboards let you make more than one key. Put each pair in that person's own folder. One leak then needs one revoked key instead of a rotation for everybody, and the dashboards show you who spends what. For a pilot of three to five people this is a short job and it is the best improvement available before the relay server.
 
 ## What this does and does not protect
 
@@ -93,6 +112,18 @@ Step 3 needs the delete first. Both the installer and setup leave an existing ke
 
 ## Watching the cost
 
-Set spending limits on both dashboards before you hand the app out. Live dictation runs about **$0.017 a minute**, so an hour of speech a day is roughly **$22 a month per person**.
+Set spending limits on both dashboards before you hand the app out. Nothing else caps what the app can spend.
 
-To halve it, set `"streaming_enabled": false` in a person's `config.json`. They lose the words-as-you-speak effect and wait about a second longer, and the cost drops to about $0.003 a minute.
+The app ships with the live view **off**. A minute of speech then costs about **$0.0058**: $0.003 for the transcription (`gpt-4o-mini-transcribe`) and $0.0028 for the Claude cleanup. Over 22 working days that gives:
+
+| Speech per day | Cost per person per month |
+|---|---|
+| 10 minutes | $1.28 |
+| 30 minutes | $3.83 |
+| 60 minutes | $7.66 |
+
+**Turning the live view on costs 3.4 times more.** Set `"streaming_enabled": true` in a person's `config.json` to show the words while they speak. The transcription model becomes `gpt-live-transcribe` at $0.017 a minute, and the same three rows become $4.36, $13.07, and $26.14. Give it to a new user for the first week if it helps them trust the tool, then turn it off again.
+
+To cut the cost further, right-click the icon near the clock and turn off **Clean up with Claude**. That saves $0.0028 a minute, which is about half of what the app costs with the live view off.
+
+For comparison, Wispr Flow Pro costs $15 a person a month, or $12 billed annually.

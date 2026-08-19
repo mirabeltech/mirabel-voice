@@ -15,6 +15,9 @@ def test_load_writes_defaults_when_no_file_exists(tmp_path):
     # Insert has no modifier in it, so the words can type themselves
     # straight into the text box.
     assert config.live_insert is True
+    # The live view costs about six times more per minute, so it ships off.
+    # live_insert and show_overlay do nothing until someone turns it on.
+    assert config.streaming_enabled is False
 
 
 def test_save_and_load_round_trip(tmp_path):

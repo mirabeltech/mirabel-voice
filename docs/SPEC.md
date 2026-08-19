@@ -70,7 +70,9 @@ Developers still use `git clone` + `setup.ps1` (creates venv, installs, prompts 
 
 ## Cost
 
-Heavy use (~60 min speech/day) ≈ $0.40/day Whisper + cents for Haiku ≈ $10/user/month upper bound.
+Streaming ships **off**, so a minute of speech costs about $0.0058: $0.003 transcription (`gpt-4o-mini-transcribe`) plus $0.0028 Haiku cleanup. Heavy use (~60 min speech/day, 22 days) is about **$7.66/user/month**.
+
+With `streaming_enabled: true` the transcription model becomes `gpt-live-transcribe` at $0.017/min, and the same use costs about $26/user/month. Wispr Flow Pro is $15/user/month for comparison. Full table in ADMIN.md.
 
 ## Architecture (existing draft, kept)
 
