@@ -50,7 +50,22 @@ function Save-Keys {
         ConvertTo-Json | Out-File -FilePath $keysFile -Encoding utf8
 }
 
-if (-not (Test-Path $keysFile)) { Save-Keys }
+if (-not (Test-Path $keysFile)) {
+    # Look for a keys file the administrator has already prepared, so
+    # nobody has to type a key. First one found wins.
+    $sources = @(
+        (Join-Path $root "keys.json"),          # shipped beside this script
+        $env:MIRABEL_VOICE_KEYS                 # a path or network share
+    ) | Where-Object { $_ -and (Test-Path $_) }
+
+    if ($sources) {
+        New-Item -ItemType Directory -Force $configDir | Out-Null
+        Copy-Item $sources[0] $keysFile -Force
+        Say "  Keys found. Nothing to type." "Green"
+    } else {
+        Save-Keys
+    }
+}
 
 Say "  Checking the keys..."
 $check = & $py (Join-Path $root "scripts\check_keys.py")

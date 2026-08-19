@@ -14,7 +14,7 @@ cd mirabel-voice
 powershell -ExecutionPolicy Bypass -File setup.ps1
 ```
 
-Setup asks for two keys — ask Tommy for them — checks that they work, and starts the app. A microphone icon appears near your clock, and Mirabel Voice starts with Windows from then on.
+Setup sorts out the keys, checks that they work, and starts the app. If it asks you to paste two keys, ask Tommy for them. A microphone icon appears near your clock, and Mirabel Voice starts with Windows from then on.
 
 That is the whole install. Takes about three minutes.
 
@@ -86,3 +86,7 @@ If you often mix languages in one sentence, use `"language": null` instead and t
 - **Your key does nothing.** It may be one your laptop keeps for itself. Run the key picker above and choose another.
 - **Words appear in a small box instead of your text box.** Your key has Ctrl, Alt, Shift, or Windows in it. Pick a plain key.
 - Still stuck? Message Tommy.
+
+---
+
+Handing this out to a team? See [ADMIN.md](ADMIN.md).

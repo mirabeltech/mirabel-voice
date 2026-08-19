@@ -8,3 +8,7 @@ dist/
 .pytest_cache/
 .env
 *.wav
+
+# Never commit API keys
+keys.json
+*.keys.json
