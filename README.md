@@ -34,14 +34,15 @@ Speak naturally. Say "new paragraph" or "new line" to shape the text. If you mis
 
 ### Typing straight into your document
 
-**This needs a hotkey with no Ctrl, Alt, Shift, or Windows key in it — `F9` is the one we use.** Windows will not accept typed characters while you hold a modifier key, so with `Ctrl+Win` the words can only go to the preview box. Set both of these in `config.json`:
+**This needs a key with no Ctrl, Alt, Shift, or Windows in it.** Windows will not accept typed characters while you hold a modifier key, so with `Ctrl+Win` the words can only go to the preview box.
 
-```json
-"hotkey": "f9",
-"live_insert": true
+Pick your key with this — press the key you want and it saves the choice:
+
+```powershell
+.venv\Scripts\python.exe scripts\pick_hotkey.py
 ```
 
-Then hold **F9**, speak, and let go.
+Choose a key that does nothing else on your computer. Laptops often use the F-keys for volume, brightness, and screenshots, so `scroll_lock`, `pause`, or `insert` are usually safer. Restart Mirabel Voice afterwards, then hold your key and speak.
 
 
 The words type themselves as you speak, and when you release the key they are replaced by the tidied version.
