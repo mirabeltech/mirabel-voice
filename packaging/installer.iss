@@ -149,7 +149,8 @@ end;
 
 procedure StoreKeys();
 var
-  Folder, Prepared, Json: String;
+  Folder, Prepared: String;
+  Lines: TArrayOfString;
 begin
   Folder := ExpandConstant('{userappdata}\MirabelVoice');
   ForceDirectories(Folder);
@@ -164,12 +165,17 @@ begin
     Exit;
   end;
 
-  { Braces here are part of the JSON text, not an Inno constant. }
-  Json := '{' + #13#10 +
-          '  "openai_api_key": "' + Trim(KeyPage.Values[0]) + '",' + #13#10 +
-          '  "anthropic_api_key": "' + Trim(KeyPage.Values[1]) + '"' + #13#10 +
-          '}' + #13#10;
-  SaveStringToUTF8File(KeysTarget(), Json, False);
+  { Braces here are part of the JSON text, not an Inno constant.
+
+    Inno writes UTF-8 only from an array of lines. There is no
+    SaveStringToUTF8File, singular. The app reads the file as utf-8-sig,
+    so the byte order mark this writes is expected. }
+  SetArrayLength(Lines, 4);
+  Lines[0] := '{';
+  Lines[1] := '  "openai_api_key": "' + Trim(KeyPage.Values[0]) + '",';
+  Lines[2] := '  "anthropic_api_key": "' + Trim(KeyPage.Values[1]) + '"';
+  Lines[3] := '}';
+  SaveStringsToUTF8File(KeysTarget(), Lines, False);
 end;
 
 { Ask the app whether the keys are accepted by both providers. A wrong
