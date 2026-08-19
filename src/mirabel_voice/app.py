@@ -94,6 +94,7 @@ class VoiceApp:
         self.typer = LiveTyper(self.injector) if self.live_insert else None
         self._focus = foreground_window
         self._focus_at_start = 0
+        self._modifiers_freed = False
         self.state = STATE_IDLE
         self.last_text = ""
         self._session = None
@@ -135,6 +136,7 @@ class VoiceApp:
         # Remember the window we type into. If it changes, we must not
         # delete anything: those characters belong to somebody else now.
         self._focus_at_start = self._focus()
+        self._modifiers_freed = False
         try:
             self.recorder.start()
         except Exception as error:  # noqa: BLE001
@@ -146,6 +148,24 @@ class VoiceApp:
         self._set_state(STATE_RECORDING)
         self._beep(880, 60)
         return True
+
+    def _free_modifiers(self) -> None:
+        """Tell Windows the hotkey modifiers are up, before typing.
+
+        The user still holds them. If we do not do this, every letter we
+        type joins them into a system shortcut: Ctrl+Win+S opens Voice
+        Access, Ctrl+Win+D adds a desktop, and so on. The listener is
+        told to ignore the release, so the recording continues.
+        """
+        if self._modifiers_freed or self._listener is None:
+            return
+        self._modifiers_freed = True
+        for key in self._listener.held_keys():
+            self._listener.suppress_release(key)
+            try:
+                self.injector.keyboard.release(key)
+            except Exception:  # noqa: BLE001
+                log.debug("A modifier was not released.", exc_info=True)
 
     def _warm_cleanup(self) -> None:
         """Open the cleanup connection while the user is still speaking.
@@ -217,8 +237,9 @@ class VoiceApp:
 
     def _show_partial(self, text: str) -> None:
         """Show the words heard so far, live."""
-        if self.typer is not None and self._focus() == self._focus_at_start:
+        if text and self.typer is not None and self._focus() == self._focus_at_start:
             try:
+                self._free_modifiers()
                 self.typer.show(text)
             except Exception:  # noqa: BLE001 - typing must not break dictation
                 log.debug("A live keystroke failed.", exc_info=True)

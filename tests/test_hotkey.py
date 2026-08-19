@@ -220,6 +220,32 @@ def test_an_extra_binding_uses_the_same_grammar_as_the_main_hotkey():
         listener.add_binding("<shift>+<alt>+z", lambda: None)
 
 
+def test_a_suppressed_release_does_not_stop_the_recording():
+    listener, events, clock = make_locking_listener()
+    listener.handle_press(Key.ctrl)
+    listener.handle_press(Key.cmd)
+    assert events.log == ["start"]
+    # The app tells Windows the modifiers are up so it can type letters
+    # without firing Ctrl+Win shortcuts. That release is not the user.
+    for key in listener.held_keys():
+        listener.suppress_release(key)
+    listener.handle_release(Key.cmd)
+    listener.handle_release(Key.ctrl)
+    assert events.log == ["start"]  # still recording
+    # The real release, when the user lets go, still works.
+    listener.handle_release(Key.cmd)
+    assert events.log == ["start", "stop"]
+
+
+def test_suppression_only_applies_to_keys_that_are_held():
+    listener, events, clock = make_locking_listener()
+    listener.suppress_release(Key.ctrl)  # nothing is down
+    listener.handle_press(Key.ctrl)
+    listener.handle_press(Key.cmd)
+    listener.handle_release(Key.ctrl)
+    assert events.log == ["start", "stop"]
+
+
 def test_toggle_mode_switches_on_each_full_press():
     listener, events = make_listener(mode="toggle")
     listener.handle_press(Key.ctrl)
