@@ -30,9 +30,9 @@ if (-not (Test-Path $py)) {
     Say "  Preparing (about a minute)..."
     & python -m venv $venv
     if (-not (Test-Path $py)) { Say "The setup could not start. $needPython" "Red"; exit 1 }
-    & $py -m pip install --quiet --upgrade pip
+    & $py -m pip install --quiet --disable-pip-version-check --upgrade pip
 }
-& $py -m pip install --quiet -e $root
+& $py -m pip install --quiet --disable-pip-version-check -e $root
 Say "  Installed." "Green"
 
 # --- 3. Keys ---------------------------------------------------------------
@@ -90,7 +90,7 @@ Get-Process pythonw -ErrorAction SilentlyContinue |
 Start-Sleep -Milliseconds 600
 Start-Process -FilePath $pythonw -ArgumentList "-m","mirabel_voice" -WorkingDirectory $root
 
-$key = & $py -c "from mirabel_voice.config import Config; print(Config.load().hotkey)"
+$key = & $py -c "from mirabel_voice.config import Config; print(Config.load().hotkey.replace(chr(95),chr(32)).title())"
 
 Say ""
 Say "  Ready. Mirabel Voice is running and starts with Windows." "Green"
