@@ -32,6 +32,7 @@ def make_injector(monkeypatch, sequences=None, previous="old content"):
 def test_a_paste_delivers_the_text_and_restores_the_clipboard(monkeypatch):
     injector, keyboard, clipboard = make_injector(monkeypatch, sequences=[5, 5])
     injector.send("Hello world.")
+    injector.flush_restore()
     assert keyboard.field == "Hello world."
     assert clipboard.content == "old content"
 
@@ -41,6 +42,7 @@ def test_a_clipboard_taken_by_another_program_is_not_overwritten(monkeypatch):
     back would silently destroy what the user just copied."""
     injector, keyboard, clipboard = make_injector(monkeypatch, sequences=[5, 9])
     injector.send("Hello world.")
+    injector.flush_restore()
     assert keyboard.field == "Hello world."
     assert clipboard.content != "old content"
 
@@ -50,6 +52,7 @@ def test_a_missing_change_counter_still_restores(monkeypatch):
     it always did."""
     injector, keyboard, clipboard = make_injector(monkeypatch, sequences=None)
     injector.send("Hello world.")
+    injector.flush_restore()
     assert keyboard.field == "Hello world."
     assert clipboard.content == "old content"
 
@@ -65,3 +68,29 @@ def test_restore_off_leaves_the_text_on_the_clipboard(monkeypatch):
     injector.send("Hello world.")
     assert keyboard.field == "Hello world."
     assert clipboard.content == "Hello world."
+
+
+def test_send_returns_before_the_restore_wait(monkeypatch):
+    """The worker reports the insert the moment the paste is sent. The
+    restore runs behind it; standing in front of it cost a full second
+    of felt lag per dictation."""
+    injector, keyboard, clipboard = make_injector(monkeypatch, sequences=[5, 5])
+    monkeypatch.setattr(inject, "CLIPBOARD_RESTORE_SECONDS", 60)
+    injector.send("Hello world.")
+    # send() has returned; the restore is still pending.
+    assert keyboard.field == "Hello world."
+    assert clipboard.content == "Hello world."
+    assert injector._take_pending_restore() == "old content"
+
+
+def test_back_to_back_pastes_keep_the_users_real_clipboard(monkeypatch):
+    """A second dictation can land before the first restore fires. The
+    clipboard then holds our own text, not the user's. The pending value
+    must be carried forward, or the user's content is lost."""
+    injector, keyboard, clipboard = make_injector(monkeypatch, sequences=[5, 5])
+    monkeypatch.setattr(inject, "CLIPBOARD_RESTORE_SECONDS", 60)
+    injector.send("First dictation.")
+    injector.send("Second dictation.")
+    assert keyboard.field == "First dictation.Second dictation."
+    # The value waiting to be restored is still the user's own content.
+    assert injector._take_pending_restore() == "old content"

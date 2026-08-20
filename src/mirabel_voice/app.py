@@ -208,6 +208,7 @@ class VoiceApp:
             return False
         self._open_stream()
         self._warm_cleanup()
+        self._warm_transcriber()
         self._set_state(STATE_RECORDING)
         self._beep(880, 60)
         return True
@@ -233,6 +234,25 @@ class VoiceApp:
 
         threading.Thread(
             target=ping, name="mirabel-voice-warm-cleanup", daemon=True
+        ).start()
+
+    def _warm_transcriber(self) -> None:
+        """Open the transcription connection while the user is still speaking.
+
+        The upload happens the moment the user stops, and a cold TLS
+        handshake there is paid in silence, after the hotkey. The cleanup
+        connection already warms this way; the transcription one did not,
+        and it is the first and largest call of the pipeline.
+        """
+
+        def ping() -> None:
+            try:
+                self.transcriber.client.models.list()
+            except Exception:  # noqa: BLE001 - warming up is best-effort
+                log.debug("The transcription warm-up failed.", exc_info=True)
+
+        threading.Thread(
+            target=ping, name="mirabel-voice-warm-transcribe", daemon=True
         ).start()
 
     def _open_stream(self) -> None:
@@ -384,6 +404,7 @@ class VoiceApp:
         The live socket usually has the words already. The upload path
         runs whenever it does not, so no dictation depends on the socket.
         """
+        started = time.monotonic()
         text = ""
         if session is not None:
             try:
@@ -401,6 +422,7 @@ class VoiceApp:
                 log.error("Transcription failed: %s", error)
                 self._set_state(STATE_ERROR, f"Transcription failed: {error}")
                 return
+        transcribed = time.monotonic()
 
         if not text:
             self._set_state(STATE_IDLE, "No words were heard.")
@@ -408,6 +430,7 @@ class VoiceApp:
 
         if self.config.cleanup_enabled:
             text = self.cleaner.clean(text)
+        cleaned = time.monotonic()
 
         self.last_text = text
         try:
@@ -425,6 +448,13 @@ class VoiceApp:
         # the next dictation too early or presses the hotkey again.
         self._beep(990, 50)
         self._set_state(STATE_IDLE, f"Inserted {words} words.")
+        # One line per dictation, so "it feels slow" becomes a number.
+        log.info(
+            "Timing: transcribe %.0f ms, cleanup %.0f ms, insert %.0f ms.",
+            (transcribed - started) * 1000,
+            (cleaned - transcribed) * 1000,
+            (time.monotonic() - cleaned) * 1000,
+        )
 
     def _deliver(self, text: str) -> None:
         """Put the finished text where the user was typing.

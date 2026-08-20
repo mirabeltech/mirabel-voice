@@ -20,6 +20,8 @@ PASTE_SETTLE_SECONDS = 0.05
 # The wait before the old clipboard content goes back. A busy program can
 # read the clipboard well after the Ctrl+V arrives. A restore that comes
 # first makes that program paste the old content instead of the dictation.
+# The wait runs on a timer, off the critical path: the caller gets the
+# paste at once, and the restore happens behind it.
 CLIPBOARD_RESTORE_SECONDS = 1.0
 
 
@@ -161,6 +163,8 @@ class TextInjector:
         # One paste at a time: the dictation worker and a paste-last press
         # must not interleave their clipboard copy/paste/restore steps.
         self._send_lock = threading.Lock()
+        self._restore_timer: threading.Timer | None = None
+        self._restore_value: str | None = None
 
     @property
     def keyboard(self):  # noqa: ANN201
@@ -195,13 +199,23 @@ class TextInjector:
                 self._send_as_keystrokes(text)
 
     def _send_as_paste(self, text: str) -> None:
-        """Copy the text and send Ctrl+V."""
+        """Copy the text and send Ctrl+V.
+
+        The restore of the old clipboard content runs on a timer, so this
+        returns as soon as the paste is sent. The worker that called us can
+        report the insert at once instead of standing behind the wait.
+        """
         previous = None
         if self.restore_clipboard:
-            try:
-                previous = self.clipboard.paste()
-            except Exception:  # noqa: BLE001 - an empty or binary clipboard is not an error
-                previous = None
+            # A restore may still be pending from the previous paste. Its
+            # value is the user's real content; the clipboard itself holds
+            # our last dictation. Carry the real content forward.
+            previous = self._take_pending_restore()
+            if previous is None:
+                try:
+                    previous = self.clipboard.paste()
+                except Exception:  # noqa: BLE001 - an empty or binary clipboard is not an error
+                    previous = None
 
         self.clipboard.copy(text)
         marker = self._sequence()
@@ -209,16 +223,40 @@ class TextInjector:
         self._press_paste_combination()
 
         if previous is not None:
-            time.sleep(CLIPBOARD_RESTORE_SECONDS)
-            if marker is not None and self._sequence() != marker:
-                # The user or another program copied something new while
-                # we waited. A restore now would destroy that copy.
-                log.info("The clipboard changed, so it was not restored.")
-                return
-            try:
-                self.clipboard.copy(previous)
-            except Exception as error:  # noqa: BLE001
-                log.warning("Could not restore the clipboard: %s", error)
+            self._restore_value = previous
+            self._restore_timer = threading.Timer(
+                CLIPBOARD_RESTORE_SECONDS, self._restore, args=(previous, marker)
+            )
+            self._restore_timer.daemon = True
+            self._restore_timer.start()
+
+    def _take_pending_restore(self) -> str | None:
+        """Cancel a waiting restore and return the content it carried."""
+        timer, self._restore_timer = self._restore_timer, None
+        value, self._restore_value = self._restore_value, None
+        if timer is None:
+            return None
+        timer.cancel()
+        return value
+
+    def _restore(self, previous: str, marker: int | None) -> None:
+        """Put the old content back, unless somebody copied meanwhile."""
+        self._restore_value = None
+        if marker is not None and self._sequence() != marker:
+            # The user or another program copied something new while
+            # we waited. A restore now would destroy that copy.
+            log.info("The clipboard changed, so it was not restored.")
+            return
+        try:
+            self.clipboard.copy(previous)
+        except Exception as error:  # noqa: BLE001
+            log.warning("Could not restore the clipboard: %s", error)
+
+    def flush_restore(self, timeout: float = 2.0) -> None:
+        """Wait for a pending clipboard restore to finish, if there is one."""
+        timer = self._restore_timer
+        if timer is not None:
+            timer.join(timeout)
 
     def _press_paste_combination(self) -> None:
         """Send the Ctrl+V key combination."""
