@@ -48,6 +48,30 @@ Speak naturally. Say "new paragraph" or "new line" to shape the text. If you mis
 
 The icon near your clock shows what is happening: **grey** ready, **red** listening, **blue** writing, **orange** something went wrong. Right-click it to turn the tidying off, copy the last text, change your dictation key, or quit.
 
+## What the beeps mean
+
+The app talks to you in four sounds, so you never have to look at the icon:
+
+| Sound | When | Meaning |
+|---|---|---|
+| One mid tone | You press to start | The microphone is open — speak |
+| One lower tone | You press to finish | Your words were captured; the tidying has begun |
+| One soft high tone | A second or two later | The text is on screen — safe to press Enter or dictate again |
+| Two low tones | A press the app could not honor | "I heard you, but I am busy or something is wrong" |
+
+A normal dictation sounds like: **mid** → you speak → **lower** → short silence → **high**. The silence is the tidying at work. The high tone is your green light.
+
+The double-low always means the press arrived but was refused — never that the app missed you, and never that words were lost:
+
+- **You pressed to start while the last dictation was still finishing.** Wait for its high tone, then press again.
+- **You pressed to stop when nothing was recording.** Press once more to start fresh.
+- **The microphone did not open.** The icon goes orange; hover over it for the reason.
+- **You clicked into another window before the text arrived.** It was held back rather than pasted into the wrong place. Click into the right box and press **Shift+Alt+Z**.
+
+One rule covers everything: do not act before the high tone, and do not worry after the double-low.
+
+To turn all sounds off, set `"play_sounds": false` in `config.json` (right-click the icon, **Open the settings folder**).
+
 ## Changing your key
 
 Insert is the default because it is free on most computers. If it clashes with something you use, pick another: right-click the icon near your clock and choose **Change my dictation key**.
