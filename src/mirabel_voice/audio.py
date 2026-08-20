@@ -1,20 +1,28 @@
 """Microphone capture.
 
-The recorder collects mono 16-bit audio while the hotkey is down. It writes
-the result to a WAV file, because the speech-to-text API reads WAV directly.
+The recorder collects mono 16-bit audio while the hotkey is down. It hands
+the result to the speech-to-text API as Opus, which carries the same words
+in about a ninth of the bytes and therefore uploads faster.
 """
 
 from __future__ import annotations
 
 import io
+import logging
 import threading
 import wave
 from dataclasses import dataclass
 
 import numpy as np
 
+log = logging.getLogger(__name__)
+
 SAMPLE_WIDTH_BYTES = 2  # 16-bit audio
 CHANNELS = 1
+
+#: What an encoded recording is called and how it is announced to the API.
+WAV_UPLOAD = ("speech.wav", "audio/wav")
+OPUS_UPLOAD = ("speech.ogg", "audio/ogg")
 
 
 @dataclass
@@ -52,6 +60,71 @@ class Recording:
             handle.setframerate(self.sample_rate)
             handle.writeframes(self.samples.astype("<i2").tobytes())
         return buffer.getvalue()
+
+    def to_opus_bytes(self) -> bytes:
+        """Return the audio as the content of an Ogg Opus file.
+
+        Raises:
+            RuntimeError: soundfile is missing or the encoder refused.
+        """
+        try:
+            import soundfile
+        except ImportError as error:  # pragma: no cover - import guard
+            raise RuntimeError("soundfile is not installed") from error
+
+        # libsndfile reads past the end of a read-only buffer, so the array
+        # handed to it must own its memory. astype always copies.
+        samples = self.samples.astype(np.int16)
+        buffer = io.BytesIO()
+        # OGG/VORBIS is deliberately not offered: libsndfile 1.2.2 kills the
+        # process outright when asked to encode speech as Vorbis. Opus is
+        # both smaller and stable.
+        soundfile.write(
+            buffer, samples, self.sample_rate, format="OGG", subtype="OPUS"
+        )
+        return buffer.getvalue()
+
+    def for_upload(self) -> tuple[str, bytes, str]:
+        """Return the file name, bytes, and type to send to the API.
+
+        Opus carries the same words in about a ninth of the bytes, which
+        makes the upload quicker. A recording that will not encode is sent
+        as WAV rather than lost.
+        """
+        try:
+            payload = self.to_opus_bytes()
+        except Exception as error:  # noqa: BLE001 - never lose a dictation
+            log.warning("Sending WAV because Opus encoding failed: %s", error)
+            name, mime = WAV_UPLOAD
+            return name, self.to_wav_bytes(), mime
+        name, mime = OPUS_UPLOAD
+        return name, payload, mime
+
+
+def check_encoder() -> tuple[bool, str]:
+    """Confirm that a recording can be encoded as Opus.
+
+    Returns whether it worked and a line to show the user. A packaged copy
+    with a missing codec falls back to WAV silently, so this is the only
+    way to tell the two apart from outside.
+    """
+    rate = 16000
+    seconds = np.linspace(0, 1.0, rate, endpoint=False)
+    tone = (np.sin(2 * np.pi * 220 * seconds) * 8000).astype(np.int16)
+    probe = Recording(samples=tone, sample_rate=rate)
+    wav = len(probe.to_wav_bytes())
+    try:
+        opus = len(probe.to_opus_bytes())
+    except Exception as error:  # noqa: BLE001 - report every failure the same way
+        return False, (
+            f"The audio encoder does not work: {error}\n"
+            "Dictation still works, but it sends about nine times more "
+            "audio than it needs to."
+        )
+    return True, (
+        f"The audio encoder works. One second of sound is {wav} bytes as "
+        f"WAV and {opus} bytes as Opus."
+    )
 
 
 class Recorder:

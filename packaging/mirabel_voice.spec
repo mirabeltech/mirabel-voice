@@ -30,6 +30,10 @@ datas = [(str(ROOT / "src" / "mirabel_voice" / "data"), "mirabel_voice/data")]
 # sounddevice keeps its copy of PortAudio in a separate data package. It
 # is a module rather than a package, so its own name collects nothing.
 datas += collect_data_files("_sounddevice_data", include_py_files=False)
+# Same trap as sounddevice: soundfile is a module, and the libsndfile DLL it
+# needs lives in the sibling _soundfile_data package. Miss it and every
+# recording silently falls back to WAV.
+datas += collect_data_files("_soundfile_data", include_py_files=False)
 
 hiddenimports = collect_submodules("mirabel_voice") + [
     # pystray and pynput choose a backend at import time. PyInstaller
@@ -38,6 +42,7 @@ hiddenimports = collect_submodules("mirabel_voice") + [
     "pynput.keyboard._win32",
     "pynput.mouse._win32",
     # The OpenAI live transcription path opens a websocket.
+    "soundfile",
     "websockets",
     "websockets.asyncio.client",
 ]

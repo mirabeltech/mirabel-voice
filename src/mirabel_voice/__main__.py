@@ -111,6 +111,11 @@ def main(argv: list[str] | None = None) -> int:
         help="Test the stored keys against both providers and exit.",
     )
     parser.add_argument(
+        "--check-audio",
+        action="store_true",
+        help="Test that the audio encoder works and exit.",
+    )
+    parser.add_argument(
         "--pick-hotkey",
         action="store_true",
         help="Press a key to choose your dictation key, then exit.",
@@ -134,6 +139,16 @@ def main(argv: list[str] | None = None) -> int:
         from .keycheck import check_keys
 
         ok, message = check_keys()
+        print(message)
+        return 0 if ok else 1
+
+    if args.check_audio:
+        # A packaged copy that cannot load the encoder still dictates, but
+        # sends nine times more audio and never says so. This is how you
+        # find that out.
+        from .audio import check_encoder
+
+        ok, message = check_encoder()
         print(message)
         return 0 if ok else 1
 

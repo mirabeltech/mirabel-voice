@@ -21,8 +21,10 @@ def test_request_carries_the_model_and_the_language():
     call = client.transcriptions.calls[0]
     assert call["model"] == "whisper-1"
     assert call["language"] == "en"
-    assert call["file"][0] == "speech.wav"
-    assert call["file"][1][:4] == b"RIFF"
+    # The audio goes up as Opus, which is about a ninth of the WAV size.
+    assert call["file"][0] == "speech.ogg"
+    assert call["file"][1][:4] == b"OggS"
+    assert call["file"][2] == "audio/ogg"
 
 
 def test_no_language_key_when_the_language_is_unset():
