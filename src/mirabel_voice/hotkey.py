@@ -15,6 +15,7 @@ The names "win", "windows", and "super" all mean the Windows key.
 from __future__ import annotations
 
 import logging
+import threading
 import time
 from typing import Callable
 
@@ -32,6 +33,9 @@ TAP_SECONDS = 0.35
 # A press within this window after a TAP locks hands-free mode. A press
 # after a long hold never locks: that is the next dictation starting.
 DOUBLE_TAP_SECONDS = 0.5
+
+# How often the watchdog compares the remembered keys with the keyboard.
+WATCHDOG_SECONDS = 0.25
 
 
 class UnknownHotkeyError(ValueError):
@@ -94,6 +98,35 @@ def esc_id():  # noqa: ANN201
     return key_id(Key.esc)
 
 
+def key_is_down(resolved):  # noqa: ANN001, ANN201
+    """Ask the keyboard whether the key is physically held right now.
+
+    Returns True or False from Windows itself, or None when there is no
+    answer (not Windows, or a form of key it cannot look up).
+
+    The listener remembers which keys are down, but a busy machine can
+    lose a key-up event. The remembered key then makes the next press
+    look like key repeat, and that press dies without a sound. This is
+    the ground truth that lets the watchdog repair the memory.
+    """
+    try:
+        import ctypes
+
+        kind, value = resolved
+        if kind == "vk":
+            code = value
+        elif kind == "char":
+            scan = ctypes.windll.user32.VkKeyScanW(ord(value))
+            if scan == -1:
+                return None
+            code = scan & 0xFF
+        else:
+            return None
+        return bool(ctypes.windll.user32.GetAsyncKeyState(code) & 0x8000)
+    except Exception:  # noqa: BLE001 - not Windows, or an unknown key shape
+        return None
+
+
 class HotkeyListener:
     """Call on_start and on_stop when the user works the hotkey.
 
@@ -129,6 +162,10 @@ class HotkeyListener:
         self._bindings: list[dict] = []
         self._pressed: set = set()
         self._listener = None
+        # The hook thread and the watchdog both touch the key memory.
+        self._memory_lock = threading.Lock()
+        self._watch_stop = threading.Event()
+        self._watch_thread: threading.Thread | None = None
 
     def add_binding(self, spec: str, callback: Callable[[], None]) -> None:
         """Watch an extra key combination and call the callback on it.
@@ -168,7 +205,11 @@ class HotkeyListener:
 
     def handle_press(self, key) -> None:  # noqa: ANN001
         """Process one key-down event."""
-        resolved = self._canonical(key)
+        with self._memory_lock:
+            self._press_resolved(self._canonical(key))
+
+    def _press_resolved(self, resolved) -> None:  # noqa: ANN001
+        """Apply one key-down, given in comparable form. Hold the lock."""
         if resolved not in self._pressed:
             self._pressed.add(resolved)
             self._fire_bindings()
@@ -183,7 +224,11 @@ class HotkeyListener:
 
     def handle_release(self, key) -> None:  # noqa: ANN001
         """Process one key-up event."""
-        resolved = self._canonical(key)
+        with self._memory_lock:
+            self._release_resolved(self._canonical(key))
+
+    def _release_resolved(self, resolved) -> None:  # noqa: ANN001
+        """Apply one key-up, given in comparable form. Hold the lock."""
         self._pressed.discard(resolved)
         for binding in self._bindings:
             if resolved in binding["keys"]:
@@ -260,6 +305,29 @@ class HotkeyListener:
             log.exception("A hotkey action failed.")
             return None
 
+    def _sweep(self) -> None:
+        """Release every remembered key that the keyboard says is up.
+
+        Windows can lose a key-up event on a busy machine. The key then
+        stays in the memory, the next press of it looks like key repeat,
+        and that press is dropped before it can start or stop anything.
+        One lost release costs the user one dead press. Asking the
+        keyboard for the truth repairs the memory within a moment, and a
+        key that is genuinely held is left exactly as it is.
+        """
+        for resolved in list(self._down | self._pressed):
+            if key_is_down(resolved) is False:
+                with self._memory_lock:
+                    if resolved not in self._down and resolved not in self._pressed:
+                        continue  # its release arrived while we asked
+                    log.info("A lost key release was repaired: %s.", resolved)
+                    self._release_resolved(resolved)
+
+    def _watch(self) -> None:
+        """Run _sweep a few times a second until stop() is called."""
+        while not self._watch_stop.wait(WATCHDOG_SECONDS):
+            self._sweep()
+
     def start(self) -> None:
         """Begin to watch the keyboard."""
         from pynput import keyboard
@@ -269,9 +337,18 @@ class HotkeyListener:
             on_release=self.handle_release,
         )
         self._listener.start()
+        self._watch_stop.clear()
+        self._watch_thread = threading.Thread(
+            target=self._watch, name="mirabel-voice-key-watchdog", daemon=True
+        )
+        self._watch_thread.start()
 
     def stop(self) -> None:
         """Stop watching the keyboard."""
+        self._watch_stop.set()
+        if self._watch_thread is not None:
+            self._watch_thread.join(timeout=1.0)
+            self._watch_thread = None
         if self._listener is not None:
             self._listener.stop()
             self._listener = None
