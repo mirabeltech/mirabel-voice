@@ -1,3 +1,5 @@
+import threading
+
 import numpy as np
 
 from fakes import FakeAnthropic, FakeOpenAI, text_response
@@ -80,6 +82,10 @@ def make_app(
         cleaner=Cleaner(client=anthropic_client),
         injector=injector if injector is not None else CapturingInjector(),
     )
+    # Pin the focus. The paste path refuses to deliver into a window other
+    # than the one the dictation started in, and the real focus on the
+    # machine that runs the tests can change at any moment.
+    app._focus = lambda: 111
     return app
 
 
@@ -159,6 +165,31 @@ def test_paste_last_before_any_dictation_does_nothing():
     assert app.state == STATE_IDLE
 
 
+def test_a_changed_window_blocks_the_paste():
+    """The paste can land seconds after the hotkey. By then the user may
+    sit in another window, and the text would go to the wrong place."""
+    injector = CapturingInjector()
+    app = make_app(injector=injector)
+    handles = [111, 222]  # focus at the start, focus at delivery
+    app._focus = lambda: handles.pop(0) if handles else 222
+    run_cycle(app)
+    assert injector.sent == []
+    assert app.state == STATE_ERROR
+    assert app.last_text == "Hello world."  # paste-last can still deliver it
+
+
+def test_an_unknown_window_does_not_block_the_paste():
+    """A focus of 0 means Windows could not tell us. The paste deletes
+    nothing, so losing the dictation would be the worse outcome."""
+    injector = CapturingInjector()
+    app = make_app(injector=injector)
+    handles = [111]
+    app._focus = lambda: handles.pop(0) if handles else 0
+    run_cycle(app)
+    assert injector.sent == ["Hello world."]
+    assert app.state == STATE_IDLE
+
+
 def test_a_refused_start_reports_false_to_the_listener():
     app = make_app()
     app.start_recording()
@@ -173,6 +204,82 @@ def test_a_refused_start_reports_false_to_the_listener():
     app._worker = NeverFinishing()
     app.state = STATE_IDLE
     assert app.start_recording() is False
+
+
+class NeverFinishingWorker:
+    def is_alive(self):
+        return True
+
+
+def capture_beeps(app):
+    """Replace the beeper and return the list it fills."""
+    beeps = []
+    app._beep = lambda frequency, duration: beeps.append(frequency)
+    return beeps
+
+
+def join_beep(app):
+    if app._beep_thread is not None:
+        app._beep_thread.join(timeout=5)
+
+
+def test_a_busy_press_is_refused_with_a_low_double_beep():
+    app = make_app()
+    beeps = capture_beeps(app)
+    app._worker = NeverFinishingWorker()
+    assert app._request_start() is False
+    join_beep(app)
+    assert beeps == [330, 330]
+    assert app._actions.empty()  # nothing was queued for later
+
+
+def test_a_free_press_queues_the_start():
+    app = make_app()
+    assert app._request_start() is True
+    action = app._actions.get_nowait()
+    action()
+    assert app.state == STATE_RECORDING
+
+
+def test_a_stop_press_with_nothing_recording_beeps_refusal():
+    app = make_app()
+    beeps = capture_beeps(app)
+    app.stop_recording()
+    join_beep(app)
+    assert beeps == [330, 330]
+
+
+def test_a_finished_insert_plays_a_completion_tone():
+    app = make_app()
+    beeps = capture_beeps(app)
+    run_cycle(app)
+    assert app.state == STATE_IDLE
+    assert beeps[-1] == 990
+
+
+def test_hotkey_actions_run_on_the_dispatch_thread():
+    app = make_app()
+    ran = []
+    thread = threading.Thread(
+        target=app._dispatch, name="test-dispatch", daemon=True
+    )
+    thread.start()
+    app._enqueue(lambda: ran.append(threading.current_thread().name))
+    app._actions.put(None)  # end the loop
+    thread.join(timeout=5)
+    assert ran == ["test-dispatch"]  # not on the caller's thread
+
+
+def test_a_failing_action_does_not_stop_the_dispatcher():
+    app = make_app()
+    ran = []
+    thread = threading.Thread(target=app._dispatch, daemon=True)
+    thread.start()
+    app._enqueue(lambda: (_ for _ in ()).throw(RuntimeError("boom")))
+    app._enqueue(lambda: ran.append("after"))
+    app._actions.put(None)
+    thread.join(timeout=5)
+    assert ran == ["after"]
 
 
 class FakeStream:
@@ -209,7 +316,7 @@ def make_streaming_app(stream, injector=None, transcript="um hello world"):
     )
     openai_client = FakeOpenAI(text=transcript)
     anthropic_client = FakeAnthropic(response=text_response("Hello world."))
-    return VoiceApp(
+    app = VoiceApp(
         config=config,
         recorder=FakeRecorder(loud_recording()),
         transcriber=Transcriber(client=openai_client),
@@ -217,6 +324,8 @@ def make_streaming_app(stream, injector=None, transcript="um hello world"):
         injector=injector or CapturingInjector(),
         stream=stream,
     )
+    app._focus = lambda: 111  # see make_app
+    return app
 
 
 def test_streaming_transcript_is_cleaned_and_pasted():

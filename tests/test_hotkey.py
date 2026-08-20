@@ -220,6 +220,32 @@ def test_an_extra_binding_uses_the_same_grammar_as_the_main_hotkey():
         listener.add_binding("<shift>+<alt>+z", lambda: None)
 
 
+def test_a_refused_start_in_toggle_mode_leaves_the_listener_inactive():
+    """The app refuses to start while the previous transcript is still in
+    progress. A toggle that flips anyway goes out of step: the next press
+    fires a useless stop, and the press after that starts a recording the
+    user did not expect."""
+    events = Events()
+    answers = [False, True]  # busy on the first try, free on the second
+
+    def busy_start():
+        events.log.append("start-try")
+        return answers.pop(0)
+
+    listener = HotkeyListener(
+        hotkey="insert",
+        mode="toggle",
+        on_start=busy_start,
+        on_stop=events.stop,
+    )
+    listener.handle_press(Key.insert)
+    listener.handle_release(Key.insert)
+    assert listener.is_active is False
+    listener.handle_press(Key.insert)  # must try to start again, not stop
+    assert events.log == ["start-try", "start-try"]
+    assert listener.is_active is True
+
+
 def test_toggle_mode_switches_on_each_full_press():
     listener, events = make_listener(mode="toggle")
     listener.handle_press(Key.ctrl)

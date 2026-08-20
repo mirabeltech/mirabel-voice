@@ -216,8 +216,10 @@ class HotkeyListener:
                 self._active = False
                 self._safe(self.on_stop)
             else:
+                started = self._safe(self.on_start)
+                if started is False:
+                    return  # The app refused (busy or microphone error).
                 self._active = True
-                self._safe(self.on_start)
             return
         if self._locked:
             self._locked = False

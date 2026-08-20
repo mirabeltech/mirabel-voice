@@ -15,6 +15,7 @@ responsive while a transcript is in progress.
 from __future__ import annotations
 
 import logging
+import queue
 import threading
 import time
 from typing import Callable
@@ -106,6 +107,13 @@ class VoiceApp:
         self._listener: HotkeyListener | None = None
         self._worker: threading.Thread | None = None
         self._paste_thread: threading.Thread | None = None
+        # Hotkey presses arrive on the keyboard hook thread. Work that
+        # blocks there makes the whole keyboard lag, and Windows removes
+        # a hook that is slow too often. The press only queues an action;
+        # this thread does the work.
+        self._actions: queue.Queue = queue.Queue()
+        self._dispatch_thread: threading.Thread | None = None
+        self._beep_thread: threading.Thread | None = None
 
     def _set_state(self, state: str, detail: str = "") -> None:
         """Record the new state and tell the tray icon about it."""
@@ -126,6 +134,54 @@ class VoiceApp:
             winsound.Beep(frequency, duration_ms)
         except Exception:  # noqa: BLE001 - sound is optional
             pass
+
+    def _beep_refused(self) -> None:
+        """Play two low tones: the press arrived, and the app is busy.
+
+        The tones play on their own thread. The caller can be the keyboard
+        hook thread, and a blocked hook makes the whole keyboard lag.
+        """
+
+        def tones() -> None:
+            self._beep(330, 60)
+            self._beep(330, 60)
+
+        self._beep_thread = threading.Thread(
+            target=tones, name="mirabel-voice-beep", daemon=True
+        )
+        self._beep_thread.start()
+
+    def _enqueue(self, action: Callable[[], None]) -> None:
+        """Hand an action to the dispatch thread."""
+        self._actions.put(action)
+
+    def _dispatch(self) -> None:
+        """Run the queued hotkey actions, one at a time, in press order."""
+        while True:
+            action = self._actions.get()
+            if action is None:
+                return
+            try:
+                action()
+            except Exception:  # noqa: BLE001 - one bad action must not stop the rest
+                log.exception("A hotkey action failed.")
+
+    def _request_start(self) -> bool:
+        """Answer a start press without blocking the keyboard hook.
+
+        The refusal check is cheap and runs here, so the listener gets an
+        honest answer at once. The slow part - opening the microphone -
+        runs later on the dispatch thread. Presses stay in order because
+        the queue is first in, first out.
+        """
+        if self.state == STATE_RECORDING:
+            return True
+        if self._worker is not None and self._worker.is_alive():
+            log.info("The previous transcript is still in progress.")
+            self._beep_refused()
+            return False
+        self._enqueue(self.start_recording)
+        return True
 
     def start_recording(self) -> bool:
         """Open the microphone. Return True when a recording started."""
@@ -148,6 +204,7 @@ class VoiceApp:
         except Exception as error:  # noqa: BLE001
             log.exception("The microphone did not open.")
             self._set_state(STATE_ERROR, f"Microphone error: {error}")
+            self._beep_refused()
             return False
         self._open_stream()
         self._warm_cleanup()
@@ -261,6 +318,9 @@ class VoiceApp:
     def stop_recording(self) -> None:
         """Close the microphone and process the audio in a worker thread."""
         if self.state != STATE_RECORDING:
+            # The press landed, but nothing was recording. Say so, or the
+            # press feels dead and the user presses again.
+            self._beep_refused()
             return
         recording = self.recorder.stop()
         self.recorder.on_chunk = None
@@ -360,6 +420,10 @@ class VoiceApp:
             return
 
         words = len(text.split())
+        # A soft high tone: the text is on screen. The insert can land
+        # seconds after the hotkey, and without a signal the user starts
+        # the next dictation too early or presses the hotkey again.
+        self._beep(990, 50)
         self._set_state(STATE_IDLE, f"Inserted {words} words.")
 
     def _deliver(self, text: str) -> None:
@@ -369,8 +433,21 @@ class VoiceApp:
         clean ones. If the focus moved to another window, it changes
         nothing at all: the spoken words stay where they landed, and we
         never delete characters in a window we did not write to.
+
+        The paste path gets the same protection. The paste runs seconds
+        after the hotkey, so the user may have moved to another window by
+        then. A paste into that window puts the text in the wrong place.
         """
         if self.typer is None:
+            if self._paste_focus_moved():
+                log.warning("The window changed. The text was not pasted.")
+                self._set_state(
+                    STATE_ERROR,
+                    "You changed window, so the text was not inserted. "
+                    "Press the paste-last hotkey to insert it here.",
+                )
+                self._beep_refused()
+                raise _FocusMoved
             self.injector.send(text)
             return
         if self._focus() != self._focus_at_start:
@@ -384,15 +461,33 @@ class VoiceApp:
             raise _FocusMoved
         self.typer.replace_with(text)
 
+    def _paste_focus_moved(self) -> bool:
+        """Return True when another window clearly took the focus.
+
+        A handle of 0 means Windows could not tell us. The paste deletes
+        nothing, so an unknown focus must not block it: losing a dictation
+        is worse than a paste that may land one window late.
+        """
+        current = self._focus()
+        if not current or not self._focus_at_start:
+            return False
+        return current != self._focus_at_start
+
     def start(self) -> None:
         """Begin to listen for the hotkey."""
+        self._dispatch_thread = threading.Thread(
+            target=self._dispatch, name="mirabel-voice-actions", daemon=True
+        )
+        self._dispatch_thread.start()
+        # The listener calls these on the keyboard hook thread. Each one
+        # must return at once, so the real work goes through the queue.
         self._listener = HotkeyListener(
             hotkey=self.config.hotkey,
             mode=self.config.mode,
-            on_start=self.start_recording,
-            on_stop=self.stop_recording,
-            on_cancel=self.cancel_recording,
-            on_lock=self._show_hands_free,
+            on_start=self._request_start,
+            on_stop=lambda: self._enqueue(self.stop_recording),
+            on_cancel=lambda: self._enqueue(self.cancel_recording),
+            on_lock=lambda: self._enqueue(self._show_hands_free),
         )
         spec = self.config.paste_last_hotkey
         if spec:
@@ -458,6 +553,12 @@ class VoiceApp:
         if self._listener is not None:
             self._listener.stop()
             self._listener = None
+        if self._dispatch_thread is not None:
+            # The listener is silent now, so nothing new joins the queue.
+            # The queued actions run, then the None ends the thread.
+            self._actions.put(None)
+            self._dispatch_thread.join(timeout=3.0)
+            self._dispatch_thread = None
         if self.recorder.is_recording:
             self.recorder.cancel()
 
