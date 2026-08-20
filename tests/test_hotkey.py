@@ -284,3 +284,98 @@ def test_escape_still_cancels_after_normalising():
     listener.handle_press(Key.f9)
     listener.handle_press(Key.esc)
     assert events.log == ["start", "cancel"]
+
+
+# --- The watchdog: a lost key-up event must not swallow the next press ---
+
+
+def make_toggle_insert_listener():
+    events = Events()
+    listener = HotkeyListener(
+        hotkey="insert",
+        mode="toggle",
+        on_start=events.start,
+        on_stop=events.stop,
+    )
+    return listener, events
+
+
+def test_a_lost_release_swallows_exactly_one_press(monkeypatch):
+    """The bug itself, pinned down. Without a sweep, the stale key makes
+    the next press look like key repeat, and the user needs two clicks."""
+    listener, events = make_toggle_insert_listener()
+    listener.handle_press(Key.insert)      # start
+    # The key-up event is lost: no handle_release arrives.
+    listener.handle_press(Key.insert)      # looks like key repeat - dropped
+    listener.handle_release(Key.insert)
+    assert events.log == ["start"]         # the stop press died
+
+
+def test_the_sweep_repairs_a_lost_release_in_toggle_mode(monkeypatch):
+    import mirabel_voice.hotkey as hotkey_module
+
+    monkeypatch.setattr(hotkey_module, "key_is_down", lambda resolved: False)
+    listener, events = make_toggle_insert_listener()
+    listener.handle_press(Key.insert)      # start
+    # The key-up event is lost. The watchdog asks the keyboard.
+    listener._sweep()
+    listener.handle_press(Key.insert)      # must stop, not vanish
+    listener.handle_release(Key.insert)
+    assert events.log == ["start", "stop"]
+
+
+def test_the_sweep_stops_a_hold_recording_whose_release_was_lost(monkeypatch):
+    """In hold mode a lost release leaves the microphone open with no
+    finger on the key. The keyboard says the key is up, so we stop."""
+    import mirabel_voice.hotkey as hotkey_module
+
+    monkeypatch.setattr(hotkey_module, "key_is_down", lambda resolved: False)
+    listener, events = make_listener(mode="hold", hotkey="insert")
+    listener.handle_press(Key.insert)
+    listener._sweep()
+    assert events.log == ["start", "stop"]
+    assert listener.is_active is False
+
+
+def test_the_sweep_leaves_a_genuinely_held_key_alone(monkeypatch):
+    import mirabel_voice.hotkey as hotkey_module
+
+    monkeypatch.setattr(hotkey_module, "key_is_down", lambda resolved: True)
+    listener, events = make_listener(mode="hold", hotkey="insert")
+    listener.handle_press(Key.insert)
+    listener._sweep()
+    assert events.log == ["start"]         # still recording
+    assert listener.is_active is True
+
+
+def test_the_sweep_does_nothing_when_the_keyboard_gives_no_answer(monkeypatch):
+    """None means we are not on Windows, or the key form is unknown.
+    Without ground truth the memory must be trusted, not emptied."""
+    import mirabel_voice.hotkey as hotkey_module
+
+    monkeypatch.setattr(hotkey_module, "key_is_down", lambda resolved: None)
+    listener, events = make_listener(mode="hold", hotkey="insert")
+    listener.handle_press(Key.insert)
+    listener._sweep()
+    assert events.log == ["start"]
+    assert listener.is_active is True
+
+
+def test_the_sweep_unlatches_a_binding_whose_release_was_lost(monkeypatch):
+    """A stale latched binding would block every later paste-last press."""
+    import mirabel_voice.hotkey as hotkey_module
+
+    monkeypatch.setattr(hotkey_module, "key_is_down", lambda resolved: False)
+    fired = []
+    listener, events = make_toggle_insert_listener()
+    listener.add_binding("shift+alt+z", lambda: fired.append("paste"))
+    listener.handle_press(Key.shift)
+    listener.handle_press(Key.alt)
+    listener.handle_press(KeyCode.from_char("z"))
+    assert fired == ["paste"]
+    # Every key-up event of the combo is lost.
+    listener._sweep()
+    listener.handle_press(Key.shift)
+    listener.handle_press(Key.alt)
+    listener.handle_press(KeyCode.from_char("z"))
+    assert fired == ["paste", "paste"]
