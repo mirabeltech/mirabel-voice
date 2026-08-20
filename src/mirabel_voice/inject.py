@@ -17,7 +17,23 @@ import time
 log = logging.getLogger(__name__)
 
 PASTE_SETTLE_SECONDS = 0.05
-CLIPBOARD_RESTORE_SECONDS = 0.35
+# The wait before the old clipboard content goes back. A busy program can
+# read the clipboard well after the Ctrl+V arrives. A restore that comes
+# first makes that program paste the old content instead of the dictation.
+CLIPBOARD_RESTORE_SECONDS = 1.0
+
+
+def clipboard_sequence() -> int | None:
+    """Return the counter that Windows raises on every clipboard change.
+
+    Returns None when the counter is not available (not Windows).
+    """
+    try:
+        import ctypes
+
+        return int(ctypes.windll.user32.GetClipboardSequenceNumber())
+    except Exception:  # noqa: BLE001 - not Windows
+        return None
 
 
 def type_unicode(text: str) -> bool:
@@ -135,11 +151,13 @@ class TextInjector:
         restore_clipboard: bool = True,
         keyboard=None,  # noqa: ANN001 - a pynput controller, or None to build one
         clipboard=None,  # noqa: ANN001 - a pyperclip-like module, or None
+        sequence=None,  # noqa: ANN001 - a clipboard-change counter, or None
     ) -> None:
         self.method = method
         self.restore_clipboard = restore_clipboard
         self._keyboard = keyboard
         self._clipboard = clipboard
+        self._sequence = sequence or clipboard_sequence
         # One paste at a time: the dictation worker and a paste-last press
         # must not interleave their clipboard copy/paste/restore steps.
         self._send_lock = threading.Lock()
@@ -186,11 +204,17 @@ class TextInjector:
                 previous = None
 
         self.clipboard.copy(text)
+        marker = self._sequence()
         time.sleep(PASTE_SETTLE_SECONDS)
         self._press_paste_combination()
 
         if previous is not None:
             time.sleep(CLIPBOARD_RESTORE_SECONDS)
+            if marker is not None and self._sequence() != marker:
+                # The user or another program copied something new while
+                # we waited. A restore now would destroy that copy.
+                log.info("The clipboard changed, so it was not restored.")
+                return
             try:
                 self.clipboard.copy(previous)
             except Exception as error:  # noqa: BLE001
