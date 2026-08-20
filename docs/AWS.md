@@ -24,13 +24,15 @@ get billed through keys that live in AWS instead of on laptops.
 |---|---|
 | The account | A home for the function and the keys |
 | An admin sign-in | So daily work never uses the all-powerful root login |
+| Two secrets | The OpenAI and Anthropic keys, stored where only the relay can read them |
 | A budget alarm | An email if the AWS bill ever exceeds a few dollars |
 | Command-line access | So the deploy script can create and update the function |
 
-The keys, the token list, and the function itself are **not** in this
-guide. A guided script (the setup wizard, from ticket #22) creates
-those for you, because scripts do not mistype. Your job is the account;
-the wizard's job is everything inside it.
+You also put the two provider keys into the account (step 5), because
+you are the person who can create them. The token list and the function
+itself are **not** in this guide. A guided script (the setup wizard,
+from ticket #22) creates those, because scripts do not mistype. Your
+job is the account and the keys; the wizard's job is the rest.
 
 ## What you will NOT need
 
@@ -80,7 +82,37 @@ Write the region down. Everything the wizard creates goes in this
 region, and "my function disappeared" is almost always "wrong region
 selected".
 
-## Step 5: Budget alarm
+## Step 5: Put the provider keys into Secrets Manager
+
+The relay reads its keys from AWS Secrets Manager. You create both
+secrets by hand, so the keys go straight from the provider dashboards
+into AWS and never sit anywhere in between.
+
+First, create a fresh key at each provider. Do not reuse the existing
+org keys: the old ones already sit on pilot laptops, and a key that was
+never on a laptop needs no rotation later.
+
+1. At https://platform.openai.com, create an API key named
+   `mirabel-voice-relay`.
+2. At https://console.anthropic.com, create an API key named
+   `mirabel-voice-relay`.
+
+Then store each one, making sure the region menu still shows the
+region from step 4:
+
+1. Search for **Secrets Manager** and choose **Store a new secret**.
+2. Pick **Other type of secret**, then the **Plaintext** tab.
+3. Delete the example JSON and paste the OpenAI key as the entire
+   value. No quotes, no extra lines.
+4. Name it exactly `mirabel-voice/openai`. Default encryption is fine;
+   no rotation schedule. Save.
+5. Repeat for the Anthropic key, named exactly `mirabel-voice/anthropic`.
+
+The names matter: the relay looks these two up by name. The deploy
+verifies both keys with a live test call, so a paste error is caught
+before anyone dictates.
+
+## Step 6: Budget alarm
 
 1. Search for **Budgets** (under Billing and Cost Management).
 2. Create a budget: monthly, fixed, **$10**.
@@ -89,7 +121,7 @@ selected".
 The expected bill is around zero, so any alert from this is a signal
 worth reading, not noise.
 
-## Step 6: Command-line access for the deploy
+## Step 7: Command-line access for the deploy
 
 The deploy script talks to AWS from a developer machine. It needs a
 key pair for the `mirabel-admin` user.
@@ -105,21 +137,17 @@ key pair for the `mirabel-admin` user.
    two values, set the region from step 4, leave the output format
    empty.
 
-## Step 7: Hand over
+## Step 8: Hand over
 
 Tell the person running the wizard:
 
 - The region (step 4)
-- That `aws configure` succeeded on the deploy machine (step 6)
+- That the two secrets exist under the names in step 5
+- That `aws configure` succeeded on the deploy machine (step 7)
 
-They will also need the current **OpenAI** and **Anthropic** API keys
-at wizard time, because the wizard puts them into AWS Secrets Manager.
-The keys go straight from the provider dashboards into the wizard
-prompt; they never need to be written down anywhere in between.
-
-That is the whole account job. The wizard does the rest: the two key
-secrets, the token list, the Lambda function, its narrow permissions,
-and the first deploy.
+That is the whole job. The wizard does the rest: the token list, the
+Lambda function, its narrow permissions, and the first deploy. It
+finds your two secrets by name and never asks anyone for a key.
 
 ## Afterwards: what lives where
 
@@ -139,9 +167,9 @@ A dedicated account limits what a mistake can touch; an existing one
 keeps billing in one place. Both work.
 
 **Does this need to be done by a developer?**
-No. Steps 1-6 are console clicking with no code. The wizard step needs
-whoever has the provider keys and the deploy machine. For the pilot,
-that is Tommy.
+No. Steps 1-8 are console clicking with no code, though step 5 needs
+access to the org's OpenAI and Anthropic dashboards. The wizard step
+needs only the deploy machine. For the pilot, that is Tommy.
 
 **What happens if the card on the account expires?**
 AWS emails the root address (the shared mailbox from step 1) well
