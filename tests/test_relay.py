@@ -12,6 +12,7 @@ from mirabel_relay.relay import ANTHROPIC_BASE, Relay, Request
 
 TOKENS = {"tommy-token-1": "tommy", "priya-token-2": "priya"}
 REAL_KEY = "sk-ant-the-real-key"
+REAL_OPENAI_KEY = "sk-the-real-openai-key"
 
 CLEANUP_BODY = json.dumps(
     {
@@ -50,7 +51,11 @@ class FakeForward:
 def make_relay(forward=None):
     forward = forward if forward is not None else FakeForward()
     relay = Relay(
-        tokens=TOKENS, anthropic_key=REAL_KEY, forward=forward, clock=lambda: 0.0
+        tokens=TOKENS,
+        anthropic_key=REAL_KEY,
+        openai_key=REAL_OPENAI_KEY,
+        forward=forward,
+        clock=lambda: 0.0,
     )
     return relay, forward
 
@@ -183,3 +188,155 @@ def test_a_refusal_is_logged_without_naming_anyone(caplog):
     line = json.loads(lines[0].removeprefix("usage "))
     assert line["token"] == "-"
     assert line["outcome"] == "refused"
+
+
+# --- The transcribe route: audio through the relay ---
+
+
+BOUNDARY = "test-boundary-1234"
+
+
+def ogg_audio(seconds=2.0):
+    """A minimal Ogg stream whose last page says it is this long."""
+    granule = int(seconds * 48000)
+    page = b"OggS" + bytes(2) + granule.to_bytes(8, "little") + bytes(14)
+    return b"OggS" + bytes(2) + bytes(8) + bytes(14) + page
+
+
+def wav_audio(seconds=2.0):
+    """A minimal WAV whose header says it is this long (16 kHz mono)."""
+    byte_rate = 32000
+    data_size = int(seconds * byte_rate)
+    fmt = (
+        (1).to_bytes(2, "little")          # PCM
+        + (1).to_bytes(2, "little")        # mono
+        + (16000).to_bytes(4, "little")    # sample rate
+        + byte_rate.to_bytes(4, "little")
+        + (2).to_bytes(2, "little")
+        + (16).to_bytes(2, "little")
+    )
+    body = b"WAVE" + b"fmt " + len(fmt).to_bytes(4, "little") + fmt
+    body += b"data" + data_size.to_bytes(4, "little")
+    return b"RIFF" + (len(body) + data_size).to_bytes(4, "little") + body
+
+
+def multipart(audio, filename="speech.ogg", model="gpt-4o-mini-transcribe"):
+    """Build the multipart body the OpenAI SDK would send."""
+    b = BOUNDARY.encode()
+    parts = []
+    for name, value in [
+        ("model", model),
+        ("language", "en"),
+        ("prompt", "Spell these terms correctly: ChargeBrite"),
+    ]:
+        parts.append(
+            b"--" + b + b"\r\n"
+            b'Content-Disposition: form-data; name="' + name.encode() + b'"\r\n'
+            b"\r\n" + value.encode() + b"\r\n"
+        )
+    parts.append(
+        b"--" + b + b"\r\n"
+        b'Content-Disposition: form-data; name="file"; filename="'
+        + filename.encode() + b'"\r\n'
+        b"Content-Type: audio/ogg\r\n\r\n" + audio + b"\r\n"
+    )
+    parts.append(b"--" + b + b"--\r\n")
+    return b"".join(parts)
+
+
+def transcribe_request(token="tommy-token-1", audio=None, filename="speech.ogg"):
+    audio = audio if audio is not None else ogg_audio()
+    headers = {"content-type": f"multipart/form-data; boundary={BOUNDARY}"}
+    if token is not None:
+        headers["Authorization"] = f"Bearer {token}"
+    return Request(
+        method="POST",
+        path="/v1/audio/transcriptions",
+        headers=headers,
+        body=multipart(audio, filename=filename),
+    )
+
+
+def test_a_recording_comes_back_as_text():
+    relay, forward = make_relay(FakeForward(body=b"um hello there"))
+    reply = relay.handle(transcribe_request())
+    assert reply.status == 200
+    assert reply.body == b"um hello there"
+    assert forward.calls[0]["url"].endswith("/v1/audio/transcriptions")
+
+
+def test_the_multipart_body_travels_unchanged():
+    """The audio, the language, and the spelling prompt must arrive at
+    OpenAI exactly as the SDK built them."""
+    relay, forward = make_relay(FakeForward(body=b"words"))
+    request = transcribe_request()
+    relay.handle(request)
+    assert forward.calls[0]["body"] == request.body
+
+
+def test_the_real_openai_key_goes_out_as_a_bearer():
+    relay, forward = make_relay(FakeForward(body=b"words"))
+    relay.handle(transcribe_request())
+    sent = forward.calls[0]["headers"]
+    assert sent["authorization"] == "Bearer " + REAL_OPENAI_KEY
+    assert "tommy-token-1" not in json.dumps(sent)
+
+
+def test_transcribe_auth_matches_the_cleanup_route():
+    relay, forward = make_relay(FakeForward(body=b"words"))
+    reply = relay.handle(transcribe_request(token="stolen-guess"))
+    assert reply.status == 401
+    assert forward.calls == []
+    reply = relay.handle(transcribe_request(token=None))
+    assert reply.status == 401
+    assert forward.calls == []
+
+
+def test_the_usage_line_carries_audio_seconds_from_an_opus_upload(caplog):
+    relay, _ = make_relay(FakeForward(body=b"words"))
+    with caplog.at_level(logging.INFO):
+        relay.handle(transcribe_request(audio=ogg_audio(seconds=2.0)))
+    lines = [r.getMessage() for r in caplog.records if r.getMessage().startswith("usage ")]
+    line = json.loads(lines[0].removeprefix("usage "))
+    assert line["route"] == "transcribe"
+    assert line["model"] == "gpt-4o-mini-transcribe"
+    assert line["audio_seconds"] == 2.0
+    assert line["token"] == "tommy"
+
+
+def test_the_usage_line_carries_audio_seconds_from_a_wav_fallback(caplog):
+    """The app falls back to WAV when Opus encoding fails. The fallback
+    must not be orphaned by the relay."""
+    relay, _ = make_relay(FakeForward(body=b"words"))
+    with caplog.at_level(logging.INFO):
+        relay.handle(
+            transcribe_request(audio=wav_audio(seconds=3.0), filename="speech.wav")
+        )
+    lines = [r.getMessage() for r in caplog.records if r.getMessage().startswith("usage ")]
+    line = json.loads(lines[0].removeprefix("usage "))
+    assert line["audio_seconds"] == 3.0
+
+
+def test_an_unreadable_recording_still_transcribes(caplog):
+    """The length is bookkeeping. A file the relay cannot measure must
+    still reach the provider - losing a dictation over a log field
+    would be absurd."""
+    relay, forward = make_relay(FakeForward(body=b"words"))
+    with caplog.at_level(logging.INFO):
+        reply = relay.handle(transcribe_request(audio=b"not an audio container"))
+    assert reply.status == 200
+    assert len(forward.calls) == 1
+    lines = [r.getMessage() for r in caplog.records if r.getMessage().startswith("usage ")]
+    line = json.loads(lines[0].removeprefix("usage "))
+    assert line["audio_seconds"] is None
+
+
+def test_no_transcribe_log_ever_contains_audio_bytes(caplog):
+    audio = ogg_audio()
+    relay, _ = make_relay(FakeForward(body=b"the spoken words"))
+    with caplog.at_level(logging.DEBUG):
+        relay.handle(transcribe_request(audio=audio))
+    for record in caplog.records:
+        message = record.getMessage()
+        assert "the spoken words" not in message
+        assert audio.hex()[:16] not in message
