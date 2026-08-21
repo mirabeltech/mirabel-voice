@@ -11,12 +11,12 @@ Press **Insert**, say what you want to write, then press **Insert** again. Your 
 Three things to expect:
 
 1. **Windows says "Windows protected your PC".** Click **More info**, then **Run anyway**. Windows says this about every program that has not paid for a certificate. Ours has not yet.
-2. **The installer asks for two keys.** Ask Tommy for them, and paste one into each box. It tests them before it finishes, so a wrong key is caught now rather than mid-sentence next week.
+2. **The installer asks for your token.** Ask Tommy for yours and paste it in. There are no API keys to enter: they stay on our server, and your computer never holds one. The installer tests your token before it finishes, so a wrong one is caught now rather than mid-sentence next week.
 3. **It does not ask for an administrator password.** Everything goes in your own profile.
 
 A microphone icon appears near your clock, and Mirabel Voice starts with Windows from then on. The whole thing takes about two minutes.
 
-To update later, download and run the newer file. Your settings and keys stay as they are.
+To update later, download and run the newer file. Your settings and your token stay as they are, and it does not ask for the token again.
 
 <details>
 <summary>Installing from the source code instead (for developers)</summary>
@@ -27,7 +27,7 @@ cd mirabel-voice
 powershell -ExecutionPolicy Bypass -File setup.ps1
 ```
 
-Setup sorts out the keys, checks that they work, and starts the app.
+Add `-RelayUrl https://<the relay address>` to set the machine up against the relay, the same as the installer does. Setup asks for your token, checks it, and starts the app. Without that switch it asks for provider keys instead and calls OpenAI and Anthropic directly, which is the development mode.
 
 </details>
 
@@ -114,7 +114,7 @@ If you often mix languages in one sentence, use `"language": null` instead and t
 
 ## Something is wrong?
 
-- **Nothing appears.** Look at the icon near your clock. Orange means an error; hover over it to read what happened. Usually the network or a key.
+- **Nothing appears.** Look at the icon near your clock. Orange means an error; hover over it to read what happened. Usually the network.
 - **Your text landed in the wrong window.** Press **Shift+Alt+Z** in the right one.
 - **Your key does nothing.** It may be one your laptop keeps for itself. Run the key picker above and choose another.
 - **Words appear in a small box instead of your text box.** Your key has Ctrl, Alt, Shift, or Windows in it. Pick a plain key.
@@ -122,7 +122,7 @@ If you often mix languages in one sentence, use `"language": null` instead and t
 
 ## Removing it
 
-Open **Settings**, then **Apps**, find **Mirabel Voice**, and choose **Uninstall**. Your settings and keys stay in `%APPDATA%\MirabelVoice`, so a later install picks up where you left off. Delete that folder too if you want nothing left behind.
+Open **Settings**, then **Apps**, find **Mirabel Voice**, and choose **Uninstall**. Your settings and your token stay in `%APPDATA%\MirabelVoice`, so a later install picks up where you left off. Delete that folder too if you want nothing left behind.
 
 ---
 

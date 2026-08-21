@@ -7,6 +7,12 @@
 #
 # You need Inno Setup 6.3 or newer. Install it once:
 #   winget install JRSoftware.InnoSetup
+#
+# The installer asks each person for one relay token, so the build needs
+# the relay's address to bake in. It comes from -RelayUrl, or the
+# MIRABEL_VOICE_RELAY_URL environment variable, or a relay.json in the
+# repository root. The address is not a secret; the tokens are.
+param([string]$RelayUrl = "")
 
 $ErrorActionPreference = "Stop"
 $here = $PSScriptRoot
@@ -24,6 +30,20 @@ if (-not (Test-Path $py)) {
 Say ""
 Say "  Building Mirabel Voice" "Cyan"
 Say ""
+
+# --- The relay address -----------------------------------------------------
+if (-not $RelayUrl -and $env:MIRABEL_VOICE_RELAY_URL) { $RelayUrl = $env:MIRABEL_VOICE_RELAY_URL }
+$relayFile = Join-Path $root "relay.json"
+if (-not $RelayUrl -and (Test-Path $relayFile)) {
+    $RelayUrl = (Get-Content $relayFile -Raw | ConvertFrom-Json).relay_url
+}
+if (-not $RelayUrl) {
+    Say "  No relay address. The installer would have nowhere to send dictation." "Red"
+    Say "  Pass one:  packaging/build.ps1 -RelayUrl https://<the relay address>" "Red"
+    Say "  Or run:    python scripts/setup_relay.py   to see it." "Red"
+    exit 1
+}
+Say "  Relay $RelayUrl" "DarkGray"
 
 # --- 2. Tests --------------------------------------------------------------
 # A broken build must never reach anybody's computer.
@@ -61,7 +81,7 @@ if (-not $isccPath) {
 }
 
 Say "  Making the installer..."
-& $isccPath "/Q" "/DAppVersion=$version" (Join-Path $here "installer.iss")
+& $isccPath "/Q" "/DAppVersion=$version" "/DRelayUrl=$RelayUrl" (Join-Path $here "installer.iss")
 if ($LASTEXITCODE -ne 0) { Say "  Inno Setup failed." "Red"; exit 1 }
 
 $setup = Join-Path $root "dist\MirabelVoiceSetup-$version.exe"

@@ -117,3 +117,85 @@ def test_the_installed_app_points_people_at_the_installer(monkeypatch):
 
     monkeypatch.delattr(sys, "frozen", raising=False)
     assert "setup.ps1" in entry._how_to_fix_keys()
+
+
+# --- the one-token installer -----------------------------------------------
+
+INSTALLER = (PACKAGING / "installer.iss").read_text(encoding="utf-8")
+
+
+def test_set_relay_stores_the_address_and_the_token(tmp_path, monkeypatch):
+    monkeypatch.setenv("MIRABEL_VOICE_HOME", str(tmp_path))
+    from mirabel_voice.config import Config
+
+    assert entry.main(["--set-relay", "https://relay.example.on.aws", "a-token"]) == 0
+
+    saved = Config.load(tmp_path / "config.json")
+    assert saved.relay_url == "https://relay.example.on.aws"
+    assert saved.relay_token == "a-token"
+
+
+def test_set_relay_keeps_every_other_setting(tmp_path, monkeypatch):
+    # An update install must not cost somebody their dictation key or
+    # their custom words.
+    monkeypatch.setenv("MIRABEL_VOICE_HOME", str(tmp_path))
+    from mirabel_voice.config import Config
+
+    Config(hotkey="scroll_lock", custom_words=["Mirabel"], play_sounds=False).save(
+        tmp_path / "config.json"
+    )
+
+    entry.main(["--set-relay", "https://relay.example.on.aws", "a-token"])
+
+    saved = Config.load(tmp_path / "config.json")
+    assert saved.hotkey == "scroll_lock"
+    assert saved.custom_words == ["Mirabel"]
+    assert saved.play_sounds is False
+    assert saved.relay_token == "a-token"
+
+
+def test_an_empty_token_clears_the_stored_one(tmp_path, monkeypatch):
+    # The installer clears a refused token so that running it again asks
+    # for the token instead of skipping the page.
+    monkeypatch.setenv("MIRABEL_VOICE_HOME", str(tmp_path))
+    from mirabel_voice.config import Config
+
+    entry.main(["--set-relay", "https://relay.example.on.aws", "wrong-token"])
+    entry.main(["--set-relay", "https://relay.example.on.aws", ""])
+
+    assert not Config.load(tmp_path / "config.json").relay_token
+
+
+def test_the_installer_asks_for_exactly_one_thing():
+    assert INSTALLER.count("TokenPage.Add(") == 1
+
+
+def test_the_installer_no_longer_touches_provider_keys():
+    assert "keys.json" not in INSTALLER
+    assert "openai_api_key" not in INSTALLER
+    assert "anthropic_api_key" not in INSTALLER
+
+
+def test_the_installer_stores_the_token_through_the_app():
+    # Writing config.json from Inno would overwrite the other settings.
+    assert "--set-relay" in INSTALLER
+    assert "--check-keys" in INSTALLER
+
+
+def test_a_build_without_a_relay_address_fails_loudly():
+    assert "#ifndef RelayUrl" in INSTALLER
+    assert "#error" in INSTALLER
+
+
+def test_the_address_can_be_set_without_the_token(tmp_path, monkeypatch):
+    # An update install knows the relay's address but not the token that
+    # is already stored, and must not wipe it.
+    monkeypatch.setenv("MIRABEL_VOICE_HOME", str(tmp_path))
+    from mirabel_voice.config import Config
+
+    entry.main(["--set-relay", "https://old.example.on.aws", "a-token"])
+    entry.main(["--set-relay", "https://new.example.on.aws"])
+
+    saved = Config.load(tmp_path / "config.json")
+    assert saved.relay_url == "https://new.example.on.aws"
+    assert saved.relay_token == "a-token"

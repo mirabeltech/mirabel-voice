@@ -4,11 +4,9 @@ This is for whoever hands the app out. Everyone else only needs the README.
 
 ## Handing it out
 
-Send people to the [latest release](https://github.com/mirabeltech/mirabel-voice/releases/latest). They download one file, run it, and paste the two keys. They do not need Git, Python, or an administrator password.
+Send people to the [latest release](https://github.com/mirabeltech/mirabel-voice/releases/latest). They download one file, run it, and paste the token you gave them. They do not need Git, Python, an API key, or an administrator password.
 
-The installer puts the app in `%LOCALAPPDATA%\Programs\Mirabel Voice` and starts it with Windows. Running a newer installer over an older one replaces the program and leaves settings and keys alone.
-
-`setup.ps1` still works and is the right choice for developers. Both paths produce the same app.
+The installer puts the app in `%LOCALAPPDATA%\Programs\Mirabel Voice` and starts it with Windows. Running a newer installer over an older one replaces the program and leaves the settings and the token alone.
 
 ## Cutting a release
 
@@ -39,67 +37,53 @@ The installer is not signed, so Windows warns about it and some antivirus tools 
 
 To remove the warning you need a code-signing certificate: about $200-400 a year for a standard one, which stops the warning only after enough people have downloaded the file, or more for one that stops it at once. Ask Mirabel IT first — the company may already hold one, or may be able to allowlist the app. When you have a certificate, sign `dist\MirabelVoice\*.exe` before Inno Setup runs, and sign the finished installer after.
 
-## Giving people the keys without them typing anything
+## Handing out tokens
 
-**You prepare the keys once. The people you send the app to do nothing with them.** They never see a key and never see a key page.
+**Nobody you send the app to ever sees an API key.** They get one token, and that token only works through the relay.
 
-### What you do, one time
-
-1. Make one folder on a share that only the pilot users can open.
-2. Put `keys.json` in it:
-
-```json
-{
-  "openai_api_key": "sk-...",
-  "anthropic_api_key": "sk-ant-..."
-}
-```
-
-3. Put `MirabelVoiceSetup-x.y.z.exe` in the same folder.
-4. Send people that folder.
-
-### What each person does
-
-1. Open the folder.
-2. Double-click the installer.
-3. Click **More info**, then **Run anyway**, on the Windows warning.
-4. Click Next until it finishes.
-
-The installer finds `keys.json` beside itself and copies it to `%APPDATA%\MirabelVoice\keys.json`. It hides the key page because it no longer needs one.
-
-### The other two ways
-
-Both the installer and `setup.ps1` look in these places, in order, and stop at the first one:
-
-1. `keys.json` next to the installer (or next to `setup.ps1`) - the way above
-2. the path in the `MIRABEL_VOICE_KEYS` environment variable
-3. otherwise they ask the person to paste the keys
-
-Method 2 is the only one that asks a person to run something. Use it when the keys cannot sit next to the installer. Each person runs one line before setup:
+### Build the installer
 
 ```powershell
-$env:MIRABEL_VOICE_KEYS = "\\yourserver\share\mirabel-voice\keys.json"
+python scripts\setup_relay.py
+powershell -ExecutionPolicy Bypass -File packaging\build.ps1 -RelayUrl https://<the relay address>
 ```
 
-Method 3 needs no preparation. Fine for two or three people you can hand the keys to yourself.
+The wizard prints the address; the build bakes it into the installer so that nobody has to type it. A build with no address fails rather than producing an installer that points nowhere. The result is `dist\MirabelVoiceSetup-x.y.z.exe`.
 
-### Keeping the file safe
+You only rebuild when the app changes. The same installer serves everybody, because the token is the only per-person part and it is typed at install time.
 
-`keys.json` is plain text. Anyone who can open the folder can read both keys.
+### Give each person their token
 
-- Share the folder with named people. Never with "anyone with the link".
-- Never email it, never post it in Teams or Slack, never attach it to a GitHub release. The repository is public, and so is every release page.
-- `keys.json` is in `.gitignore`, so it cannot be committed by accident. Never put it in the repository.
+Issue it with `python scripts\setup_relay.py` (press `a`, their name, `d`) and send them two things: the installer, and their own token. Send the token on a channel you trust. It is printed once and cannot be read back.
 
-**Give each person their own key pair if you can.** Both dashboards let you make more than one key. Put each pair in that person's own folder. One leak then needs one revoked key instead of a rotation for everybody, and the dashboards show you who spends what. For a pilot of three to five people this is a short job and it is the best improvement available before the relay server.
+They then:
+
+1. Double-click the installer.
+2. Click **More info**, then **Run anyway**, on the Windows warning.
+3. Paste their token when asked.
+4. Click Next until it finishes.
+
+The installer checks the token through the relay before it finishes. A token the relay does not know is refused there, with a plain sentence, and cleared so that a second run asks again rather than skipping the page.
+
+A newer installer run over an older one keeps the token, the dictation key, and every other setting, and does not ask for the token again.
+
+### If somebody's token has to change
+
+Issue them a new one and have them run the installer again. It sees the stored token, so tell them to clear it first: right-click the icon near the clock, quit, then delete the `relay_token` line from `%APPDATA%\MirabelVoice\config.json`. Or run this from the install folder, which is quicker:
+
+```powershell
+& "$env:LOCALAPPDATA\Programs\Mirabel Voice\MirabelVoiceConsole.exe" --set-relay "https://<the relay address>" "<their new token>"
+```
+
+`setup.ps1` still works and is the right choice for developers. Both paths produce the same app.
 
 ## What this does and does not protect
 
-Every method above puts a copy of the key on each person's computer, in `%APPDATA%\MirabelVoice\keys.json`. Anyone who can use that computer can read it. That is acceptable for an internal pilot with spending limits set, and it is what the design agreed.
+A machine set up against the relay holds one token in `%APPDATA%\MirabelVoice\config.json` and no provider keys at all. Anyone who can use that computer can read the token, so treat it as that person's own credential: it names them in the usage report, and taking it away is one line in the wizard.
 
-It does not give you per-person usage figures, and it means one leak needs a rotation for everybody.
+What the relay does not do is separate people from each other's dictation history, because there is no history. Nothing spoken or written is stored anywhere, by the app or the relay.
 
-**That was the old arrangement. The relay replaced it** (2026-08-21). A machine set up against the relay holds one personal token and no provider keys at all, the keys live in AWS, and every request is logged against the holder's name. See **Running the relay** below. The two paragraphs above still describe any machine that has not moved over yet, and a `keys.json` on such a machine is still a key somebody can read.
+A developer running `setup.ps1` without `-RelayUrl` still holds two provider keys in `%APPDATA%\MirabelVoice\keys.json`, in plain text, exactly as the whole pilot used to. That mode exists so the app can be worked on without AWS. Use a key that belongs to you, not the org's, and delete the file when you are done with it.
 
 ## Running the relay
 
@@ -175,7 +159,9 @@ more audio and never says so, which shows up as a slow first second.
 
 ## Watching the cost
 
-Set spending limits on both dashboards before you hand the app out. Nothing else caps what the app can spend.
+Two things watch the spend now. The AWS budget alarm mails the shared mailbox at $5 and $10 a month, and `scripts/usage_report.py` says who the spend belongs to. Neither is a cap: nothing stops the app spending, so the alarm is a thing to read rather than ignore.
+
+The table below is the estimate the pilot started with. Once a month of real use is in the log, the report is the better number.
 
 The app ships with the live view **off**. A minute of speech then costs about **$0.0058**: $0.003 for the transcription (`gpt-4o-mini-transcribe`) and $0.0028 for the Claude cleanup. Over 22 working days that gives:
 

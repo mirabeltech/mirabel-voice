@@ -72,12 +72,12 @@ def _how_to_fix_keys() -> str:
     """Return the repair step that suits how this copy was installed."""
     if getattr(sys, "frozen", False):
         # The installed app has no setup.ps1 beside it. The installer is
-        # the only thing that stores keys, so send the user back to it.
+        # the only thing that stores a token, so send the user back to it.
         return (
-            "Run the Mirabel Voice installer again and enter the keys. "
-            "Ask Tommy for them."
+            "Run the Mirabel Voice installer again and enter your token. "
+            "Ask Tommy for it."
         )
-    return "Run setup.ps1 to store the keys, then start Mirabel Voice again."
+    return "Run setup.ps1 to store your token, then start Mirabel Voice again."
 
 
 def _show_info_box(message: str) -> None:
@@ -120,7 +120,14 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--check-keys",
         action="store_true",
-        help="Test the stored keys against both providers and exit.",
+        help="Test this machine's credentials and exit.",
+    )
+    parser.add_argument(
+        "--set-relay",
+        nargs="+",
+        metavar="URL TOKEN",
+        help="Point this machine at the relay, and exit. The token is "
+             "optional: pass the address alone to keep the stored token.",
     )
     parser.add_argument(
         "--check-audio",
@@ -145,6 +152,23 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.config:
         print(config_path())
+        return 0
+
+    if args.set_relay:
+        # The installer calls this. It writes only these two settings, so a
+        # person's hotkey, words, and preferences survive an update. The
+        # token is optional, so that an update install can refresh the
+        # address without knowing the token that is already stored.
+        if len(args.set_relay) > 2:
+            print("--set-relay takes the address, and optionally the token.",
+                  file=sys.stderr)
+            return 2
+        config = Config.load()
+        config.relay_url = args.set_relay[0].strip()
+        if len(args.set_relay) == 2:
+            config.relay_token = args.set_relay[1].strip()
+        config.save()
+        print(f"This machine now dictates through {config.relay_url}")
         return 0
 
     if args.check_keys:
