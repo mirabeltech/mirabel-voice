@@ -99,9 +99,60 @@ Every method above puts a copy of the key on each person's computer, in `%APPDAT
 
 It does not give you per-person usage figures, and it means one leak needs a rotation for everybody.
 
-**The proper answer, when the pilot grows:** put a small server in the middle. The app calls the server, the server holds the keys and calls OpenAI and Anthropic. The key never reaches anyone's computer, you can see who used what, and you can cut off one person without touching anyone else. The cost is that you then own a server, its sign-in, and its uptime — and it adds a hop to a pipeline that has been tuned hard for speed.
+**That was the old arrangement. The relay replaced it** (2026-08-21). A machine set up against the relay holds one personal token and no provider keys at all, the keys live in AWS, and every request is logged against the holder's name. See **Running the relay** below. The two paragraphs above still describe any machine that has not moved over yet, and a `keys.json` on such a machine is still a key somebody can read.
 
-## Rotating a key
+## Running the relay
+
+The relay is an AWS Lambda that holds the provider keys and forwards dictation to OpenAI and Anthropic. Each person presents a personal token instead of a key. Everything here runs from the repository, and every one of these commands is safe to run again.
+
+### Give somebody a token
+
+```powershell
+python scripts\setup_relay.py
+```
+
+Press `a`, type their name, press `d`. The wizard generates the token, saves the list, redeploys, and prints the new token once. Hand it over on a channel you trust. The name is what appears in the usage report, so use the name you want to read there.
+
+On their machine:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File setup.ps1 -RelayUrl https://<the relay address>
+```
+
+It asks for the token, checks it through the relay, and refuses to finish if the relay does not know it. A machine set up this way needs no provider keys.
+
+### Take a token away
+
+```powershell
+python scripts\setup_relay.py
+```
+
+Press `r`, type their name exactly as the list shows it, press `d`. Their token stops working the moment the deploy finishes, and nobody else is touched. There is nothing to collect from their laptop, because the token is all they ever had.
+
+### Rotate a provider key
+
+1. Make the new key on the provider dashboard.
+2. In AWS Secrets Manager (region `us-east-2`), open `mirabel-voice/openai` or `mirabel-voice/anthropic` and store the new value as the whole plaintext secret.
+3. Redeploy so the Lambda reads it: `python scripts\deploy_relay.py`. The deploy ends with a live test call through both providers, so a bad paste is caught here rather than during somebody's dictation.
+4. Delete the old key on the dashboard.
+
+Nobody's laptop is involved and nobody has to be told. That is the difference the relay bought.
+
+A machine still on the old arrangement holds its own keys, and rotating those means the `keys.json` steps below.
+
+### Pull the usage report
+
+```powershell
+python scripts\usage_report.py --days 30
+```
+
+It reads the relay's own usage lines out of CloudWatch and adds them up per person: dictations, minutes of speech, and cost split between transcription and cleanup. The lines carry no audio and no text, so the report can be shared without sharing anything anybody said.
+
+The rates live in `docs/pricing.json`. They are rates, not measurements, so check them against the provider pricing pages before you quote a number to anybody. A model with no price listed is reported at the bottom rather than counted as free.
+
+Refused requests appear as a count with no name attached, which is what a wrong or withdrawn token looks like from the relay's side. A few are normal, because the app's warm-up pings reach the relay before any dictation does. A run of them from nowhere is worth a look.
+
+## Rotating a key on a machine that still holds keys
 
 1. Make the new key on the provider dashboard.
 2. Replace the shared `keys.json`.
