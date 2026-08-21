@@ -16,7 +16,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8.0"]
+dev = ["pytest>=8.0", "boto3>=1.34"]
 
 [project.scripts]
 mirabel-voice = "mirabel_voice.__main__:main"
@@ -33,4 +33,4 @@ mirabel_voice = ["data/*.json"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-pythonpath = ["src"]
+pythonpath = ["src", "scripts"]
