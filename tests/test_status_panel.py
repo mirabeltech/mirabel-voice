@@ -250,4 +250,31 @@ def test_a_delivered_dictation_hides_the_panel():
     overlay._apply_status(STATE_WORKING, "")
     overlay._apply_status(STATE_IDLE, f"{INSERTED_PREFIX}9 words.")
     assert overlay.drawn[-1] == (None, None)
-    assert overlay._root.timers == []  # nothing left to fire
+
+    # The animation of the state before it was left with a timer in
+    # flight. It must find nothing to do rather than wake the panel up.
+    for _, timer in overlay._root.timers:
+        timer()
+    assert overlay.drawn[-1] == (None, None)
+
+
+def test_the_dot_breathes_only_while_the_app_is_busy():
+    # A still dot through a two second wait is the thing this panel
+    # exists to avoid. A message that is already going away does not
+    # need animating.
+    overlay = make_overlay()
+
+    overlay._apply_status(STATE_WORKING, "")
+    assert overlay._root.timers, "no animation while writing"
+
+    overlay._root.timers.clear()
+    overlay._apply_status(STATE_IDLE, "That was too short.")
+    milliseconds = [ms for ms, _ in overlay._root.timers]
+    assert milliseconds == [panel.NOTE_MS]  # the timeout, and nothing else
+
+
+def test_the_dot_fades_towards_the_background_and_back():
+    full = panel.DOTS[STATE_WORKING]
+    assert panel.blend(full, panel.BACKGROUND, 1.0) == full
+    assert panel.blend(full, panel.BACKGROUND, 0.0) == panel.BACKGROUND
+    assert panel.blend(full, panel.BACKGROUND, 0.5) not in (full, panel.BACKGROUND)
