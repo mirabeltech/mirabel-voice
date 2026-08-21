@@ -4,9 +4,11 @@ This is for whoever hands the app out. Everyone else only needs the README.
 
 ## Handing it out
 
-Send people to the [latest release](https://github.com/mirabeltech/mirabel-voice/releases/latest). They download one file, run it, and paste the token you gave them. They do not need Git, Python, an API key, or an administrator password.
+Send each person two things on a channel you trust: the zip, and their own token. They unzip it, run `Install.ps1`, and paste the token. They do not need Git, Python, an API key, or an administrator password.
 
-The installer puts the app in `%LOCALAPPDATA%\Programs\Mirabel Voice` and starts it with Windows. Running a newer installer over an older one replaces the program and leaves the settings and the token alone.
+**Do not attach the zip to a GitHub release.** The repository is public, and the zip carries the relay's address in `Install.ps1`. A token still gates every request, but a public address is one anybody can hammer, and every refused call is a billed Lambda invocation.
+
+The install puts the app in `%LOCALAPPDATA%\Programs\Mirabel Voice` and starts it with Windows. Running a newer one over an older one replaces the program and leaves the settings and the token alone.
 
 ## Cutting a release
 
@@ -19,53 +21,70 @@ git tag v0.2.0
 git push origin v0.2.0
 ```
 
-GitHub Actions then runs the tests, builds the installer, and publishes it. The tag must match `__version__`, or the build stops and says so.
+GitHub Actions then runs the tests and publishes release notes. It attaches no file, on purpose: the download carries the relay's address and this repository is public. The tag must match `__version__`, or the build stops and says so.
 
-Every push to `main` builds the installer too, without publishing it. That way a broken build is found on the day it breaks, not on release day. Look under **Actions** for the file.
+Every push to `main` builds the installer with a deliberately useless relay address, so a broken build is found on the day it breaks. That artifact is a compile check and is not something to hand anybody.
 
-To build one on your own machine instead:
+The download people actually install is built on your machine, with the real address:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File packaging\build.ps1
+powershell -ExecutionPolicy Bypass -File packaginguild_bundle.ps1 -RelayUrl https://<the relay address>
 ```
 
-That needs [Inno Setup](https://jrsoftware.org/isdl.php) 6.3 or newer.
+`packaginguild.ps1` makes the packaged program instead, and needs [Inno Setup](https://jrsoftware.org/isdl.php) 6.3 or newer. See **Build the download** below for which to use.
 
-## The "Windows protected your PC" warning
+## When Windows blocks it
 
-The installer is not signed, so Windows warns about it and some antivirus tools may hold it back. People click **More info**, then **Run anyway**. The README says so, and so does every release.
+Two different refusals, and they are not the same problem.
 
-To remove the warning you need a code-signing certificate: about $200-400 a year for a standard one, which stops the warning only after enough people have downloaded the file, or more for one that stops it at once. Ask Mirabel IT first — the company may already hold one, or may be able to allowlist the app. When you have a certificate, sign `dist\MirabelVoice\*.exe` before Inno Setup runs, and sign the finished installer after.
+**"Windows protected your PC"** is SmartScreen. It appears because the file is not signed. People click **More info**, then **Run anyway**, and it installs. Annoying, not blocking.
+
+**"An Application Control policy has blocked this file"** is Smart App Control, and there is no way past it. It refuses unsigned programs outright, it is on by default on clean Windows 11 installs, and turning it off is permanent. This is why the Python bundle exists: everything executable in it is signed by the Python Software Foundation, so Smart App Control allows it. See issue #35.
+
+To check a machine before sending anything:
+
+```powershell
+(Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\CI\Policy').VerifiedAndReputablePolicyState
+```
+
+`1` means Smart App Control is on and only the Python bundle will work there. `0`, blank, or an error means either download is fine.
+
+A code-signing certificate removes both problems: about $200-400 a year for a standard one, which quiets SmartScreen only after enough people have downloaded the file, or more for one that works at once. Ask Mirabel IT first, since the company may already hold one. It is worth buying when this goes past a handful of people. It is not needed for the pilot, because the bundle sidesteps both.
 
 ## Handing out tokens
 
 **Nobody you send the app to ever sees an API key.** They get one token, and that token only works through the relay.
 
-### Build the installer
+### Build the download
 
 ```powershell
 python scripts\setup_relay.py
-powershell -ExecutionPolicy Bypass -File packaging\build.ps1 -RelayUrl https://<the relay address>
+powershell -ExecutionPolicy Bypass -File packaging\build_bundle.ps1 -RelayUrl https://<the relay address>
 ```
 
-The wizard prints the address; the build bakes it into the installer so that nobody has to type it. A build with no address fails rather than producing an installer that points nowhere. The result is `dist\MirabelVoiceSetup-x.y.z.exe`.
+The wizard prints the address; the build bakes it into `Install.ps1` so that nobody has to type it. A build with no address fails rather than producing a download that points nowhere. The result is `dist\MirabelVoice-x.y.z-python.zip`, about 50 MB.
 
-You only rebuild when the app changes. The same installer serves everybody, because the token is the only per-person part and it is typed at install time.
+That zip holds Python's own embeddable build with the app installed into it. It exists because Windows Smart App Control refuses unsigned programs outright, with no way past it, and refuses ours (see issue #35). It does not refuse Python, which the Python Software Foundation signed, and it does not refuse our source, which is text. The build checks that signature and stops if it is not valid.
+
+`packaging\build.ps1` still makes the older pair, `MirabelVoiceSetup-x.y.z.exe` and `MirabelVoice-x.y.z.zip`, which hold a packaged program instead. They are smaller and they install the same way, but a machine with Smart App Control on cannot run either. Prefer the Python bundle until the program is signed.
+
+One cost: the Python bundle has no Tkinter, so the live view cannot open on it. The app notices and carries on without it, and the live view ships off anyway.
+
+You only rebuild when the app changes. The same zip serves everybody, because the token is the only per-person part and it is typed at install time.
 
 ### Give each person their token
 
-Issue it with `python scripts\setup_relay.py` (press `a`, their name, `d`) and send them two things: the installer, and their own token. Send the token on a channel you trust. It is printed once and cannot be read back.
+Issue it with `python scripts\setup_relay.py` (press `a`, their name, `d`) and send them two things: the zip, and their own token. Send the token on a channel you trust. It is printed once and cannot be read back.
 
 They then:
 
-1. Double-click the installer.
-2. Click **More info**, then **Run anyway**, on the Windows warning.
+1. Unzip the whole folder.
+2. Right-click `Install.ps1` and choose **Run with PowerShell**.
 3. Paste their token when asked.
-4. Click Next until it finishes.
 
-The installer checks the token through the relay before it finishes. A token the relay does not know is refused there, with a plain sentence, and cleared so that a second run asks again rather than skipping the page.
+The install checks the token through the relay before it finishes. A token the relay does not know is refused there, with a plain sentence, and cleared so that a second run asks again rather than skipping the page.
 
-A newer installer run over an older one keeps the token, the dictation key, and every other setting, and does not ask for the token again.
+A newer zip installed over an older one keeps the token, the dictation key, and every other setting, and does not ask for the token again.
 
 ### If somebody's token has to change
 

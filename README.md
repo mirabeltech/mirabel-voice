@@ -6,17 +6,30 @@ Press **Insert**, say what you want to write, then press **Insert** again. Your 
 
 ## Install
 
-**[Download Mirabel Voice](https://github.com/mirabeltech/mirabel-voice/releases/latest)** — take the `MirabelVoiceSetup` file and run it.
+**Ask Tommy for the download and your token.** They come together: a zip file and one line of text meant for you alone. There is no public download, because the file carries the address of our server and the pilot is a handful of people.
 
-Three things to expect:
+Then:
 
-1. **Windows says "Windows protected your PC".** Click **More info**, then **Run anyway**. Windows says this about every program that has not paid for a certificate. Ours has not yet.
-2. **The installer asks for your token.** Ask Tommy for yours and paste it in. There are no API keys to enter: they stay on our server, and your computer never holds one. The installer tests your token before it finishes, so a wrong one is caught now rather than mid-sentence next week.
-3. **It does not ask for an administrator password.** Everything goes in your own profile.
+1. **Unzip it** somewhere you can find, such as your Downloads folder. Keep the whole folder together.
+2. **Right-click `Install.ps1`** and choose **Run with PowerShell**.
+3. **Paste your token** when it asks. There are no API keys to enter: they stay on our server, and your computer never holds one. It tests your token before it finishes, so a wrong one is caught now rather than mid-sentence next week.
+
+It does not ask for an administrator password. Everything goes in your own profile.
 
 A microphone icon appears near your clock, and Mirabel Voice starts with Windows from then on. The whole thing takes about two minutes.
 
-To update later, download and run the newer file. Your settings and your token stay as they are, and it does not ask for the token again.
+To update later, unzip the newer file and run `Install.ps1` again. Your settings and your token stay as they are, and it does not ask for the token again.
+
+<details>
+<summary>If Windows says it cannot run the script</summary>
+
+Windows blocks downloaded scripts until you say otherwise. Open PowerShell in the unzipped folder and run this instead, which does the same thing:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File Install.ps1
+```
+
+</details>
 
 <details>
 <summary>Installing from the source code instead (for developers)</summary>

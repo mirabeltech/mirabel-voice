@@ -66,31 +66,35 @@ jobs:
           # Some directives need Inno Setup 6.3 or newer. Say which
           # version ran, so a failure here is readable.
           Write-Host "Inno Setup $((Get-Item $iscc).VersionInfo.ProductVersion)"
-          & $iscc /Q "/DAppVersion=${{ steps.prep.outputs.version }}" packaging\installer.iss
+          # A deliberately useless relay address. This build proves the
+          # installer still compiles; it is not something to hand out.
+          # The real download is built on the owner's machine with the
+          # real address, and shared privately. See ADMIN.md.
+          & $iscc /Q "/DAppVersion=${{ steps.prep.outputs.version }}" "/DRelayUrl=https://relay.invalid" packaging\installer.iss
           if ($LASTEXITCODE -ne 0) { exit 1 }
 
-      - name: Keep the installer for download
+      - name: Keep the build for inspection
         uses: actions/upload-artifact@v4
         with:
-          name: MirabelVoiceSetup-${{ steps.prep.outputs.version }}
+          name: compile-check-not-for-use-${{ steps.prep.outputs.version }}
           path: dist/MirabelVoiceSetup-*.exe
           if-no-files-found: error
 
-      - name: Publish the release
+      - name: Publish the release notes
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/MirabelVoiceSetup-*.exe
           generate_release_notes: true
           body: |
             ## Install
 
-            1. Download `MirabelVoiceSetup-${{ steps.prep.outputs.version }}.exe` below.
-            2. Run it. Windows says **"Windows protected your PC"**, because
-               the file is not signed. Click **More info**, then **Run anyway**.
-               This is expected.
-            3. Paste the two keys when the installer asks. Ask Tommy for them.
-            4. Click into any text box, press **Insert**, speak, press **Insert** again.
+            **Ask Tommy for the download and your token.** They come together.
 
-            No administrator password is needed. The app installs in your own
+            There is no file attached here on purpose. The download carries
+            the address of our relay, and this repository is public, so it
+            is shared directly with the people on the pilot instead.
+
+            Once you have it: unzip the folder, right-click `Install.ps1`,
+            choose **Run with PowerShell**, and paste your token. No API
+            keys, no administrator password. The app installs in your own
             profile and starts with Windows.
