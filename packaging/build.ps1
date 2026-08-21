@@ -7,6 +7,12 @@
 #
 # You need Inno Setup 6.3 or newer. Install it once:
 #   winget install JRSoftware.InnoSetup
+#
+# The installer asks each person for one relay token, so the build needs
+# the relay's address to bake in. It comes from -RelayUrl, or the
+# MIRABEL_VOICE_RELAY_URL environment variable, or a relay.json in the
+# repository root. The address is not a secret; the tokens are.
+param([string]$RelayUrl = "")
 
 $ErrorActionPreference = "Stop"
 $here = $PSScriptRoot
@@ -24,6 +30,20 @@ if (-not (Test-Path $py)) {
 Say ""
 Say "  Building Mirabel Voice" "Cyan"
 Say ""
+
+# --- The relay address -----------------------------------------------------
+if (-not $RelayUrl -and $env:MIRABEL_VOICE_RELAY_URL) { $RelayUrl = $env:MIRABEL_VOICE_RELAY_URL }
+$relayFile = Join-Path $root "relay.json"
+if (-not $RelayUrl -and (Test-Path $relayFile)) {
+    $RelayUrl = (Get-Content $relayFile -Raw | ConvertFrom-Json).relay_url
+}
+if (-not $RelayUrl) {
+    Say "  No relay address. The installer would have nowhere to send dictation." "Red"
+    Say "  Pass one:  packaging/build.ps1 -RelayUrl https://<the relay address>" "Red"
+    Say "  Or run:    python scripts/setup_relay.py   to see it." "Red"
+    exit 1
+}
+Say "  Relay $RelayUrl" "DarkGray"
 
 # --- 2. Tests --------------------------------------------------------------
 # A broken build must never reach anybody's computer.
@@ -49,9 +69,11 @@ $iscc = Get-Command iscc -ErrorAction SilentlyContinue
 if ($iscc) {
     $isccPath = $iscc.Source
 } else {
+    # winget installs Inno per-user by default, which is the last one.
     $isccPath = @(
         "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe",
-        "$env:ProgramFiles\Inno Setup 6\ISCC.exe"
+        "$env:ProgramFiles\Inno Setup 6\ISCC.exe",
+        "$env:LOCALAPPDATA\Programs\Inno Setup 6\ISCC.exe"
     ) | Where-Object { Test-Path $_ } | Select-Object -First 1
 }
 if (-not $isccPath) {
@@ -60,13 +82,34 @@ if (-not $isccPath) {
     exit 1
 }
 
+# --- 5a. The zip ------------------------------------------------------------
+# Smart App Control refuses unsigned setup executables, and offers no way
+# past it (see issue #35). The app's own binaries are not refused, so this
+# is the same install without a setup executable in it.
+Say "  Making the zip..."
+$staging = Join-Path $root "dist\zip"
+if (Test-Path $staging) { Remove-Item $staging -Recurse -Force }
+New-Item -ItemType Directory -Force $staging | Out-Null
+Copy-Item (Join-Path $root "dist\MirabelVoice") $staging -Recurse
+$installer = Get-Content (Join-Path $here "Install.ps1") -Raw
+$installer.Replace("__RELAY_URL__", $RelayUrl) |
+    Out-File -FilePath (Join-Path $staging "Install.ps1") -Encoding utf8
+$zip = Join-Path $root "dist\MirabelVoice-$version.zip"
+if (Test-Path $zip) { Remove-Item $zip -Force }
+Compress-Archive -Path (Join-Path $staging "*") -DestinationPath $zip
+Remove-Item $staging -Recurse -Force
+Say "  Zipped." "Green"
+
 Say "  Making the installer..."
-& $isccPath "/Q" "/DAppVersion=$version" (Join-Path $here "installer.iss")
+& $isccPath "/Q" "/DAppVersion=$version" "/DRelayUrl=$RelayUrl" (Join-Path $here "installer.iss")
 if ($LASTEXITCODE -ne 0) { Say "  Inno Setup failed." "Red"; exit 1 }
 
 $setup = Join-Path $root "dist\MirabelVoiceSetup-$version.exe"
 $size = [math]::Round((Get-Item $setup).Length / 1MB, 1)
+$zipSize = [math]::Round((Get-Item $zip).Length / 1MB, 1)
 
 Say ""
-Say "  Done. $setup ($size MB)" "Green"
+Say "  Done." "Green"
+Say "    $setup ($size MB)"
+Say "    $zip ($zipSize MB)   for machines with Smart App Control on"
 Say ""

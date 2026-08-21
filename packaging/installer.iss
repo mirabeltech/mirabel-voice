@@ -11,6 +11,12 @@
   #define AppVersion "0.0.0"
 #endif
 
+; The relay's address, baked in so that nobody has to type it. It is not a
+; secret; the per-person token is. build.ps1 passes this.
+#ifndef RelayUrl
+  #error RelayUrl is not set. Build with packaging/build.ps1, or pass /DRelayUrl=https://...
+#endif
+
 #define AppName "Mirabel Voice"
 #define AppExe "MirabelVoice.exe"
 #define ConsoleExe "MirabelVoiceConsole.exe"
@@ -65,7 +71,7 @@ Filename: "{sys}\taskkill.exe"; Parameters: "/F /IM {#AppExe}"; Flags: runhidden
 
 [Code]
 var
-  KeyPage: TInputQueryWizardPage;
+  TokenPage: TInputQueryWizardPage;
 
 { A blank line inside a message box.
 
@@ -78,58 +84,59 @@ begin
   Result := #13#10 + #13#10;
 end;
 
-function KeysTarget(): String;
+function ConfigTarget(): String;
 begin
-  Result := ExpandConstant('{userappdata}\MirabelVoice\keys.json');
+  Result := ExpandConstant('{userappdata}\MirabelVoice\config.json');
 end;
 
-{ Return a keys file that somebody prepared, or an empty string.
-  The order matches ADMIN.md: beside the installer first, then the
-  path in MIRABEL_VOICE_KEYS. }
-function PreparedKeys(): String;
+{ True when this computer already holds a token, which is what an update
+  install looks like. The token lives in the app's own settings file, so
+  that is where this looks; an empty or null value is not a token. }
+function HasToken(): Boolean;
 var
-  Candidate: String;
+  Lines: TArrayOfString;
+  Value: String;
+  I, At: Integer;
 begin
-  Result := '';
-  Candidate := ExpandConstant('{src}\keys.json');
-  if FileExists(Candidate) then
-  begin
-    Result := Candidate;
+  Result := False;
+  if not FileExists(ConfigTarget()) then
     Exit;
+  if not LoadStringsFromFile(ConfigTarget(), Lines) then
+    Exit;
+  for I := 0 to GetArrayLength(Lines) - 1 do
+  begin
+    At := Pos('"relay_token"', Lines[I]);
+    if At > 0 then
+    begin
+      Value := Trim(Copy(Lines[I], At + Length('"relay_token":') + 1, 200));
+      if (Value <> 'null') and (Value <> 'null,') and (Value <> '""') and (Value <> '"",') then
+        Result := True;
+    end;
   end;
-  Candidate := GetEnv('MIRABEL_VOICE_KEYS');
-  if (Candidate <> '') and FileExists(Candidate) then
-    Result := Candidate;
-end;
-
-function NeedsKeys(): Boolean;
-begin
-  Result := (not FileExists(KeysTarget())) and (PreparedKeys() = '');
 end;
 
 procedure InitializeWizard();
 begin
-  KeyPage := CreateInputQueryPage(wpSelectTasks,
-    'Your keys',
-    'Mirabel Voice needs two keys to work.',
-    'Ask Tommy for them, then paste one into each box. They are stored on this computer only.');
-  KeyPage.Add('OpenAI key:', False);
-  KeyPage.Add('Anthropic key:', False);
+  TokenPage := CreateInputQueryPage(wpSelectTasks,
+    'Your token',
+    'Mirabel Voice needs one token to work.',
+    'Ask Tommy for yours and paste it in. It is yours alone. There are no API keys to enter: the keys stay on our server, and this computer never holds one.');
+  TokenPage.Add('Token:', False);
 end;
 
 function ShouldSkipPage(PageID: Integer): Boolean;
 begin
-  Result := (PageID = KeyPage.ID) and (not NeedsKeys());
+  Result := (PageID = TokenPage.ID) and HasToken();
 end;
 
 function NextButtonClick(CurPageID: Integer): Boolean;
 begin
   Result := True;
-  if CurPageID = KeyPage.ID then
+  if CurPageID = TokenPage.ID then
   begin
-    if (Trim(KeyPage.Values[0]) = '') or (Trim(KeyPage.Values[1]) = '') then
+    if Trim(TokenPage.Values[0]) = '' then
     begin
-      MsgBox('Both keys are needed. Ask Tommy for them, then run this again.',
+      MsgBox('A token is needed. Ask Tommy for yours, then run this again.',
         mbError, MB_OK);
       Result := False;
     end;
@@ -147,40 +154,41 @@ begin
   Sleep(600);
 end;
 
-procedure StoreKeys();
+{ Store the address and the token by asking the app to store them.
+
+  Writing config.json from here would overwrite the dictation key, the
+  custom words, and every other setting, which an update install has to
+  keep. The app writes only these two fields and leaves the rest alone. }
+procedure StoreRelay(Arguments: String);
 var
-  Folder, Prepared: String;
-  Lines: TArrayOfString;
+  ResultCode: Integer;
 begin
-  Folder := ExpandConstant('{userappdata}\MirabelVoice');
-  ForceDirectories(Folder);
-
-  if FileExists(KeysTarget()) then
-    Exit;
-
-  Prepared := PreparedKeys();
-  if Prepared <> '' then
-  begin
-    FileCopy(Prepared, KeysTarget(), False);
-    Exit;
-  end;
-
-  { Braces here are part of the JSON text, not an Inno constant.
-
-    Inno writes UTF-8 only from an array of lines. There is no
-    SaveStringToUTF8File, singular. The app reads the file as utf-8-sig,
-    so the byte order mark this writes is expected. }
-  SetArrayLength(Lines, 4);
-  Lines[0] := '{';
-  Lines[1] := '  "openai_api_key": "' + Trim(KeyPage.Values[0]) + '",';
-  Lines[2] := '  "anthropic_api_key": "' + Trim(KeyPage.Values[1]) + '"';
-  Lines[3] := '}';
-  SaveStringsToUTF8File(KeysTarget(), Lines, False);
+  Exec(ExpandConstant('{app}\{#ConsoleExe}'), Arguments, '',
+    SW_HIDE, ewWaitUntilTerminated, ResultCode);
 end;
 
-{ Ask the app whether the keys are accepted by both providers. A wrong
-  key must be caught now, not during somebody's first dictation. }
-procedure CheckKeys();
+{ Store the address and a token. }
+procedure StoreToken(Token: String);
+begin
+  if Token = '' then
+    StoreRelay('--forget-relay-token')
+  else
+    StoreRelay('--set-relay "{#RelayUrl}" "' + Token + '"');
+end;
+
+{ Store the address alone, keeping whatever token is already here. An
+  update install runs this, so a relay that moved is followed. }
+procedure RefreshAddress();
+begin
+  StoreRelay('--set-relay "{#RelayUrl}"');
+end;
+
+{ Ask the app whether the relay accepts this token. A wrong token must be
+  caught now, not during somebody's first dictation.
+
+  A token the relay refuses is cleared again, so that running the
+  installer a second time asks for it instead of skipping the page. }
+procedure CheckToken();
 var
   ResultCode: Integer;
 begin
@@ -188,17 +196,23 @@ begin
     SW_HIDE, ewWaitUntilTerminated, ResultCode) then
     Exit;
   if ResultCode <> 0 then
-    MsgBox('One of the keys was not accepted.' + Gap() +
+  begin
+    StoreToken('');
+    MsgBox('That token was not accepted.' + Gap() +
       'Mirabel Voice is installed, but dictation will not work until the ' +
-      'keys are right. Delete this file and run the installer again:' +
-      Gap() + KeysTarget(), mbError, MB_OK);
+      'token is right. Check it with Tommy, then run this installer again ' +
+      'and paste it in.', mbError, MB_OK);
+  end;
 end;
 
 procedure CurStepChanged(CurStep: TSetupStep);
 begin
   if CurStep = ssPostInstall then
   begin
-    StoreKeys();
-    CheckKeys();
+    if HasToken() then
+      RefreshAddress()
+    else
+      StoreToken(Trim(TokenPage.Values[0]));
+    CheckToken();
   end;
 end;
