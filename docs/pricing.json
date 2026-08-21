@@ -1,0 +1,12 @@
+{
+  "_comment": "What the relay's usage lines are priced at. Check these against the provider pricing pages before you trust a report; they are rates, not measurements. Anthropic: https://www.anthropic.com/pricing  OpenAI: https://openai.com/api/pricing",
+  "checked": "2026-08-21",
+  "transcribe_per_minute": {
+    "gpt-4o-mini-transcribe": 0.003,
+    "gpt-live-transcribe": 0.017,
+    "whisper-1": 0.006
+  },
+  "cleanup_per_million_tokens": {
+    "claude-haiku-4-5": {"input": 1.0, "output": 5.0}
+  }
+}
