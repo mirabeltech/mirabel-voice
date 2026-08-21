@@ -110,6 +110,11 @@ class Config:
         restore_clipboard: True puts your old clipboard content back after
             a paste.
         play_sounds: True plays a short beep on start and on stop.
+        show_status: True shows a small panel near the bottom of the
+            screen while the app listens and while it writes your text,
+            so that the wait does not look like a failure. It also shows
+            the reason when a dictation produces nothing. It never takes
+            the keyboard focus and clicks pass through it.
         relay_url: The address of the relay that holds the provider keys.
             When it is set, transcription and cleanup travel through the
             relay and this machine needs no provider keys of its own.
@@ -140,6 +145,7 @@ class Config:
     inject_method: str = "paste"
     restore_clipboard: bool = True
     play_sounds: bool = True
+    show_status: bool = True
     relay_url: str | None = None
     relay_token: str | None = None
 

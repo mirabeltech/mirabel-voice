@@ -16,3 +16,7 @@ keys.json
 # Build inputs that packaging/prepare.py writes
 packaging/MirabelVoice.ico
 packaging/version_info.txt
+
+# The relay address. Not a secret, but this repository is public and
+# the download is handed out privately. See ADMIN.md.
+relay.json

@@ -62,13 +62,13 @@ python scripts\setup_relay.py
 powershell -ExecutionPolicy Bypass -File packaging\build_bundle.ps1 -RelayUrl https://<the relay address>
 ```
 
-The wizard prints the address; the build bakes it into `Install.ps1` so that nobody has to type it. A build with no address fails rather than producing a download that points nowhere. The result is `dist\MirabelVoice-x.y.z-python.zip`, about 50 MB.
+The wizard prints the address; the build bakes it into `Install.ps1` so that nobody has to type it. A build with no address fails rather than producing a download that points nowhere. The result is `dist\MirabelVoice-x.y.z-python.zip`, about 53 MB.
 
 That zip holds Python's own embeddable build with the app installed into it. It exists because Windows Smart App Control refuses unsigned programs outright, with no way past it, and refuses ours (see issue #35). It does not refuse Python, which the Python Software Foundation signed, and it does not refuse our source, which is text. The build checks that signature and stops if it is not valid.
 
 `packaging\build.ps1` still makes the older pair, `MirabelVoiceSetup-x.y.z.exe` and `MirabelVoice-x.y.z.zip`, which hold a packaged program instead. They are smaller and they install the same way, but a machine with Smart App Control on cannot run either. Prefer the Python bundle until the program is signed.
 
-One cost: the Python bundle has no Tkinter, so the live view cannot open on it. The app notices and carries on without it, and the live view ships off anyway.
+The bundle carries Tkinter, which the status panel and the live view both need and which neither the embeddable build nor the NuGet package ships. `build_bundle.ps1` takes it from the full Python that made the `.venv`, checks that each file is signed, and stops if it is not. That is why the build needs a python.org install of the same version on the machine, not only the `.venv`.
 
 You only rebuild when the app changes. The same zip serves everybody, because the token is the only per-person part and it is typed at install time.
 
