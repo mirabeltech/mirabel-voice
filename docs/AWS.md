@@ -65,18 +65,18 @@ for this step and then never again.
 This is the login for actual day-to-day work.
 
 1. Still in IAM, choose **Users**, then **Create user**.
-2. Name it `mirabel-admin`. Allow console access; set a password.
-3. Attach the AWS managed policy **AdministratorAccess**. (The Lambda
-   itself will get a far smaller role later. The wizard scopes it to
-   exactly two secrets and its own logs. Admin here is for the human.)
+2. Name it `mirabel-voice-admin`. Allow console access; set a password.
+3. Give it no policies yet. Step 7 grants exactly what the deploy
+   needs. (The Lambda gets a smaller role still: the wizard scopes it
+   to three named secrets and its own log group, nothing else.)
 4. Enable MFA for this user too.
-5. Sign out of root. From here on, always sign in as `mirabel-admin`.
+5. Sign out of root. From here on, always sign in as `mirabel-voice-admin`.
 
 ## Step 4: Set the region and keep it
 
-Pick **us-east-1 (N. Virginia)** and select it in the region menu at
-the top right of the console. Both providers' APIs are US-hosted, and
-one region keeps everything findable.
+Pick **us-east-2 (Ohio)** and select it in the region menu at the top
+right of the console. Both providers' APIs are US-hosted, and one
+region keeps everything findable.
 
 Write the region down. Everything the wizard creates goes in this
 region, and "my function disappeared" is almost always "wrong region
@@ -121,12 +121,33 @@ before anyone dictates.
 The expected bill is around zero, so any alert from this is a signal
 worth reading, not noise.
 
-## Step 7: Command-line access for the deploy
+## Step 7: Permissions for the deploy user
+
+The `mirabel-voice-admin` user needs rights to create the function,
+its role, and the token list. There are two ways to grant them, and
+the narrower one is the better one.
+
+**Narrow (preferred).** In IAM, open the `mirabel-voice-admin` user,
+choose **Add permissions** > **Create inline policy** > the **JSON**
+tab. Paste the contents of `docs/deploy-policy.json` over what is in
+the box, replacing `ACCOUNT_ID` with this account's number. Name it
+`mirabel-voice-deploy`. That policy reaches one Lambda function, one
+role, the `mirabel-voice/*` secrets, and that function's log group,
+and nothing else in the account.
+
+**Broad.** Attach the AWS managed policy **AdministratorAccess**
+instead. Simpler, and appropriate only in an account that exists for
+this one purpose.
+
+Either way, this step needs root or an existing administrator. A user
+cannot widen its own permissions - that is the point of them.
+
+## Step 8: Command-line access for the deploy
 
 The deploy script talks to AWS from a developer machine. It needs a
-key pair for the `mirabel-admin` user.
+key pair for the `mirabel-voice-admin` user.
 
-1. In IAM, open the `mirabel-admin` user, choose **Security
+1. In IAM, open the `mirabel-voice-admin` user, choose **Security
    credentials**, then **Create access key**.
 2. Pick **Command Line Interface (CLI)** as the use case.
 3. You get two values: an access key ID and a secret access key. Treat
@@ -137,17 +158,39 @@ key pair for the `mirabel-admin` user.
    two values, set the region from step 4, leave the output format
    empty.
 
-## Step 8: Hand over
+If your organization forbids long-lived access keys, use IAM Identity
+Center instead: `aws configure sso`, then pass the profile through to
+the scripts with `--profile`. Both work; the scripts do not care which
+kind of credential they are handed.
+
+## Step 9: Hand over
 
 Tell the person running the wizard:
 
 - The region (step 4)
 - That the two secrets exist under the names in step 5
-- That `aws configure` succeeded on the deploy machine (step 7)
+- That the deploy permissions are attached (step 7)
+- That `aws configure` succeeded on the deploy machine (step 8)
 
-That is the whole job. The wizard does the rest: the token list, the
-Lambda function, its narrow permissions, and the first deploy. It
-finds your two secrets by name and never asks anyone for a key.
+That is the whole job. They run:
+
+```
+pip install -e .[dev]
+python scripts/setup_relay.py
+```
+
+The wizard does the rest: the token list, the Lambda function, its
+narrow permissions, the Function URL, and the first deploy. It finds
+your two secrets by name and never asks anyone for a provider key. It
+ends by printing the relay's address and one token per person.
+
+Afterwards, every change to the relay is one command:
+
+```
+python scripts/deploy_relay.py
+```
+
+A second run updates what is there. It never creates a duplicate.
 
 ## Afterwards: what lives where
 
