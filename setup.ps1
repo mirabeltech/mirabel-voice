@@ -2,6 +2,11 @@
 # Run this once:
 #   powershell -ExecutionPolicy Bypass -File setup.ps1
 # It is safe to run again at any time.
+#
+# Pass -RelayUrl to set this machine up against the relay, which holds the
+# provider keys. Without it the machine talks to the providers directly and
+# needs both keys, which is the development mode.
+param([string]$RelayUrl = "")
 
 $ErrorActionPreference = "Stop"
 $root = $PSScriptRoot
@@ -35,9 +40,27 @@ if (-not (Test-Path $py)) {
 & $py -m pip install --quiet --disable-pip-version-check -e $root
 Say "  Installed." "Green"
 
-# --- 3. Keys ---------------------------------------------------------------
+# --- 3. Credentials --------------------------------------------------------
 $configDir = & $py -c "from mirabel_voice.config import config_dir; print(config_dir())"
 $keysFile = Join-Path $configDir "keys.json"
+
+# A relay machine holds one token and no provider keys. The address is not
+# secret and may be prepared for the person; the token is theirs alone.
+$relayFile = Join-Path $root "relay.json"
+if (-not $RelayUrl -and $env:MIRABEL_VOICE_RELAY_URL) { $RelayUrl = $env:MIRABEL_VOICE_RELAY_URL }
+if (-not $RelayUrl -and (Test-Path $relayFile)) {
+    $RelayUrl = (Get-Content $relayFile -Raw | ConvertFrom-Json).relay_url
+}
+
+function Save-RelayToken {
+    Say ""
+    Say "  The app needs your relay token. Ask Tommy for it." "Yellow"
+    $token = Read-Host "  Relay token"
+    if (-not $token) { Say "  A token is needed. Run this again when you have one." "Red"; exit 1 }
+    $token = $token.Trim()
+    & $py (Join-Path $root "scripts\set_relay.py") --url $RelayUrl --token $token | Out-Null
+    if ($LASTEXITCODE -ne 0) { Say "  The token could not be saved." "Red"; exit 1 }
+}
 
 function Save-Keys {
     Say ""
@@ -50,35 +73,54 @@ function Save-Keys {
         ConvertTo-Json | Out-File -FilePath $keysFile -Encoding utf8
 }
 
-if (-not (Test-Path $keysFile)) {
-    # Look for a keys file the administrator has already prepared, so
-    # nobody has to type a key. First one found wins.
-    $sources = @(
-        (Join-Path $root "keys.json"),          # shipped beside this script
-        $env:MIRABEL_VOICE_KEYS                 # a path or network share
-    ) | Where-Object { $_ -and (Test-Path $_) }
+if ($RelayUrl) {
+    # Keep the address current even for a machine that already has a token.
+    & $py (Join-Path $root "scripts\set_relay.py") --url $RelayUrl | Out-Null
+    $haveToken = & $py -c "from mirabel_voice.config import Config; print('yes' if Config.load().relay_token else 'no')"
+    if ($haveToken.Trim() -ne "yes") { Save-RelayToken }
 
-    if ($sources) {
-        New-Item -ItemType Directory -Force $configDir | Out-Null
-        Copy-Item $sources[0] $keysFile -Force
-        Say "  Keys found. Nothing to type." "Green"
-    } else {
-        Save-Keys
-    }
-}
-
-Say "  Checking the keys..."
-$check = & $py (Join-Path $root "scripts\check_keys.py")
-if ($LASTEXITCODE -ne 0) {
-    Say "  $check" "Red"
-    Say ""
-    Say "  Let's enter them again." "Yellow"
-    Remove-Item $keysFile -Force -Confirm:$false
-    Save-Keys
+    Say "  Checking the relay..."
     $check = & $py (Join-Path $root "scripts\check_keys.py")
-    if ($LASTEXITCODE -ne 0) { Say "  $check" "Red"; Say "  Ask Tommy to check the keys." "Red"; exit 1 }
+    if ($LASTEXITCODE -ne 0) {
+        Say "  $check" "Red"
+        Say ""
+        Say "  Let's enter the token again." "Yellow"
+        Save-RelayToken
+        $check = & $py (Join-Path $root "scripts\check_keys.py")
+        if ($LASTEXITCODE -ne 0) { Say "  $check" "Red"; Say "  Ask Tommy to check the token." "Red"; exit 1 }
+    }
+    Say "  The relay works. No keys on this machine." "Green"
+} else {
+    if (-not (Test-Path $keysFile)) {
+        # Look for a keys file the administrator has already prepared, so
+        # nobody has to type a key. First one found wins.
+        $sources = @(
+            (Join-Path $root "keys.json"),          # shipped beside this script
+            $env:MIRABEL_VOICE_KEYS                 # a path or network share
+        ) | Where-Object { $_ -and (Test-Path $_) }
+
+        if ($sources) {
+            New-Item -ItemType Directory -Force $configDir | Out-Null
+            Copy-Item $sources[0] $keysFile -Force
+            Say "  Keys found. Nothing to type." "Green"
+        } else {
+            Save-Keys
+        }
+    }
+
+    Say "  Checking the keys..."
+    $check = & $py (Join-Path $root "scripts\check_keys.py")
+    if ($LASTEXITCODE -ne 0) {
+        Say "  $check" "Red"
+        Say ""
+        Say "  Let's enter them again." "Yellow"
+        Remove-Item $keysFile -Force -Confirm:$false
+        Save-Keys
+        $check = & $py (Join-Path $root "scripts\check_keys.py")
+        if ($LASTEXITCODE -ne 0) { Say "  $check" "Red"; Say "  Ask Tommy to check the keys." "Red"; exit 1 }
+    }
+    Say "  Keys work." "Green"
 }
-Say "  Keys work." "Green"
 
 # --- 4. Your key -----------------------------------------------------------
 Say ""

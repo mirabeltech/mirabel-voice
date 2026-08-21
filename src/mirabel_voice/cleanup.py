@@ -18,6 +18,8 @@ from __future__ import annotations
 
 import logging
 
+from .config import relay_base
+
 log = logging.getLogger(__name__)
 
 SYSTEM_PROMPT = """You are a text filter. You rewrite voice dictation as \
@@ -65,19 +67,34 @@ class Cleaner:
         timeout: float = 20.0,
         custom_words: list[str] | None = None,
         client=None,  # noqa: ANN001 - an Anthropic client, or None to build one
+        relay_url: str | None = None,
+        relay_token: str | None = None,
     ) -> None:
         self.model = model
         self.timeout = timeout
         self.custom_words = custom_words or []
         self._client = client
+        self.relay_url = relay_url
+        self.relay_token = relay_token
 
     @property
     def client(self):  # noqa: ANN201
-        """Return the Anthropic client. Build it on first use."""
+        """Return the Anthropic client. Build it on first use.
+
+        A relay address redirects the same client rather than replacing it.
+        The SDK writes /v1/messages itself, so the bare relay address is
+        what belongs here.
+        """
         if self._client is None:
             import anthropic
 
-            self._client = anthropic.Anthropic()
+            if self.relay_url:
+                self._client = anthropic.Anthropic(
+                    base_url=relay_base(self.relay_url),
+                    api_key=self.relay_token,
+                )
+            else:
+                self._client = anthropic.Anthropic()
         return self._client
 
     def _system(self) -> str:

@@ -38,7 +38,23 @@ OGG_OPUS_GRANULE_RATE = 48_000
 
 # Headers that carry the caller's credential or the transport's own
 # bookkeeping. They must not travel on to the provider.
-STRIPPED_HEADERS = {"x-api-key", "authorization", "host", "content-length"}
+#
+# accept-encoding is in the list for a different reason. The SDKs ask for
+# gzip, and a compressed reply arriving here would have to be decompressed
+# to be understood or passed on with its content-encoding intact. Asking
+# the provider for plain bytes instead keeps the relay a byte forwarder.
+# The bodies are a few kilobytes, so the compression buys nothing here.
+STRIPPED_HEADERS = {
+    "x-api-key",
+    "authorization",
+    "host",
+    "content-length",
+    "accept-encoding",
+}
+
+# Reply headers the client needs to read the body. Anything else the
+# provider sends is the provider's own bookkeeping and stops here.
+PASSED_REPLY_HEADERS = ("content-type", "content-encoding")
 
 
 @dataclass
@@ -227,10 +243,14 @@ class Relay:
             usage.update(usage_from_reply(body) or {})
         self._log_usage(name, route, model, usage or None, latency, outcome)
 
-        content_type = {
-            k.lower(): v for k, v in reply_headers.items()
-        }.get("content-type", "application/json")
-        return Response(status, body, {"content-type": content_type})
+        lowered = {k.lower(): v for k, v in reply_headers.items()}
+        headers = {"content-type": lowered.get("content-type", "application/json")}
+        # A provider that compresses anyway must say so, or the client
+        # reads gzip bytes as text and the call fails at the last step.
+        for name in PASSED_REPLY_HEADERS[1:]:
+            if lowered.get(name):
+                headers[name] = lowered[name]
+        return Response(status, body, headers)
 
     @staticmethod
     def _log_usage(

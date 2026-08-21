@@ -340,3 +340,43 @@ def test_no_transcribe_log_ever_contains_audio_bytes(caplog):
         message = record.getMessage()
         assert "the spoken words" not in message
         assert audio.hex()[:16] not in message
+
+
+# --- compression -----------------------------------------------------------
+
+def test_the_provider_is_asked_for_plain_bytes():
+    # The SDKs ask for gzip. The relay forwards bodies untouched, so a
+    # compressed reply would reach the app as unreadable bytes.
+    relay, forward = make_relay()
+    request = cleanup_request()
+    request.headers["accept-encoding"] = "gzip, deflate"
+    relay.handle(request)
+    sent = {k.lower() for k in forward.calls[0]["headers"]}
+    assert "accept-encoding" not in sent
+
+
+class CompressingForward(FakeForward):
+    """A provider that compresses the reply regardless."""
+
+    def __call__(self, method, url, headers, body):
+        super().__call__(method, url, headers, body)
+        return (
+            200,
+            {"content-type": "application/json", "content-encoding": "gzip"},
+            b"\x1f\x8b compressed",
+        )
+
+
+def test_a_compressed_reply_still_says_it_is_compressed():
+    # Without the header the client reads gzip bytes as text and the
+    # cleanup falls back to the raw transcript.
+    relay, _ = make_relay(forward=CompressingForward())
+    reply = relay.handle(cleanup_request())
+    assert reply.headers["content-encoding"] == "gzip"
+
+
+def test_the_usage_line_is_emitted_at_a_level_lambda_keeps(caplog):
+    relay, _ = make_relay()
+    with caplog.at_level(logging.INFO, logger="mirabel_relay.relay"):
+        relay.handle(cleanup_request())
+    assert any(record.levelno >= logging.INFO for record in caplog.records)

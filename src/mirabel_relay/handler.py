@@ -30,6 +30,11 @@ from mirabel_relay.relay import Relay, Request, Response
 
 log = logging.getLogger(__name__)
 
+# The Lambda runtime leaves the root logger at WARNING, which drops every
+# usage line the cost report is built from. The relay's own loggers say
+# what they need at INFO; nothing else in the account is affected.
+logging.getLogger("mirabel_relay").setLevel(logging.INFO)
+
 DEFAULT_OPENAI_SECRET = "mirabel-voice/openai"
 DEFAULT_ANTHROPIC_SECRET = "mirabel-voice/anthropic"
 DEFAULT_TOKENS_SECRET = "mirabel-voice/tokens"
