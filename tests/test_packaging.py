@@ -250,3 +250,19 @@ def test_forgetting_the_token_keeps_every_other_setting(tmp_path, monkeypatch):
     assert saved.relay_token is None
     assert saved.relay_url == "https://relay.example.on.aws"
     assert saved.hotkey == "scroll_lock"
+
+
+def test_one_installer_serves_both_downloads():
+    # The packaged program and the Python bundle ship the same script.
+    # Two copies of it would drift.
+    assert "MirabelVoice.exe" in ZIP_INSTALLER
+    assert "pythonw.exe" in ZIP_INSTALLER
+    assert "-m" in ZIP_INSTALLER
+
+
+def test_the_bundle_build_insists_on_a_valid_signature():
+    # The bundle's whole reason to exist is that its interpreter is
+    # signed. A build that shipped an unsigned one would be pointless.
+    build = (PACKAGING / "build_bundle.ps1").read_text(encoding="utf-8")
+    assert "Get-AuthenticodeSignature" in build
+    assert '$signature.Status -ne "Valid"' in build

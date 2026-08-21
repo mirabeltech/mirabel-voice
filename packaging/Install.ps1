@@ -3,18 +3,20 @@
 # Right-click Install.ps1 and choose "Run with PowerShell", or run:
 #   powershell -ExecutionPolicy Bypass -File Install.ps1
 #
-# It copies the app into your own profile, asks for your token, and
-# starts it. Nothing here needs an administrator password.
+# It copies the app into your own profile, asks for your token, and starts
+# it. Nothing here needs an administrator password.
 #
-# Running it again updates the app and keeps your settings and token.
+# Running it again updates the app and keeps your settings and your token.
+#
+# Two downloads use this script. One holds a packaged program; the other
+# holds Python and the source, for computers whose Smart App Control
+# refuses unsigned programs. The layout in the folder says which is which.
 param([string]$Token = "")
 
 $ErrorActionPreference = "Stop"
 $here = $PSScriptRoot
 $relayUrl = "__RELAY_URL__"
 $target = Join-Path $env:LOCALAPPDATA "Programs\Mirabel Voice"
-$appExe = Join-Path $target "MirabelVoice.exe"
-$consoleExe = Join-Path $target "MirabelVoiceConsole.exe"
 
 function Say($text, $colour = "Gray") { Write-Host $text -ForegroundColor $colour }
 
@@ -23,48 +25,66 @@ Say "  Mirabel Voice" "Cyan"
 Say "  Speak instead of type." "DarkGray"
 Say ""
 
-$source = Join-Path $here "MirabelVoice"
-if (-not (Test-Path (Join-Path $source "MirabelVoice.exe"))) {
-    Say "  This script has to sit next to the MirabelVoice folder." "Red"
+$packaged = Join-Path $here "MirabelVoice\MirabelVoice.exe"
+$bundled = Join-Path $here "python\pythonw.exe"
+if (Test-Path $packaged) {
+    $kind = "packaged"
+} elseif (Test-Path $bundled) {
+    $kind = "bundled"
+} else {
+    Say "  This script has to sit next to the app folder." "Red"
     Say "  Unzip the whole download, then run it from there." "Red"
     exit 1
 }
 
 # --- 1. Stop a running copy, or its files cannot be replaced ---------------
-Get-Process MirabelVoice -ErrorAction SilentlyContinue | Stop-Process -Force -Confirm:$false
+Get-Process MirabelVoice, pythonw -ErrorAction SilentlyContinue |
+    Where-Object { $_.Path -like "$target*" } | Stop-Process -Force -Confirm:$false
 Start-Sleep -Milliseconds 600
 
 # --- 2. Copy the app -------------------------------------------------------
 Say "  Copying the app..."
 New-Item -ItemType Directory -Force $target | Out-Null
-Copy-Item (Join-Path $source "*") $target -Recurse -Force
+if ($kind -eq "packaged") {
+    Copy-Item (Join-Path $here "MirabelVoice\*") $target -Recurse -Force
+    $launch = Join-Path $target "MirabelVoice.exe"
+    $launchArgs = @()
+    $console = Join-Path $target "MirabelVoiceConsole.exe"
+    $consoleArgs = @()
+} else {
+    Copy-Item (Join-Path $here "python") $target -Recurse -Force
+    $launch = Join-Path $target "python\pythonw.exe"
+    $launchArgs = @("-m", "mirabel_voice")
+    $console = Join-Path $target "python\python.exe"
+    $consoleArgs = @("-m", "mirabel_voice")
+}
 Say "  Copied." "Green"
 
 # --- 3. Your token ---------------------------------------------------------
-# The app owns its settings file, so it stores the token. Writing that file
-# from here would overwrite the dictation key and everything else.
-& $consoleExe --has-relay-token | Out-Null
+# The app owns its settings file, so the app stores the token. Writing that
+# file from here would overwrite the dictation key and everything else.
+& $console @consoleArgs --has-relay-token | Out-Null
 $hasToken = ($LASTEXITCODE -eq 0)
 
 if ($Token) {
-    & $consoleExe --set-relay $relayUrl $Token | Out-Null
+    & $console @consoleArgs --set-relay $relayUrl $Token | Out-Null
 } elseif ($hasToken) {
     # Keep the token already here, and follow the relay if it moved.
-    & $consoleExe --set-relay $relayUrl | Out-Null
+    & $console @consoleArgs --set-relay $relayUrl | Out-Null
 } else {
     Say ""
     Say "  The app needs your token. Ask Tommy for it." "Yellow"
     Say "  There are no API keys to enter: they stay on our server." "DarkGray"
     $answer = Read-Host "  Token"
     if (-not $answer) { Say "  A token is needed. Run this again when you have one." "Red"; exit 1 }
-    & $consoleExe --set-relay $relayUrl $answer.Trim() | Out-Null
+    & $console @consoleArgs --set-relay $relayUrl $answer.Trim() | Out-Null
 }
 
 Say "  Checking your token..."
-$check = & $consoleExe --check-keys
+$check = & $console @consoleArgs --check-keys
 if ($LASTEXITCODE -ne 0) {
-    # Clear the refused token, so running this again asks for it.
-    & $consoleExe --forget-relay-token | Out-Null
+    # Clear the refused token, so that running this again asks for one.
+    & $console @consoleArgs --forget-relay-token | Out-Null
     Say "  $check" "Red"
     Say ""
     Say "  That token was not accepted. Check it with Tommy and run this again." "Red"
@@ -76,7 +96,8 @@ Say "  Your token works." "Green"
 $shell = New-Object -ComObject WScript.Shell
 function New-Launcher($path) {
     $s = $shell.CreateShortcut($path)
-    $s.TargetPath = $appExe
+    $s.TargetPath = $launch
+    $s.Arguments = ($launchArgs -join " ")
     $s.WorkingDirectory = $target
     $s.Description = "Mirabel Voice"
     $s.Save()
@@ -85,9 +106,13 @@ New-Launcher (Join-Path ([Environment]::GetFolderPath("Desktop")) "Mirabel Voice
 New-Launcher (Join-Path ([Environment]::GetFolderPath("Startup")) "Mirabel Voice.lnk")
 
 # --- 5. Start it -----------------------------------------------------------
-Start-Process -FilePath $appExe -WorkingDirectory $target
+if ($launchArgs.Count) {
+    Start-Process -FilePath $launch -ArgumentList $launchArgs -WorkingDirectory $target
+} else {
+    Start-Process -FilePath $launch -WorkingDirectory $target
+}
 
-$settings = (& $consoleExe --config).Trim()
+$settings = (& $console @consoleArgs --config).Trim()
 $key = "Insert"
 if (Test-Path $settings) {
     $saved = (Get-Content $settings -Raw | ConvertFrom-Json).hotkey
