@@ -170,7 +170,10 @@ end;
 { Store the address and a token. }
 procedure StoreToken(Token: String);
 begin
-  StoreRelay('--set-relay "{#RelayUrl}" "' + Token + '"');
+  if Token = '' then
+    StoreRelay('--forget-relay-token')
+  else
+    StoreRelay('--set-relay "{#RelayUrl}" "' + Token + '"');
 end;
 
 { Store the address alone, keeping whatever token is already here. An

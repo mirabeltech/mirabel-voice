@@ -82,13 +82,34 @@ if (-not $isccPath) {
     exit 1
 }
 
+# --- 5a. The zip ------------------------------------------------------------
+# Smart App Control refuses unsigned setup executables, and offers no way
+# past it (see issue #35). The app's own binaries are not refused, so this
+# is the same install without a setup executable in it.
+Say "  Making the zip..."
+$staging = Join-Path $root "dist\zip"
+if (Test-Path $staging) { Remove-Item $staging -Recurse -Force }
+New-Item -ItemType Directory -Force $staging | Out-Null
+Copy-Item (Join-Path $root "dist\MirabelVoice") $staging -Recurse
+$installer = Get-Content (Join-Path $here "Install.ps1") -Raw
+$installer.Replace("__RELAY_URL__", $RelayUrl) |
+    Out-File -FilePath (Join-Path $staging "Install.ps1") -Encoding utf8
+$zip = Join-Path $root "dist\MirabelVoice-$version.zip"
+if (Test-Path $zip) { Remove-Item $zip -Force }
+Compress-Archive -Path (Join-Path $staging "*") -DestinationPath $zip
+Remove-Item $staging -Recurse -Force
+Say "  Zipped." "Green"
+
 Say "  Making the installer..."
 & $isccPath "/Q" "/DAppVersion=$version" "/DRelayUrl=$RelayUrl" (Join-Path $here "installer.iss")
 if ($LASTEXITCODE -ne 0) { Say "  Inno Setup failed." "Red"; exit 1 }
 
 $setup = Join-Path $root "dist\MirabelVoiceSetup-$version.exe"
 $size = [math]::Round((Get-Item $setup).Length / 1MB, 1)
+$zipSize = [math]::Round((Get-Item $zip).Length / 1MB, 1)
 
 Say ""
-Say "  Done. $setup ($size MB)" "Green"
+Say "  Done." "Green"
+Say "    $setup ($size MB)"
+Say "    $zip ($zipSize MB)   for machines with Smart App Control on"
 Say ""

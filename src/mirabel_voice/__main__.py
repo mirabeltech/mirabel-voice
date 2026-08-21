@@ -130,6 +130,16 @@ def main(argv: list[str] | None = None) -> int:
              "optional: pass the address alone to keep the stored token.",
     )
     parser.add_argument(
+        "--forget-relay-token",
+        action="store_true",
+        help="Remove the stored relay token, keeping every other setting.",
+    )
+    parser.add_argument(
+        "--has-relay-token",
+        action="store_true",
+        help="Exit 0 when this machine already holds a relay token.",
+    )
+    parser.add_argument(
         "--check-audio",
         action="store_true",
         help="Test that the audio encoder works and exit.",
@@ -170,6 +180,19 @@ def main(argv: list[str] | None = None) -> int:
         config.save()
         print(f"This machine now dictates through {config.relay_url}")
         return 0
+
+    if args.forget_relay_token:
+        # A flag, not an empty argument: PowerShell drops an empty string
+        # on its way to a program, which left a refused token in place.
+        config = Config.load()
+        config.relay_token = None
+        config.save()
+        print("This machine no longer holds a relay token.")
+        return 0
+
+    if args.has_relay_token:
+        # The installers ask this before deciding whether to prompt.
+        return 0 if Config.load().relay_token else 1
 
     if args.check_keys:
         from .keycheck import check_keys

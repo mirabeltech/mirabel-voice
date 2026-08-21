@@ -199,3 +199,54 @@ def test_the_address_can_be_set_without_the_token(tmp_path, monkeypatch):
     saved = Config.load(tmp_path / "config.json")
     assert saved.relay_url == "https://new.example.on.aws"
     assert saved.relay_token == "a-token"
+
+
+ZIP_INSTALLER = (PACKAGING / "Install.ps1").read_text(encoding="utf-8")
+
+
+def test_the_token_probe_reports_whether_one_is_stored(tmp_path, monkeypatch):
+    # Both installers ask this before deciding whether to prompt.
+    monkeypatch.setenv("MIRABEL_VOICE_HOME", str(tmp_path))
+
+    assert entry.main(["--has-relay-token"]) == 1
+
+    entry.main(["--set-relay", "https://relay.example.on.aws", "a-token"])
+    assert entry.main(["--has-relay-token"]) == 0
+
+    entry.main(["--set-relay", "https://relay.example.on.aws", ""])
+    assert entry.main(["--has-relay-token"]) == 1
+
+
+def test_the_zip_installer_stores_the_token_through_the_app():
+    assert "--set-relay" in ZIP_INSTALLER
+    assert "--check-keys" in ZIP_INSTALLER
+    assert "--has-relay-token" in ZIP_INSTALLER
+
+
+def test_the_zip_installer_takes_the_address_from_the_build():
+    # build.ps1 substitutes this. A zip that shipped the placeholder would
+    # send every dictation nowhere.
+    assert "__RELAY_URL__" in ZIP_INSTALLER
+    assert "http" not in ZIP_INSTALLER.replace("__RELAY_URL__", "")
+
+
+def test_both_installers_clear_a_refused_token_with_a_flag():
+    # An empty argument does not survive PowerShell on its way to a
+    # program, which once left a refused token stored.
+    assert "--forget-relay-token" in ZIP_INSTALLER
+    assert "--forget-relay-token" in INSTALLER
+
+
+def test_forgetting_the_token_keeps_every_other_setting(tmp_path, monkeypatch):
+    monkeypatch.setenv("MIRABEL_VOICE_HOME", str(tmp_path))
+    from mirabel_voice.config import Config
+
+    Config(hotkey="scroll_lock", relay_url="https://relay.example.on.aws",
+           relay_token="a-token").save(tmp_path / "config.json")
+
+    assert entry.main(["--forget-relay-token"]) == 0
+
+    saved = Config.load(tmp_path / "config.json")
+    assert saved.relay_token is None
+    assert saved.relay_url == "https://relay.example.on.aws"
+    assert saved.hotkey == "scroll_lock"
