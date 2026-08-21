@@ -47,6 +47,10 @@ STATE_RECORDING = "recording"
 STATE_WORKING = "working"
 STATE_ERROR = "error"
 
+# The one idle message that means the cycle worked. The status panel keeps
+# quiet for it, because the text on screen already says the same thing.
+INSERTED_PREFIX = "Inserted "
+
 SILENCE_PEAK = 0.01  # Below this level the microphone captured nothing.
 
 
@@ -100,6 +104,9 @@ class VoiceApp:
         )
         self._on_state = on_state
         self.on_partial: Callable[[str], None] | None = None
+        # The status panel listens here. The tray owns _on_state, so the
+        # two displays stay independent of each other.
+        self.on_status: Callable[[str, str], None] | None = None
         self.live_insert = config.live_insert and self.streaming
         self.typer = LiveTyper(self.injector) if self.live_insert else None
         self._focus = foreground_window
@@ -120,13 +127,18 @@ class VoiceApp:
         self._beep_thread: threading.Thread | None = None
 
     def _set_state(self, state: str, detail: str = "") -> None:
-        """Record the new state and tell the tray icon about it."""
+        """Record the new state and tell the tray icon and the panel."""
         self.state = state
         if self._on_state is not None:
             try:
                 self._on_state(state, detail)
             except Exception:  # noqa: BLE001 - the icon must not break the pipeline
                 log.exception("A status update failed.")
+        if self.on_status is not None:
+            try:
+                self.on_status(state, detail)
+            except Exception:  # noqa: BLE001 - the panel must not break the pipeline
+                log.debug("A panel update failed.", exc_info=True)
 
     def _beep(self, frequency: int, duration_ms: int) -> None:
         """Play a short tone, if the settings allow it."""
@@ -451,7 +463,7 @@ class VoiceApp:
         # seconds after the hotkey, and without a signal the user starts
         # the next dictation too early or presses the hotkey again.
         self._beep(990, 50)
-        self._set_state(STATE_IDLE, f"Inserted {words} words.")
+        self._set_state(STATE_IDLE, f"{INSERTED_PREFIX}{words} words.")
         # One line per dictation, so "it feels slow" becomes a number.
         log.info(
             "Timing: transcribe %.0f ms, cleanup %.0f ms, insert %.0f ms.",

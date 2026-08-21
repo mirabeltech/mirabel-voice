@@ -59,7 +59,13 @@ Your hands are free while you talk. Press Insert again and the tidied text appea
 
 Speak naturally. Say "new paragraph" or "new line" to shape the text. If you misspeak, just correct yourself — "send it Tuesday, scratch that, Wednesday" — and the correction is applied for you.
 
-The icon near your clock shows what is happening: **grey** ready, **red** listening, **blue** writing, **orange** something went wrong. Right-click it to turn the tidying off, copy the last text, change your dictation key, or quit.
+A small panel appears near the bottom of your screen while this happens. It says **Listening** while you speak and **Writing your text** while your words are being tidied, then goes away when the text lands. It is there so that the wait never leaves you wondering whether anything is happening. It cannot be clicked and never takes your cursor away from what you are typing in.
+
+When a dictation produces nothing, the panel says why instead of vanishing: too short, no sound, nothing heard.
+
+The icon near your clock shows the same thing in colour: **grey** ready, **red** listening, **blue** writing, **orange** something went wrong. Right-click it to turn the tidying off, copy the last text, change your dictation key, or quit.
+
+To turn the panel off, set `"show_status": false` in `config.json` (right-click the icon, **Open the settings folder**).
 
 ## What the beeps mean
 
@@ -127,7 +133,7 @@ If you often mix languages in one sentence, use `"language": null` instead and t
 
 ## Something is wrong?
 
-- **Nothing appears.** Look at the icon near your clock. Orange means an error; hover over it to read what happened. Usually the network.
+- **Nothing appears.** The panel near the bottom of the screen says what happened, and stays for a few seconds. If you missed it, look at the icon near your clock: orange means an error, and hovering over it shows the same reason. Usually the network.
 - **Your text landed in the wrong window.** Press **Shift+Alt+Z** in the right one.
 - **Your key does nothing.** It may be one your laptop keeps for itself. Run the key picker above and choose another.
 - **Words appear in a small box instead of your text box.** Your key has Ctrl, Alt, Shift, or Windows in it. Pick a plain key.

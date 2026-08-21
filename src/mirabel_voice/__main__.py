@@ -267,14 +267,19 @@ def main(argv: list[str] | None = None) -> int:
     from .tray import Tray
 
     overlay = None
-    # The overlay also covers the times when typing into the field is
-    # impossible, such as while a modifier hotkey is held down.
-    if config.streaming_enabled and (config.show_overlay or config.live_insert):
+    # One window serves two jobs. The status panel runs for everybody. The
+    # live words need streaming, and also cover the times when typing into
+    # the field is impossible, such as while a modifier hotkey is held.
+    wants_words = config.streaming_enabled and (config.show_overlay or config.live_insert)
+    if config.show_status or wants_words:
         from .overlay import Overlay
 
         overlay = Overlay()
         if overlay.start():
-            app.on_partial = overlay.update
+            if wants_words:
+                app.on_partial = overlay.update
+            if config.show_status:
+                app.on_status = overlay.status
         else:
             overlay = None
 

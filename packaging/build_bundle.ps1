@@ -67,13 +67,54 @@ if ($signature.Status -ne "Valid") {
 }
 
 # The embeddable build ignores site-packages until this line is uncommented.
+# DLLs holds Tkinter, added below, and is not on the path by default.
 $pth = Get-ChildItem $pythonDir -Filter "python*._pth" | Select-Object -First 1
-(Get-Content $pth.FullName) -replace '^#\s*import site', 'import site' |
-    Set-Content $pth.FullName -Encoding ascii
+$lines = (Get-Content $pth.FullName) -replace '^#\s*import site', 'import site'
+if ($lines -notcontains "DLLs") { $lines = @("DLLs") + $lines }
+$lines | Set-Content $pth.FullName -Encoding ascii
+
+# --- 1a. Tkinter -----------------------------------------------------------
+# Neither the embeddable build nor the NuGet package carries Tkinter, and
+# the status panel needs it. Take it from the full Python that made the
+# .venv, so the version always matches, and keep the same folder layout:
+# Tcl finds its own scripts at ..\tcl relative to the DLL.
+$source = (& $py -c "import sys;print(sys.base_prefix)").Trim()
+$tkFiles = @("_tkinter.pyd", "tcl86t.dll", "tk86t.dll", "zlib1.dll")
+$missing = $tkFiles | Where-Object { -not (Test-Path (Join-Path $source "DLLs\$_")) }
+if ($missing -or -not (Test-Path (Join-Path $source "tcl"))) {
+    Say "  Tkinter is missing from $source" "Red"
+    Say "  The status panel needs it. Install Python $PythonVersion from" "Red"
+    Say "  python.org with the tcl/tk option on, then rebuild the .venv." "Red"
+    exit 1
+}
+$dllDir = Join-Path $pythonDir "DLLs"
+New-Item -ItemType Directory -Force $dllDir | Out-Null
+foreach ($file in $tkFiles) {
+    $from = Join-Path $source "DLLs\$file"
+    # Every binary in this bundle is signed, or the bundle has no point.
+    $sig = Get-AuthenticodeSignature $from
+    if ($sig.Status -ne "Valid") {
+        Say "  $file is not validly signed ($($sig.Status)). Stopping." "Red"
+        exit 1
+    }
+    Copy-Item $from $dllDir
+}
+# Only the script libraries Tk actually loads. The rest of that folder is
+# nmake files, Tix, and DDE, which would add megabytes for nothing.
+# Both destinations are made first: Copy-Item renames the source when the
+# destination folder does not already exist.
+$tclDir = Join-Path $pythonDir "tcl"
+New-Item -ItemType Directory -Force $tclDir | Out-Null
+foreach ($lib in @("tcl8", "tcl8.6", "tk8.6")) {
+    Copy-Item (Join-Path $source "tcl\$lib") $tclDir -Recurse
+}
+$sitePackages = Join-Path $pythonDir "Lib\site-packages"
+New-Item -ItemType Directory -Force $sitePackages | Out-Null
+Copy-Item (Join-Path $source "Lib\tkinter") $sitePackages -Recurse
+Say "  Tkinter added, signed by $($sig.SignerCertificate.Subject -replace '^CN=([^,]+).*','$1')" "DarkGray"
 
 # --- 2. The app and everything it needs ------------------------------------
 Say "  Installing the app and its libraries (a minute or two)..."
-$sitePackages = Join-Path $pythonDir "Lib\site-packages"
 & $py -m pip install --quiet --disable-pip-version-check --target $sitePackages $root
 if ($LASTEXITCODE -ne 0) { Say "  pip failed." "Red"; exit 1 }
 
