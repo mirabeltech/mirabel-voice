@@ -14,7 +14,19 @@ LOG_FORMAT = "%(asctime)s  %(levelname)-7s %(message)s"
 
 
 def _check_keys(config: Config) -> list[str]:
-    """Return a message for each API key that is missing."""
+    """Return a message for each credential this machine is missing.
+
+    A relay machine holds one token and no provider keys, so the token is
+    the only thing to look for. A direct machine holds the two keys.
+    """
+    if config.relay_url:
+        if not config.relay_token:
+            return [
+                "This machine dictates through the relay but holds no token. "
+                "Ask Tommy for yours, then run setup.ps1 again."
+            ]
+        return []
+
     problems = []
     if not os.environ.get("OPENAI_API_KEY"):
         problems.append(
@@ -179,7 +191,9 @@ def main(argv: list[str] | None = None) -> int:
     problems = _check_keys(config)
     for problem in problems:
         print(f"Setup problem: {problem}", file=sys.stderr)
-    if any("OPENAI_API_KEY" in p for p in problems):
+    # A missing Anthropic key costs only the cleanup, so it is a warning.
+    # Anything else means no dictation at all.
+    if [p for p in problems if "ANTHROPIC_API_KEY" not in p]:
         # Under pythonw (the Desktop shortcut) stderr is invisible, so a
         # silent exit would look like the app simply not starting.
         _show_error_box("\n\n".join(problems))

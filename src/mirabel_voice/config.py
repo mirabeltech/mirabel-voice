@@ -60,6 +60,15 @@ def load_api_keys(base: Path | None = None) -> None:
             os.environ[env_name] = str(value)
 
 
+def relay_base(url: str) -> str:
+    """Return the relay address with no trailing slash.
+
+    The Function URL that AWS prints ends with one, and both provider SDKs
+    add their own separator when they build a path.
+    """
+    return url.rstrip("/")
+
+
 @dataclass
 class Config:
     """All user settings.
@@ -101,6 +110,14 @@ class Config:
         restore_clipboard: True puts your old clipboard content back after
             a paste.
         play_sounds: True plays a short beep on start and on stop.
+        relay_url: The address of the relay that holds the provider keys.
+            When it is set, transcription and cleanup travel through the
+            relay and this machine needs no provider keys of its own.
+            None sends the calls straight to the providers, which is the
+            development mode.
+        relay_token: The personal token this machine shows the relay. The
+            owner issues one per person, and the usage log names the
+            holder. It is needed whenever relay_url is set.
     """
 
     hotkey: str = "insert"
@@ -123,6 +140,8 @@ class Config:
     inject_method: str = "paste"
     restore_clipboard: bool = True
     play_sounds: bool = True
+    relay_url: str | None = None
+    relay_token: str | None = None
 
     @classmethod
     def load(cls, path: Path | None = None) -> "Config":

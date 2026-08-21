@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from .audio import Recording
+from .config import relay_base
 
 
 class TranscriptionError(RuntimeError):
@@ -18,19 +19,35 @@ class Transcriber:
         language: str | None = "en",
         custom_words: list[str] | None = None,
         client=None,  # noqa: ANN001 - an OpenAI client, or None to build one
+        relay_url: str | None = None,
+        relay_token: str | None = None,
     ) -> None:
         self.model = model
         self.language = language
         self.custom_words = custom_words or []
         self._client = client
+        self.relay_url = relay_url
+        self.relay_token = relay_token
 
     @property
     def client(self):  # noqa: ANN201
-        """Return the OpenAI client. Build it on first use."""
+        """Return the OpenAI client. Build it on first use.
+
+        A relay address redirects the same client rather than replacing it,
+        so every request below this point is the one the SDK always sent.
+        """
         if self._client is None:
             from openai import OpenAI
 
-            self._client = OpenAI()
+            if self.relay_url:
+                # The SDK hangs its paths off the base URL, so the /v1 the
+                # relay serves belongs here.
+                self._client = OpenAI(
+                    base_url=relay_base(self.relay_url) + "/v1",
+                    api_key=self.relay_token,
+                )
+            else:
+                self._client = OpenAI()
         return self._client
 
     def _prompt(self) -> str | None:

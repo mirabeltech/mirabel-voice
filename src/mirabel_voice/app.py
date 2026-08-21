@@ -84,11 +84,15 @@ class VoiceApp:
             model=config.transcribe_model,
             language=config.language,
             custom_words=words,
+            relay_url=config.relay_url,
+            relay_token=config.relay_token,
         )
         self.cleaner = cleaner or Cleaner(
             model=config.cleanup_model,
             timeout=config.cleanup_timeout,
             custom_words=words,
+            relay_url=config.relay_url,
+            relay_token=config.relay_token,
         )
         self.injector = injector or TextInjector(
             method=config.inject_method,
