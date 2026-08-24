@@ -18,6 +18,8 @@ It does not ask for an administrator password. Everything goes in your own profi
 
 A microphone icon appears near your clock, and Mirabel Voice starts with Windows from then on. The whole thing takes about two minutes.
 
+One thing Windows does that we cannot stop: it tucks new icons behind the **^** arrow near the clock. Click the arrow to find the microphone, then drag the icon onto the taskbar itself so it is always in view. Worth the five seconds — the icon's colour is how you know the app is listening.
+
 To update later, unzip the newer file and run `Install.ps1` again. Your settings and your token stay as they are, and it does not ask for the token again.
 
 <details>
@@ -130,10 +132,12 @@ If you often mix languages in one sentence, use `"language": null` instead and t
 - **Prose, not code.** Prompts, emails, and messages work very well. Dictating brackets and symbols does not.
 - **Do not click into another window while speaking.** If you do, the app leaves the untidied words where they landed instead of editing a document it no longer owns. Press **Shift+Alt+Z** to put the clean version where you want it.
 - **If the internet drops** mid-sentence, the app quietly falls back to sending the recording when you let go. You still get your text.
+- **Only one copy runs at a time.** Starting it again does not open a second one — it just tells you it is already running and points you to the icon near the clock.
 
 ## Something is wrong?
 
 - **Nothing appears.** The panel near the bottom of the screen says what happened, and stays for a few seconds. If you missed it, look at the icon near your clock: orange means an error, and hovering over it shows the same reason. Usually the network.
+- **No icon near your clock.** It is hiding behind the **^** arrow. Click the arrow, then drag the microphone onto the taskbar so it stays put.
 - **Your text landed in the wrong window.** Press **Shift+Alt+Z** in the right one.
 - **Your key does nothing.** It may be one your laptop keeps for itself. Run the key picker above and choose another.
 - **Words appear in a small box instead of your text box.** Your key has Ctrl, Alt, Shift, or Windows in it. Pick a plain key.
