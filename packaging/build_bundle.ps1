@@ -131,6 +131,9 @@ $installer = $installer.Replace("__RELAY_URL__", $RelayUrl)
 $installer = $installer.Replace("__GOOGLE_CLIENT_ID__", "$GoogleClientId")
 $installer = $installer.Replace("__GOOGLE_CLIENT_SECRET__", "$GoogleClientSecret")
 $installer | Out-File -FilePath (Join-Path $staging "Install.ps1") -Encoding utf8
+# The README rides along for reference. The unblock step still has to be
+# read before the zip opens, so the download page carries the steps too.
+Copy-Item (Join-Path $root "README.md") $staging
 
 # --- 4. The zip ------------------------------------------------------------
 $zip = Join-Path $root "dist\MirabelVoice-$version-python.zip"
