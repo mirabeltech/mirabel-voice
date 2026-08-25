@@ -1,6 +1,7 @@
 # Mirabel Voice - install from this folder.
 #
-# Right-click Install.ps1 and choose "Run with PowerShell", or run:
+# Double-click Install.cmd, or right-click Install.ps1 and choose
+# "Run with PowerShell" (behind "Show more options" on Windows 11), or run:
 #   powershell -ExecutionPolicy Bypass -File Install.ps1
 #
 # It copies the app into your own profile, asks for your token, and starts
