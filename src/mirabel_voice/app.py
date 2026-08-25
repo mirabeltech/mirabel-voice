@@ -145,6 +145,21 @@ class VoiceApp:
 
         return GoogleSignin(config.google_client_id, config.google_client_secret)
 
+    def set_language(self, code: str | None) -> None:
+        """Switch the dictation language, for this dictation and the next start.
+
+        The transcriber reads its language per call and the live socket
+        reads the settings per recording, so the switch needs no restart.
+        None means the model works out each dictation's language itself.
+        """
+        self.config.language = code
+        self.transcriber.language = code
+        self.config.save()
+        names = {"en": "English", "hi": "Hindi", "te": "Telugu"}
+        chosen = names.get(code, "detected automatically")
+        log.info("The dictation language is now %s.", chosen)
+        self._set_state(self.state, f"Language: {chosen}.")
+
     def _set_state(self, state: str, detail: str = "") -> None:
         """Record the new state and tell the tray icon and the panel."""
         self.state = state

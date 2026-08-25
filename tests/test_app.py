@@ -482,3 +482,38 @@ def test_live_typing_stays_off_when_streaming_is_off():
     assert app.streaming is False
     assert app.live_insert is False
     assert app.typer is None
+
+
+def language_app(monkeypatch, tmp_path):
+    monkeypatch.setenv("MIRABEL_VOICE_HOME", str(tmp_path))
+    config = Config(play_sounds=False, live_insert=False)
+    return VoiceApp(
+        config=config,
+        recorder=FakeRecorder(loud_recording()),
+        injector=CapturingInjector(),
+        transcriber=Transcriber(client=FakeOpenAI()),
+        cleaner=Cleaner(client=FakeAnthropic(response=text_response("Hi."))),
+    )
+
+
+def test_switching_language_needs_no_restart(monkeypatch, tmp_path):
+    """The tray switch must reach the very next dictation."""
+    app = language_app(monkeypatch, tmp_path)
+    app.set_language("hi")
+    assert app.transcriber.language == "hi"
+    assert Config.load().language == "hi"  # and the next start agrees
+
+
+def test_detect_automatically_is_a_real_choice(monkeypatch, tmp_path):
+    app = language_app(monkeypatch, tmp_path)
+    app.set_language(None)
+    assert app.transcriber.language is None
+    assert Config.load().language is None
+
+
+def test_switching_language_tells_the_tray(monkeypatch, tmp_path):
+    app = language_app(monkeypatch, tmp_path)
+    told = []
+    app._on_state = lambda state, detail: told.append(detail)
+    app.set_language("te")
+    assert any("Telugu" in detail for detail in told)

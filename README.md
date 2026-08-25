@@ -132,15 +132,11 @@ To add your own words, right-click the icon near your clock, choose **Open the s
 
 ## Dictating in Hindi or Telugu
 
-In the same `config.json`:
+Right-click the icon near your clock, choose **Language**, and pick Hindi, Telugu, or English. The switch applies to your very next dictation — no restart. Your words come back in the language you spoke; nothing is ever translated.
 
-```json
-"language": "hi"
-```
+If you often mix languages in one sentence, pick **Detect automatically** and the app works out each dictation's language itself.
 
-Use `"hi"` for Hindi, `"te"` for Telugu, `"en"` for English. Your words come back in the language you spoke; nothing is ever translated.
-
-If you often mix languages in one sentence, use `"language": null` instead and the app works out the language itself.
+The same setting lives in `config.json` as `"language"`: `"hi"`, `"te"`, `"en"`, or `null` to detect.
 
 ## Good to know
 

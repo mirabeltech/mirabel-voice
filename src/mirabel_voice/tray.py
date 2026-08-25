@@ -10,6 +10,7 @@ The icon colour shows the state:
 
 from __future__ import annotations
 
+import functools
 import logging
 import os
 import subprocess
@@ -116,11 +117,31 @@ class Tray:
                 self._toggle_cleanup,
                 checked=lambda _: self.app.config.cleanup_enabled,
             ),
+            pystray.MenuItem(
+                "Language",
+                pystray.Menu(
+                    self._language_item("English", "en"),
+                    self._language_item("Hindi", "hi"),
+                    self._language_item("Telugu", "te"),
+                    self._language_item("Detect automatically", None),
+                ),
+            ),
             pystray.MenuItem("Copy the last text", self._copy_last),
             pystray.MenuItem("Change my dictation key", self._pick_hotkey),
             pystray.MenuItem("Open the settings folder", self._open_config),
             pystray.Menu.SEPARATOR,
             pystray.MenuItem("Quit", self._quit),
+        )
+
+    def _language_item(self, label: str, code):  # noqa: ANN001, ANN202
+        """One radio entry of the Language submenu."""
+        import pystray
+
+        return pystray.MenuItem(
+            label,
+            functools.partial(self.app.set_language, code),
+            checked=lambda _, code=code: self.app.config.language == code,
+            radio=True,
         )
 
     def _sign_in(self) -> None:
