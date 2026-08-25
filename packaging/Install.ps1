@@ -1,8 +1,12 @@
 # Mirabel Voice - install from this folder.
 #
-# Double-click Install.cmd, or right-click Install.ps1 and choose
-# "Run with PowerShell" (behind "Show more options" on Windows 11), or run:
+# Right-click Install.ps1 and choose "Run with PowerShell" (behind
+# "Show more options" on Windows 11), or run:
 #   powershell -ExecutionPolicy Bypass -File Install.ps1
+#
+# There is deliberately no double-click Install.cmd: Smart App Control
+# hard-blocks an unsigned .cmd from the internet with a "may be unsafe"
+# dialog (tried 2026-08-25). A signed installer is the real fix - #35.
 #
 # It copies the app into your own profile, asks for your token, and starts
 # it. Nothing here needs an administrator password.

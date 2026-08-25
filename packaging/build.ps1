@@ -105,7 +105,6 @@ $installer = $installer.Replace("__RELAY_URL__", $RelayUrl)
 $installer = $installer.Replace("__GOOGLE_CLIENT_ID__", "$GoogleClientId")
 $installer = $installer.Replace("__GOOGLE_CLIENT_SECRET__", "$GoogleClientSecret")
 $installer | Out-File -FilePath (Join-Path $staging "Install.ps1") -Encoding utf8
-Copy-Item (Join-Path $here "Install.cmd") $staging
 $zip = Join-Path $root "dist\MirabelVoice-$version.zip"
 if (Test-Path $zip) { Remove-Item $zip -Force }
 Compress-Archive -Path (Join-Path $staging "*") -DestinationPath $zip

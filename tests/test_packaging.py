@@ -266,13 +266,3 @@ def test_the_bundle_build_insists_on_a_valid_signature():
     build = (PACKAGING / "build_bundle.ps1").read_text(encoding="utf-8")
     assert "Get-AuthenticodeSignature" in build
     assert '$signature.Status -ne "Valid"' in build
-
-
-def test_the_double_click_launcher_runs_the_real_installer():
-    """Install.cmd exists so Windows 11 users need no context menu. It
-    must hand off to Install.ps1 beside itself and keep the window open
-    so the closing instructions can be read."""
-    launcher = (PACKAGING / "Install.cmd").read_text(encoding="utf-8")
-    assert "-ExecutionPolicy Bypass" in launcher
-    assert "%~dp0Install.ps1" in launcher
-    assert "pause" in launcher
