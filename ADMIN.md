@@ -144,6 +144,26 @@ From then on the relay accepts a Mirabel Google sign-in wherever it accepts a to
 
 Sign-in access needs no issuing and no revoking: an account that leaves the Workspace stops being able to sign in, and its access to the relay ends within the hour on its own.
 
+For the app side, add the OAuth client to `relay.json` in the repository root (it is not committed, same as the relay address):
+
+```json
+{
+  "relay_url": "https://<the relay address>",
+  "google_client_id": "<the client id>",
+  "google_client_secret": "<its companion value>"
+}
+```
+
+Both build scripts bake the pair into `Install.ps1` beside the relay address. A zip built this way has no token page at all: the person unzips, runs `Install.ps1`, and signs in when the browser opens. Neither value is a secret — Google documents that an installed app cannot keep one, and the pair grants nothing without a Mirabel sign-in.
+
+A machine already on a token keeps working untouched. To move it over without a reinstall:
+
+```powershell
+python scripts\set_relay.py --google-client-id <the client id> --google-client-secret <its value>
+```
+
+The app then signs the person in on its next start, and the stored token stays in the settings as the escape hatch: remove the two `google_` lines from `config.json` and the token rules again.
+
 ### Rotate a provider key
 
 1. Make the new key on the provider dashboard.

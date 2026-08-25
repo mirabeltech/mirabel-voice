@@ -70,8 +70,14 @@ class VoiceApp:
         injector: TextInjector | None = None,
         on_state: Callable[[str, str], None] | None = None,
         stream=None,  # noqa: ANN001 - a StreamingSession, or None to build one
+        signin=None,  # noqa: ANN001 - a GoogleSignin, or None to build from config
     ) -> None:
         self.config = config
+        self.signin = signin or self._build_signin(config)
+        # A sign-in outranks a stored token: the token stays in the
+        # settings as the escape hatch, used again the moment the
+        # Google fields are removed.
+        credential = self.signin.credential if self.signin else config.relay_token
         self._stream = stream
         self.streaming = config.streaming_enabled and (
             stream is not None or streaming_available()
@@ -89,14 +95,14 @@ class VoiceApp:
             language=config.language,
             custom_words=words,
             relay_url=config.relay_url,
-            relay_token=config.relay_token,
+            relay_token=credential,
         )
         self.cleaner = cleaner or Cleaner(
             model=config.cleanup_model,
             timeout=config.cleanup_timeout,
             custom_words=words,
             relay_url=config.relay_url,
-            relay_token=config.relay_token,
+            relay_token=credential,
         )
         self.injector = injector or TextInjector(
             method=config.inject_method,
@@ -125,6 +131,19 @@ class VoiceApp:
         self._actions: queue.Queue = queue.Queue()
         self._dispatch_thread: threading.Thread | None = None
         self._beep_thread: threading.Thread | None = None
+
+    @staticmethod
+    def _build_signin(config: Config):  # noqa: ANN205 - a GoogleSignin, or None
+        """Build the Google sign-in when the settings configure one."""
+        if not (
+            config.relay_url
+            and config.google_client_id
+            and config.google_client_secret
+        ):
+            return None
+        from .signin import GoogleSignin
+
+        return GoogleSignin(config.google_client_id, config.google_client_secret)
 
     def _set_state(self, state: str, detail: str = "") -> None:
         """Record the new state and tell the tray icon and the panel."""

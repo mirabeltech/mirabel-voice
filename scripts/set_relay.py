@@ -27,10 +27,21 @@ def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--url", help="The relay address.")
     parser.add_argument("--token", help="This machine's relay token.")
+    parser.add_argument("--google-client-id", help="Our Google OAuth client id.")
+    parser.add_argument(
+        "--google-client-secret",
+        help="Its companion value. With both set, the app signs in with "
+             "the work account and the token is no longer used.",
+    )
     parsed = parser.parse_args(argv)
 
-    if not parsed.url and not parsed.token:
-        print("Nothing to set. Pass --url, --token, or both.")
+    google = (parsed.google_client_id, parsed.google_client_secret)
+    if any(google) and not all(google):
+        print("Google sign-in needs both --google-client-id and "
+              "--google-client-secret.")
+        return 1
+    if not parsed.url and not parsed.token and not all(google):
+        print("Nothing to set. Pass --url, --token, the Google pair, or any mix.")
         return 1
 
     config = Config.load()
@@ -38,8 +49,13 @@ def main(argv=None) -> int:
         config.relay_url = parsed.url.strip()
     if parsed.token:
         config.relay_token = parsed.token.strip()
+    if all(google):
+        config.google_client_id = parsed.google_client_id.strip()
+        config.google_client_secret = parsed.google_client_secret.strip()
     config.save()
     print(f"This machine now dictates through {config.relay_url}")
+    if config.google_client_id:
+        print("It signs in with the Mirabel Google account.")
     return 0
 
 

@@ -68,7 +68,7 @@ class Cleaner:
         custom_words: list[str] | None = None,
         client=None,  # noqa: ANN001 - an Anthropic client, or None to build one
         relay_url: str | None = None,
-        relay_token: str | None = None,
+        relay_token=None,  # noqa: ANN001 - a str, or a callable returning one
     ) -> None:
         self.model = model
         self.timeout = timeout
@@ -89,13 +89,25 @@ class Cleaner:
             import anthropic
 
             if self.relay_url:
+                # A placeholder key is fine: a rotating credential
+                # replaces it per call, in clean().
                 self._client = anthropic.Anthropic(
                     base_url=relay_base(self.relay_url),
-                    api_key=self.relay_token,
+                    api_key=self._current_key() or "signed-out",
                 )
             else:
                 self._client = anthropic.Anthropic()
         return self._client
+
+    def _current_key(self) -> str | None:
+        """Return the relay credential as it stands right now.
+
+        A Google sign-in rotates hourly, so it arrives as a callable and
+        is asked fresh; a token is a string and is itself.
+        """
+        if callable(self.relay_token):
+            return self.relay_token()
+        return self.relay_token
 
     def _system(self) -> str:
         """Return the system prompt with any custom spellings added."""
@@ -114,10 +126,21 @@ class Cleaner:
         if not text.strip():
             return text
 
+        options = {"timeout": self.timeout, "max_retries": 1}
+        if self.relay_url and callable(self.relay_token):
+            try:
+                key = self._current_key()
+            except Exception as error:  # noqa: BLE001 - never lose the transcript
+                log.warning("The sign-in did not refresh: %s", error)
+                return text
+            if key is None:
+                # Signed out. The transcriber already told the user; the
+                # cleanup's job is only to never lose the words.
+                log.warning("Signed out of Google; using the raw transcript.")
+                return text
+            options["api_key"] = key
         try:
-            response = self.client.with_options(
-                timeout=self.timeout, max_retries=1
-            ).messages.create(
+            response = self.client.with_options(**options).messages.create(
                 model=self.model,
                 max_tokens=8000,
                 system=self._system(),

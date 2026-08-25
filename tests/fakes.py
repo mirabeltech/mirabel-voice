@@ -22,6 +22,11 @@ class FakeOpenAI:
     def __init__(self, text="um so this is a test", error=None):
         self.transcriptions = FakeTranscriptionsAPI(text, error)
         self.audio = SimpleNamespace(transcriptions=self.transcriptions)
+        self.options = []
+
+    def with_options(self, **kwargs):
+        self.options.append(kwargs)
+        return self
 
 
 def text_response(text, stop_reason="end_turn"):

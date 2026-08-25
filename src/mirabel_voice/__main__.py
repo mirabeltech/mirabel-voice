@@ -20,6 +20,8 @@ def _check_keys(config: Config) -> list[str]:
     the only thing to look for. A direct machine holds the two keys.
     """
     if config.relay_url:
+        if config.google_client_id and config.google_client_secret:
+            return []  # the sign-in flow is the credential
         if not config.relay_token:
             return [
                 "This machine dictates through the relay but holds no token. "
@@ -135,6 +137,13 @@ def main(argv: list[str] | None = None) -> int:
         help="Remove the stored relay token, keeping every other setting.",
     )
     parser.add_argument(
+        "--set-google",
+        nargs=2,
+        metavar=("CLIENT_ID", "CLIENT_SECRET"),
+        help="Store the Google sign-in client, and exit. From then on the "
+             "app signs in with the work account instead of a token.",
+    )
+    parser.add_argument(
         "--has-relay-token",
         action="store_true",
         help="Exit 0 when this machine already holds a relay token.",
@@ -188,6 +197,16 @@ def main(argv: list[str] | None = None) -> int:
         config.relay_token = None
         config.save()
         print("This machine no longer holds a relay token.")
+        return 0
+
+    if args.set_google:
+        # The installer calls this beside --set-relay. Two settings only,
+        # so the person's own preferences survive an update.
+        config = Config.load()
+        config.google_client_id = args.set_google[0].strip()
+        config.google_client_secret = args.set_google[1].strip()
+        config.save()
+        print("This machine now signs in with the Mirabel Google account.")
         return 0
 
     if args.has_relay_token:
@@ -247,6 +266,24 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     app = VoiceApp(config)
+
+    if app.signin is not None and not app.signin.signed_in():
+        # First run: the browser opens once, the person signs in with the
+        # account they already have, and that is the whole setup.
+        print("Opening the Google sign-in page in your browser...")
+        try:
+            email = app.signin.sign_in()
+        except Exception as error:  # noqa: BLE001 - explain, do not crash
+            message = (
+                f"The Google sign-in did not complete: {error}\n\n"
+                "Start Mirabel Voice again to retry, or right-click the "
+                "icon near the clock and choose Sign in with Google."
+            )
+            print(message, file=sys.stderr)
+            if not args.no_tray:
+                _show_box(message, icon=0x30)  # MB_ICONWARNING
+        else:
+            print(f"Signed in as {email}.")
 
     if args.no_tray:
         app._on_state = lambda state, detail: print(  # noqa: SLF001

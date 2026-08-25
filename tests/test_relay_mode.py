@@ -218,3 +218,115 @@ def test_a_direct_machine_still_needs_its_keys(monkeypatch):
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     problems = _check_keys(Config())
     assert any("OPENAI_API_KEY" in p for p in problems)
+
+
+# --- the Google sign-in as the credential ----------------------------------
+
+class RotatingCredential:
+    """Stands in for GoogleSignin.credential: a token that changes."""
+
+    def __init__(self, tokens):
+        self.tokens = list(tokens)
+        self.asked = 0
+
+    def __call__(self):
+        self.asked += 1
+        return self.tokens.pop(0) if len(self.tokens) > 1 else self.tokens[0]
+
+
+def test_the_transcriber_asks_for_a_fresh_credential_each_call():
+    credential = RotatingCredential(["token-one", "token-two"])
+    fake = FakeOpenAI()
+    transcriber = Transcriber(
+        client=fake, relay_url=RELAY, relay_token=credential
+    )
+    transcriber._for_this_call()
+    assert fake.options[-1]["api_key"] == "token-one"
+    transcriber._for_this_call()
+    assert fake.options[-1]["api_key"] == "token-two"
+
+
+def test_a_working_sign_in_reaches_the_cleaner_call():
+    fake = FakeAnthropic(response=text_response("Tidied."))
+    cleaner = Cleaner(
+        client=fake, relay_url=RELAY, relay_token=lambda: "an-id-token"
+    )
+    assert cleaner.clean("um the words") == "Tidied."
+    assert fake.options[-1]["api_key"] == "an-id-token"
+
+
+def test_a_signed_out_transcriber_says_how_to_repair_it():
+    from mirabel_voice.transcribe import TranscriptionError
+
+    transcriber = Transcriber(
+        client=FakeOpenAI(), relay_url=RELAY, relay_token=lambda: None
+    )
+    try:
+        transcriber._for_this_call()
+        raise AssertionError("a signed-out call must be refused")
+    except TranscriptionError as told:
+        assert "Sign in with Google" in str(told)
+
+
+def test_a_signed_out_cleaner_returns_the_words_untouched():
+    cleaner = Cleaner(
+        client=FakeAnthropic(response=text_response("Tidied.")),
+        relay_url=RELAY,
+        relay_token=lambda: None,
+    )
+    assert cleaner.clean("um the words") == "um the words"
+
+
+def test_a_refresh_failure_never_loses_the_transcript():
+    def unreachable():
+        raise OSError("no route to Google")
+
+    cleaner = Cleaner(
+        client=FakeAnthropic(response=text_response("Tidied.")),
+        relay_url=RELAY,
+        relay_token=unreachable,
+    )
+    assert cleaner.clean("um the words") == "um the words"
+
+
+def test_the_app_prefers_the_sign_in_over_a_stored_token():
+    class FakeSignin:
+        def credential(self):
+            return "an-id-token"
+
+    config = Config(
+        relay_url=RELAY,
+        relay_token=TOKEN,
+        google_client_id="12345-mirabel.apps",
+        google_client_secret="GOCSPX-x",
+        play_sounds=False,
+        live_insert=False,
+    )
+    app = VoiceApp(
+        config=config,
+        recorder=FakeRecorder(loud_recording()),
+        injector=CapturingInjector(),
+        signin=FakeSignin(),
+    )
+    assert callable(app.transcriber.relay_token)
+    assert app.transcriber.relay_token() == "an-id-token"
+    assert app.cleaner.relay_token() == "an-id-token"
+
+
+def test_without_the_google_fields_the_token_still_rules():
+    app = relay_app()
+    assert app.signin is None
+    assert app.transcriber.relay_token == TOKEN
+
+
+def test_a_google_machine_starts_with_no_token_at_all(monkeypatch):
+    from mirabel_voice.__main__ import _check_keys
+
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    config = Config(
+        relay_url=RELAY,
+        google_client_id="12345-mirabel.apps",
+        google_client_secret="GOCSPX-x",
+    )
+    assert _check_keys(config) == []

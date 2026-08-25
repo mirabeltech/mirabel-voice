@@ -12,7 +12,11 @@
 # the relay's address to bake in. It comes from -RelayUrl, or the
 # MIRABEL_VOICE_RELAY_URL environment variable, or a relay.json in the
 # repository root. The address is not a secret; the tokens are.
-param([string]$RelayUrl = "")
+param(
+    [string]$RelayUrl = "",
+    [string]$GoogleClientId = "",
+    [string]$GoogleClientSecret = ""
+)
 
 $ErrorActionPreference = "Stop"
 $here = $PSScriptRoot
@@ -34,8 +38,13 @@ Say ""
 # --- The relay address -----------------------------------------------------
 if (-not $RelayUrl -and $env:MIRABEL_VOICE_RELAY_URL) { $RelayUrl = $env:MIRABEL_VOICE_RELAY_URL }
 $relayFile = Join-Path $root "relay.json"
-if (-not $RelayUrl -and (Test-Path $relayFile)) {
-    $RelayUrl = (Get-Content $relayFile -Raw | ConvertFrom-Json).relay_url
+if (Test-Path $relayFile) {
+    $relayInfo = Get-Content $relayFile -Raw | ConvertFrom-Json
+    if (-not $RelayUrl) { $RelayUrl = $relayInfo.relay_url }
+    # The Google sign-in client rides beside the relay address; neither is
+    # a secret, and both stay out of the repository the same way.
+    if (-not $GoogleClientId) { $GoogleClientId = $relayInfo.google_client_id }
+    if (-not $GoogleClientSecret) { $GoogleClientSecret = $relayInfo.google_client_secret }
 }
 if (-not $RelayUrl) {
     Say "  No relay address. The installer would have nowhere to send dictation." "Red"
@@ -92,8 +101,10 @@ if (Test-Path $staging) { Remove-Item $staging -Recurse -Force }
 New-Item -ItemType Directory -Force $staging | Out-Null
 Copy-Item (Join-Path $root "dist\MirabelVoice") $staging -Recurse
 $installer = Get-Content (Join-Path $here "Install.ps1") -Raw
-$installer.Replace("__RELAY_URL__", $RelayUrl) |
-    Out-File -FilePath (Join-Path $staging "Install.ps1") -Encoding utf8
+$installer = $installer.Replace("__RELAY_URL__", $RelayUrl)
+$installer = $installer.Replace("__GOOGLE_CLIENT_ID__", "$GoogleClientId")
+$installer = $installer.Replace("__GOOGLE_CLIENT_SECRET__", "$GoogleClientSecret")
+$installer | Out-File -FilePath (Join-Path $staging "Install.ps1") -Encoding utf8
 $zip = Join-Path $root "dist\MirabelVoice-$version.zip"
 if (Test-Path $zip) { Remove-Item $zip -Force }
 Compress-Archive -Path (Join-Path $staging "*") -DestinationPath $zip

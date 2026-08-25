@@ -14,6 +14,7 @@ import logging
 import os
 import subprocess
 import sys
+import threading
 from pathlib import Path
 
 from .app import STATE_ERROR, STATE_IDLE, STATE_RECORDING, STATE_WORKING, VoiceApp
@@ -106,6 +107,11 @@ class Tray:
             pystray.MenuItem(lambda _: self._title().replace("\n", " - "), None, enabled=False),
             pystray.Menu.SEPARATOR,
             pystray.MenuItem(
+                "Sign in with Google",
+                self._sign_in,
+                visible=lambda _: self.app.signin is not None,
+            ),
+            pystray.MenuItem(
                 "Clean up with Claude",
                 self._toggle_cleanup,
                 checked=lambda _: self.app.config.cleanup_enabled,
@@ -116,6 +122,27 @@ class Tray:
             pystray.Menu.SEPARATOR,
             pystray.MenuItem("Quit", self._quit),
         )
+
+    def _sign_in(self) -> None:
+        """Open the Google sign-in in the browser, off the menu thread.
+
+        This is the repair for a dead sign-in: the icon went orange and
+        told the user to come here. It also works while signed in, for
+        switching accounts.
+        """
+
+        def run() -> None:
+            try:
+                email = self.app.signin.sign_in()
+            except Exception as error:  # noqa: BLE001 - the menu must survive a refusal
+                log.warning("The sign-in did not complete: %s", error)
+                self.update(STATE_ERROR, f"The sign-in did not complete: {error}")
+                return
+            self.update(STATE_IDLE, f"Signed in as {email}.")
+
+        threading.Thread(
+            target=run, name="mirabel-voice-signin", daemon=True
+        ).start()
 
     def _toggle_cleanup(self) -> None:
         """Switch the Claude cleanup on or off and save the setting."""
