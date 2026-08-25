@@ -137,7 +137,7 @@ Press `r`, type their name exactly as the list shows it, press `d`. Their token 
 Done once, when the OAuth client from IT exists (issue #40):
 
 ```powershell
-python scripts\deploy_relay.py --google-client-id <the client id> --google-domain <our Workspace domain>
+python scripts\deploy_relay.py --google-client-id <the client id> --google-domain <our Workspace domains, comma separated>
 ```
 
 From then on the relay accepts a Mirabel Google sign-in wherever it accepts a token, and the usage report names the verified account. Tokens keep working beside it — the smoke test and any machine not yet moved over rely on that. A later plain `deploy_relay.py` keeps sign-in on; the two values live on the Lambda, not in this repository, which is public.

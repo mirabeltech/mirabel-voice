@@ -219,3 +219,17 @@ def test_the_next_request_retries_after_a_failed_fetch():
     assert signin.verify(sign_token(claims())) is None
     jwks.fail = False
     assert signin.verify(sign_token(claims())) is not None
+
+
+def test_every_org_domain_is_welcome_and_others_are_not():
+    """One Workspace can answer to several domains, and the hd claim
+    carries the account's own - both must pass, outsiders must not."""
+    signin = GoogleSignin(
+        CLIENT_ID,
+        "mirabeltech.com, maghub.com",
+        fetch_keys=FakeJwks(),
+        now=lambda: NOW,
+    )
+    assert signin.verify(sign_token(claims())) is not None
+    assert signin.verify(sign_token(claims(hd="maghub.com"))) is not None
+    assert signin.verify(sign_token(claims(hd="gmail.com"))) is None

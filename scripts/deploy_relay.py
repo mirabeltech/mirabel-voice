@@ -120,7 +120,8 @@ def _arguments(argv):
     )
     parser.add_argument(
         "--google-domain",
-        help="The Mirabel Workspace primary domain, for the sign-in check.",
+        help="The Mirabel Workspace domains for the sign-in check, "
+        "comma separated when the org answers to more than one.",
     )
     return parser.parse_args(argv)
 

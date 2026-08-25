@@ -223,11 +223,11 @@ def test_a_provider_refusal_comes_back_as_an_answer(monkeypatch):
 
 def test_sign_in_arrives_from_the_environment(monkeypatch):
     monkeypatch.setenv("MIRABEL_GOOGLE_CLIENT_ID", "12345-mirabel.apps")
-    monkeypatch.setenv("MIRABEL_GOOGLE_DOMAIN", "mirabeltech.com")
+    monkeypatch.setenv("MIRABEL_GOOGLE_DOMAIN", "mirabeltech.com,maghub.com")
     relay = build_relay(read_secret=fake_reader())
     assert relay.signin is not None
     assert relay.signin.client_id == "12345-mirabel.apps"
-    assert relay.signin.domain == "mirabeltech.com"
+    assert relay.signin.domains == frozenset({"mirabeltech.com", "maghub.com"})
 
 
 def test_without_the_environment_the_relay_is_tokens_only():

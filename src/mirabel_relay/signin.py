@@ -74,10 +74,12 @@ class GoogleSignin:
     Args:
         client_id: Our OAuth client's id. A token minted for any other
             audience is refused, however valid it is elsewhere.
-        domain: The Mirabel Workspace primary domain. The Internal
-            consent screen already keeps outside accounts from signing
-            in at all; checking the domain again here means the relay
-            stays closed even if that screen's setting ever drifts.
+        domains: The Mirabel Workspace domains, comma separated - one
+            org can serve accounts on several domains, and the hd
+            claim carries the account's own. The Internal consent
+            screen already keeps outside accounts from signing in at
+            all; checking the domain again here means the relay stays
+            closed even if that screen's setting ever drifts.
         fetch_keys: Returns Google's JWKS document. Injected so every
             test runs offline - this module's one testing seam.
         now: Returns seconds since the epoch, for the expiry check.
@@ -87,12 +89,14 @@ class GoogleSignin:
     def __init__(
         self,
         client_id: str,
-        domain: str,
+        domains: str,
         fetch_keys: Callable[[], dict] = fetch_google_keys,
         now: Callable[[], float] = time.time,
     ) -> None:
         self.client_id = client_id
-        self.domain = domain
+        self.domains = frozenset(
+            piece.strip() for piece in domains.split(",") if piece.strip()
+        )
         self.fetch_keys = fetch_keys
         self.now = now
         self._keys: dict[str, tuple[int, int]] | None = None
@@ -128,7 +132,7 @@ class GoogleSignin:
             return None
         if expiry + CLOCK_SKEW_SECONDS <= self.now():
             return None
-        if claims.get("hd") != self.domain:
+        if claims.get("hd") not in self.domains:
             return None
         if claims.get("email_verified") is not True:
             return None
