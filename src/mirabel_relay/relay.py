@@ -27,6 +27,8 @@ import time
 from dataclasses import dataclass, field
 from typing import Callable
 
+from mirabel_relay.signin import looks_like_jwt
+
 log = logging.getLogger(__name__)
 
 ANTHROPIC_BASE = "https://api.anthropic.com"
@@ -93,7 +95,7 @@ def _error(status: int, message: str) -> Response:
 
 
 class Relay:
-    """Check the caller's token, swap in the real key, forward the call.
+    """Check the caller's credential, swap in the real key, forward the call.
 
     Args:
         tokens: Every allowed token, mapped to the holder's name. The
@@ -104,6 +106,11 @@ class Relay:
             offline - this is the relay's one testing seam.
         clock: Returns seconds, for the latency figure. Injected for
             the tests.
+        signin: Verifies a Google sign-in and returns the account's
+            email, or None to refuse. When set, a credential shaped
+            like an ID token is judged by it instead of the token
+            list. None means tokens only, which is also what an
+            undeployed or half-configured sign-in safely degrades to.
     """
 
     def __init__(
@@ -113,12 +120,14 @@ class Relay:
         openai_key: str,
         forward: Forward = http_forward,
         clock: Callable[[], float] | None = None,
+        signin=None,
     ) -> None:
         self.tokens = tokens
         self.anthropic_key = anthropic_key
         self.openai_key = openai_key
         self.forward = forward
         self._clock = clock or time.monotonic
+        self.signin = signin
 
     def handle(self, request: Request) -> Response:
         """Answer one call from the app."""
@@ -175,15 +184,22 @@ class Relay:
         )
 
     def _authenticate(self, headers: dict[str, str]) -> str | None:
-        """Return the token holder's name, or None to refuse.
+        """Return the caller's name, or None to refuse.
 
-        The comparison takes the same time whether the token is nearly
-        right or nowhere close, so response timing teaches an attacker
-        nothing about the token list.
+        Two kinds of credential arrive here. A Google ID token has a
+        JWT's three-part shape - relay tokens never contain a dot - and
+        is judged by the sign-in verifier when one is configured. A
+        failed sign-in is refused outright rather than retried against
+        the token list, so the two doors stay separate. Everything else
+        is compared against the token list, and that comparison takes
+        the same time whether the token is nearly right or nowhere
+        close, so response timing teaches an attacker nothing.
         """
         presented = self._presented_token(headers)
         if not presented:
             return None
+        if self.signin is not None and looks_like_jwt(presented):
+            return self.signin.verify(presented)
         for token, name in self.tokens.items():
             if hmac.compare_digest(token.encode(), presented.encode()):
                 return name
