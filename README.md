@@ -10,8 +10,8 @@ Press **Insert**, say what you want to write, then press **Insert** again. Your 
 
 Then:
 
-1. **Unzip it** somewhere you can find, such as your Downloads folder. Keep the whole folder together.
-2. **Right-click `Install.ps1`** and choose **Run with PowerShell**.
+1. **Unzip it first**: right-click the downloaded file and choose **Extract All**. Double-clicking the zip only peeks inside it — Explorer shows the same files, but nothing can install from in there. Extract to somewhere you can find, such as your Downloads folder.
+2. **In the extracted folder, right-click `Install`**, choose **Show more options**, then **Run with PowerShell**. (Windows 11 tucks that option behind Show more options.)
 3. **Sign in when your browser opens.** The first time the app starts, it opens the Google sign-in page — use your Mirabel work account, the same one as your email. That is the whole setup: no token to paste, no API keys to enter, nothing new to keep. (An older download asks for a token instead; if yours does, ask Tommy for one.)
 
 It does not ask for an administrator password. Everything goes in your own profile.
