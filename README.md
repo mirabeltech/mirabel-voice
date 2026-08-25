@@ -36,6 +36,8 @@ A microphone icon appears near your clock, and Mirabel Voice starts with Windows
 
 One thing Windows does that we cannot stop: it tucks new icons behind the **^** arrow near the clock. Click the arrow to find the microphone, then drag the icon onto the taskbar itself so it is always in view. Worth the five seconds — the icon's colour is how you know the app is listening.
 
+![The grey microphone icon behind the ^ arrow near the clock](https://raw.githubusercontent.com/mirabeltech/mirabel-voice/main/docs/images/tray-icon.png)
+
 To update later, unzip the newer file and run `Install.ps1` again. Your settings and your token stay as they are, and it does not ask for the token again.
 
 <details>
