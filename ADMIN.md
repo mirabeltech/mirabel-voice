@@ -25,7 +25,15 @@ GitHub Actions then runs the tests and publishes release notes. It attaches no f
 
 Publishing the release is also the rollout. An installed machine that pastes the README's install line pulls the newest release's source from this repository and swaps it into its bundle — no zip, no shared drive. From v0.5.0 the app does the same on its own: it checks the newest release once a day and applies it, restarting between dictations, so the whole team is current within a day of the tag. Both paths prove the new code still imports before keeping it, so a release that changes the bundle itself (a Python bump, a new library, Tkinter) makes the machine put the old code back and send its person to the shared drive. Only those releases need the zip rebuilt and re-uploaded.
 
-Treat the tag as the deploy button: the newest published release is what every machine installs, on its own, within a day. A bad release is recalled by tagging a good one with a higher number, not by deleting anything — machines only ever move forward. The planned tightening is for the relay to announce the version and checksum it endorses, so the authority to update the fleet sits with the relay deploy rather than with whoever can publish a GitHub release.
+Treat the tag as the deploy button: the newest published release is what every machine installs, on its own, within a day. A bad release is recalled by tagging a good one with a higher number, not by deleting anything — machines only ever move forward.
+
+The relay can pin what the fleet installs, which moves that authority from "can publish a GitHub release" to "can deploy the relay":
+
+```powershell
+python scripts\deploy_relay.py --endorse v0.6.0
+```
+
+That fetches the tag from GitHub, hashes the package contents the same way the app will (the contents, not the zip — GitHub does not promise byte-identical archives forever), and deploys the pair. From then on the app updates only to that version, verifies the download against that hash, and GitHub is just the delivery. Later deploys carry the endorsement forward until the next `--endorse`; recall is `--endorse` of the older good version. Mind the switch in ritual: once the first endorsement is set, endorsing **is** the rollout — tag the release, then endorse it, or machines stay where they are. A machine that gets no answer from the relay (development mode, or an endorsement never set) falls back to following the newest published release, which is how every machine behaved before endorsement existed.
 
 Every push to `main` builds the installer with a deliberately useless relay address, so a broken build is found on the day it breaks. That artifact is a compile check and is not something to hand anybody.
 

@@ -87,13 +87,15 @@ class Tray:
     """Show the app in the Windows notification area."""
 
     def __init__(self, app: VoiceApp) -> None:
-        from .updater import Updater
+        from .updater import Updater, endorsement_for
 
         self.app = app
         self.icon = None
         self.detail = ""
         # None outside the installed bundle, and the menu item hides.
-        self.updater = Updater.discover()
+        self.updater = Updater.discover(
+            endorsement=endorsement_for(app.config, app.signin)
+        )
         app._on_state = self.update  # noqa: SLF001 - the tray owns the display
 
     def _title(self) -> str:

@@ -241,3 +241,25 @@ def test_half_a_sign_in_configuration_refuses_to_start(monkeypatch):
     monkeypatch.setenv("MIRABEL_GOOGLE_CLIENT_ID", "12345-mirabel.apps")
     with pytest.raises(SecretProblem, match="MIRABEL_GOOGLE_DOMAIN"):
         build_relay(read_secret=fake_reader())
+
+
+def test_the_environment_carries_the_endorsed_update(monkeypatch):
+    monkeypatch.setenv("MIRABEL_UPDATE_VERSION", "0.6.0")
+    monkeypatch.setenv("MIRABEL_UPDATE_HASH", "abc123")
+    relay = build_relay(read_secret=fake_reader())
+    assert relay.update_info == {"version": "0.6.0", "sha256": "abc123"}
+
+
+def test_no_endorsement_builds_a_relay_without_one(monkeypatch):
+    monkeypatch.delenv("MIRABEL_UPDATE_VERSION", raising=False)
+    monkeypatch.delenv("MIRABEL_UPDATE_HASH", raising=False)
+    relay = build_relay(read_secret=fake_reader())
+    assert relay.update_info is None
+
+
+def test_half_an_endorsement_refuses_to_start(monkeypatch):
+    # A version with no hash would endorse an unverifiable download.
+    monkeypatch.setenv("MIRABEL_UPDATE_VERSION", "0.6.0")
+    monkeypatch.delenv("MIRABEL_UPDATE_HASH", raising=False)
+    with pytest.raises(SecretProblem):
+        build_relay(read_secret=fake_reader())

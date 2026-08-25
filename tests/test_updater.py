@@ -130,3 +130,119 @@ def test_the_wait_gives_up_at_the_deadline():
     from mirabel_voice.__main__ import _wait_for_exit
 
     assert not _wait_for_exit(lambda: True, seconds=0, sleep=lambda s: None)
+
+
+# --- The relay endorsement ---------------------------------------------------
+
+from mirabel_voice.updater import content_hash, relay_endorsement  # noqa: E402
+
+
+def hash_of_release(tmp_path):
+    """The content hash of the package a_release() serves."""
+    staged = tmp_path / "hash-probe"
+    (staged / "mirabel_voice").mkdir(parents=True)
+    (staged / "mirabel_voice" / "__init__.py").write_text("new code")
+    (staged / "mirabel_voice" / "app.py").write_text("new app")
+    return content_hash(staged / "mirabel_voice")
+
+
+def test_the_content_hash_sees_names_and_bytes_not_containers(tmp_path):
+    first = tmp_path / "a" / "pkg"
+    second = tmp_path / "b" / "pkg"
+    for root in (first, second):
+        root.mkdir(parents=True)
+        (root / "one.py").write_text("same")
+    assert content_hash(first) == content_hash(second)
+
+    (second / "one.py").write_text("different")
+    assert content_hash(first) != content_hash(second)
+
+    (second / "one.py").write_text("same")
+    (second / "two.py").write_text("")
+    assert content_hash(first) != content_hash(second)
+
+
+def test_the_endorsement_outranks_the_newest_release(tmp_path):
+    # GitHub's newest is v0.6.0, but the relay endorses v0.5.0: the
+    # endorsed version installs, and the newest is never even fetched.
+    site, python_dir = a_bundle(tmp_path, version="0.4.0")
+    serve = a_release("v0.5.0")
+    updater = Updater(
+        site,
+        python_dir,
+        fetch=lambda url: serve(url),
+        prove=lambda: True,
+        endorsement=lambda: {"version": "0.5.0", "sha256": hash_of_release(tmp_path)},
+    )
+    assert updater.apply_latest() == "0.5.0"
+    assert (site / "mirabel_voice" / "__init__.py").read_text() == "new code"
+
+
+def test_a_download_that_fails_the_hash_is_refused(tmp_path):
+    site, python_dir = a_bundle(tmp_path, version="0.4.0")
+    updater = Updater(
+        site,
+        python_dir,
+        fetch=a_release("v0.5.0"),
+        prove=lambda: True,
+        endorsement=lambda: {"version": "0.5.0", "sha256": "0" * 64},
+    )
+    assert updater.apply_latest() is None
+    assert (site / "mirabel_voice" / "__init__.py").read_text() == "old code"
+    assert (site / "mirabel_voice-0.4.0.dist-info").exists()
+
+
+def test_no_endorsement_answer_falls_back_to_the_newest_release(tmp_path):
+    def unreachable():
+        raise OSError("the relay is out")
+
+    site, python_dir = a_bundle(tmp_path, version="0.4.0")
+    updater = Updater(
+        site,
+        python_dir,
+        fetch=a_release("v0.5.0"),
+        prove=lambda: True,
+        endorsement=unreachable,
+    )
+    assert updater.apply_latest() == "0.5.0"
+
+
+def test_an_endorsed_version_already_installed_means_nothing_to_do(tmp_path):
+    site, python_dir = a_bundle(tmp_path, version="0.5.0")
+    updater = Updater(
+        site,
+        python_dir,
+        fetch=lambda url: (_ for _ in ()).throw(AssertionError("no fetch needed")),
+        prove=lambda: True,
+        endorsement=lambda: {"version": "0.5.0", "sha256": "abc"},
+    )
+    assert updater.apply_latest() is None
+
+
+def test_the_endorsement_asker_presents_the_rotating_credential():
+    asked = []
+
+    def fetch(url, headers):
+        asked.append((url, headers))
+        return b'{"version": "0.5.0", "sha256": "abc"}'
+
+    tokens = iter(["first-token", "second-token"])
+    ask = relay_endorsement(
+        "https://relay.example.on.aws/", lambda: next(tokens), fetch=fetch
+    )
+
+    assert ask() == {"version": "0.5.0", "sha256": "abc"}
+    assert ask() == {"version": "0.5.0", "sha256": "abc"}
+    assert asked[0] == (
+        "https://relay.example.on.aws/update", {"x-api-key": "first-token"}
+    )
+    assert asked[1][1] == {"x-api-key": "second-token"}
+
+
+def test_a_signed_out_machine_asks_nothing():
+    ask = relay_endorsement(
+        "https://relay.example.on.aws",
+        lambda: None,
+        fetch=lambda url, headers: (_ for _ in ()).throw(AssertionError("no call")),
+    )
+    assert ask() is None

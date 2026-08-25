@@ -50,6 +50,8 @@ SOURCE = Path(__file__).resolve().parent.parent / "src" / "mirabel_relay"
 PACKAGED = ("__init__.py", "relay.py", "handler.py", "signin.py")
 
 GOOGLE_VARIABLES = ("MIRABEL_GOOGLE_CLIENT_ID", "MIRABEL_GOOGLE_DOMAIN")
+UPDATE_VARIABLES = ("MIRABEL_UPDATE_VERSION", "MIRABEL_UPDATE_HASH")
+ARCHIVE_BASE = "https://github.com/mirabeltech/mirabel-voice/archive/refs/tags"
 
 TRUST_POLICY = {
     "Version": "2012-10-17",
@@ -83,19 +85,24 @@ def main(argv=None) -> int:
                 "Google sign-in needs both --google-client-id and "
                 "--google-domain. Pass both, or neither."
             )
+        update = None
+        if parsed.endorse:
+            update = endorsed_update(parsed.endorse)
+            say(f"Endorsing {update[0]} (content hash {update[1][:12]}...).")
         role_arn = ensure_role(session, account, parsed.region)
         package = build_package()
         say(f"Packaged {len(package):,} bytes from {len(PACKAGED)} files.")
         ensure_function(
             session, package, role_arn,
             parsed.google_client_id, parsed.google_domain,
+            update,
         )
         url = ensure_function_url(session)
         say(f"The relay answers at {url}")
         if parsed.no_smoke:
             say("Smoke test skipped.")
             return 0
-        return smoke_test(session, url)
+        return smoke_test(session, url, expect_endorsement=bool(parsed.endorse))
     except Stop as reason:
         say()
         say(f"Stopped: {reason}")
@@ -123,7 +130,54 @@ def _arguments(argv):
         help="The Mirabel Workspace domains for the sign-in check, "
         "comma separated when the org answers to more than one.",
     )
+    parser.add_argument(
+        "--endorse",
+        metavar="TAG",
+        help="The release every machine should self-update to, e.g. "
+        "v0.5.0. The hash is computed from the tag's own source. "
+        "Later deploys keep the endorsement without the flag.",
+    )
     return parser.parse_args(argv)
+
+
+def endorsed_update(tag: str) -> tuple[str, str]:
+    """Fetch the tag's source from GitHub and hash what machines install.
+
+    The hash covers the package folder's contents, computed by the same
+    content_hash the app runs on what it downloads. Hashing the zip
+    itself would break the day GitHub changes its compression.
+    """
+    import tempfile
+    import urllib.error
+
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
+    from mirabel_voice.updater import content_hash
+
+    tag = tag if tag.startswith("v") else "v" + tag
+    url = f"{ARCHIVE_BASE}/{tag}.zip"
+    try:
+        with urllib.request.urlopen(url, timeout=60) as reply:  # noqa: S310
+            archive = reply.read()
+    except urllib.error.HTTPError as refusal:
+        raise Stop(
+            f"GitHub answered {refusal.code} for {tag}. Is the release "
+            "published? Tags appear at github.com/mirabeltech/"
+            "mirabel-voice/releases."
+        ) from refusal
+    with tempfile.TemporaryDirectory(prefix="mirabel-endorse-") as work:
+        with zipfile.ZipFile(io.BytesIO(archive)) as bundle:
+            bundle.extractall(work)
+        package = next(
+            (
+                parent / "mirabel_voice"
+                for parent in Path(work).glob("*/src")
+                if (parent / "mirabel_voice" / "__init__.py").exists()
+            ),
+            None,
+        )
+        if package is None:
+            raise Stop(f"The {tag} archive holds no mirabel_voice package.")
+        return tag.lstrip("v"), content_hash(package)
 
 
 def open_session(profile: str | None, region: str):
@@ -292,13 +346,16 @@ def environment_variables(
     google_client_id: str | None,
     google_domain: str | None,
     existing: dict | None = None,
+    update: tuple[str, str] | None = None,
 ) -> dict:
-    """The Lambda's environment: the secret names, plus Google sign-in.
+    """The Lambda's environment: secret names, sign-in, endorsed update.
 
     The Google values are not secrets, but they are also not in this
     public repository, so they arrive by flag once and are carried
     forward from the deployed function on every later deploy. A deploy
-    without the flags must never quietly turn sign-in off.
+    without the flags must never quietly turn sign-in off. The endorsed
+    update travels the same way: --endorse sets it, and every later
+    deploy keeps it until the next --endorse moves it.
     """
     variables = {
         "MIRABEL_OPENAI_SECRET": OPENAI_SECRET,
@@ -312,6 +369,13 @@ def environment_variables(
         for name in GOOGLE_VARIABLES:
             if existing.get(name):
                 variables[name] = existing[name]
+    if update:
+        variables["MIRABEL_UPDATE_VERSION"] = update[0]
+        variables["MIRABEL_UPDATE_HASH"] = update[1]
+    elif existing:
+        for name in UPDATE_VARIABLES:
+            if existing.get(name):
+                variables[name] = existing[name]
     return variables
 
 
@@ -321,6 +385,7 @@ def ensure_function(
     role_arn: str,
     google_client_id: str | None = None,
     google_domain: str | None = None,
+    update: tuple[str, str] | None = None,
 ) -> None:
     """Create the function, or update the one that is already there."""
     from botocore.exceptions import ClientError
@@ -334,7 +399,9 @@ def ensure_function(
         if failure.response["Error"]["Code"] != "ResourceNotFoundException":
             raise
         environment = {
-            "Variables": environment_variables(google_client_id, google_domain)
+            "Variables": environment_variables(
+                google_client_id, google_domain, update=update
+            )
         }
         _create_function(lam, package, role_arn, environment)
         say(f"Created the function {FUNCTION}.")
@@ -345,7 +412,7 @@ def ensure_function(
     )
     environment = {
         "Variables": environment_variables(
-            google_client_id, google_domain, already_there
+            google_client_id, google_domain, already_there, update
         )
     }
 
@@ -373,6 +440,11 @@ def ensure_function(
         say("Google sign-in is on: work accounts and tokens both open the door.")
     else:
         say("Google sign-in is not configured yet; tokens only.")
+    endorsed = environment["Variables"].get("MIRABEL_UPDATE_VERSION")
+    if endorsed:
+        say(f"The relay endorses version {endorsed} for self-update.")
+    else:
+        say("No endorsed update yet; machines follow the newest release.")
 
 
 def _create_function(lam, package: bytes, role_arn: str, environment: dict) -> None:
@@ -506,7 +578,19 @@ def _multipart(fields: dict, filename: str, payload: bytes):
     return b"".join(parts), f"multipart/form-data; boundary={boundary}"
 
 
-def smoke_test(session, url: str) -> int:
+def _get_update(url: str, token: str) -> tuple[int, str]:
+    """Ask the deployed relay which release it endorses."""
+    call = urllib.request.Request(url + "/update", method="GET")
+    call.add_header("x-api-key", token)
+    try:
+        with urllib.request.urlopen(call, timeout=30) as reply:
+            answer = json.loads(reply.read())
+            return reply.status, answer.get("version", "?")
+    except urllib.error.HTTPError as refusal:
+        return refusal.code, ""
+
+
+def smoke_test(session, url: str, expect_endorsement: bool = False) -> int:
     """Prove the deployed relay works, and measure how fast it answers."""
     say()
     say("Smoke test")
@@ -551,7 +635,16 @@ def smoke_test(session, url: str) -> int:
     say(f"  transcribe, warm       -> {audio_status} in "
         f"{audio_seconds * 1000:,.0f} ms")
 
+    update_status, endorsed = _get_update(url, token)
+    if update_status == 200:
+        say(f"  endorsed update        -> {update_status} (version {endorsed})")
+    else:
+        say(f"  endorsed update        -> {update_status} (none endorsed)")
+
     ok = refused == 401 and cold_status == 200 and audio_status == 200
+    if expect_endorsement and update_status != 200:
+        say("  The endorsement was just set but the relay does not serve it.")
+        ok = False
     say()
     if ok:
         say("Both keys work through the relay, and an unknown token is refused.")

@@ -111,6 +111,10 @@ class Relay:
             like an ID token is judged by it instead of the token
             list. None means tokens only, which is also what an
             undeployed or half-configured sign-in safely degrades to.
+        update_info: The release every machine should self-update to:
+            {"version": ..., "sha256": ...}, set at deploy time. None
+            means no endorsement, and the app falls back to following
+            the newest published release.
     """
 
     def __init__(
@@ -121,6 +125,7 @@ class Relay:
         forward: Forward = http_forward,
         clock: Callable[[], float] | None = None,
         signin=None,
+        update_info: dict | None = None,
     ) -> None:
         self.tokens = tokens
         self.anthropic_key = anthropic_key
@@ -128,6 +133,7 @@ class Relay:
         self.forward = forward
         self._clock = clock or time.monotonic
         self.signin = signin
+        self.update_info = update_info
 
     def handle(self, request: Request) -> Response:
         """Answer one call from the app."""
@@ -139,7 +145,27 @@ class Relay:
             return self._cleanup(name, request)
         if request.method == "POST" and request.path == "/v1/audio/transcriptions":
             return self._transcribe(name, request)
+        if request.method == "GET" and request.path == "/update":
+            return self._update(name)
         return _error(404, "The relay does not serve this path.")
+
+    def _update(self, name: str) -> Response:
+        """Say which release this relay endorses for self-update.
+
+        The two values are set at deploy time and are not secrets. No
+        endorsement is an answer too: the app then falls back to the
+        newest published release, which is how machines behaved before
+        endorsement existed.
+        """
+        if not self.update_info:
+            self._log_usage(name, "update", None, None, 0.0, "none")
+            return _error(404, "The relay endorses no update.")
+        self._log_usage(name, "update", None, None, 0.0, "ok")
+        return Response(
+            200,
+            json.dumps(self.update_info).encode(),
+            {"content-type": "application/json"},
+        )
 
     def _cleanup(self, name: str, request: Request) -> Response:
         """Forward a transcript to Anthropic for tidying."""

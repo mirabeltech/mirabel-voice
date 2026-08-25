@@ -137,3 +137,24 @@ def test_the_flags_replace_what_was_deployed_before():
     variables = deploy_relay.environment_variables("new-id", "new.com", deployed)
     assert variables["MIRABEL_GOOGLE_CLIENT_ID"] == "new-id"
     assert variables["MIRABEL_GOOGLE_DOMAIN"] == "new.com"
+
+
+def test_the_endorsement_arrives_by_flag_and_is_kept_by_later_deploys():
+    variables = deploy_relay.environment_variables(
+        None, None, update=("0.6.0", "abc123")
+    )
+    assert variables["MIRABEL_UPDATE_VERSION"] == "0.6.0"
+    assert variables["MIRABEL_UPDATE_HASH"] == "abc123"
+
+    carried = deploy_relay.environment_variables(None, None, variables)
+    assert carried["MIRABEL_UPDATE_VERSION"] == "0.6.0"
+    assert carried["MIRABEL_UPDATE_HASH"] == "abc123"
+
+
+def test_a_new_endorsement_replaces_the_carried_one():
+    deployed = {"MIRABEL_UPDATE_VERSION": "0.5.0", "MIRABEL_UPDATE_HASH": "old"}
+    variables = deploy_relay.environment_variables(
+        None, None, deployed, update=("0.6.0", "new")
+    )
+    assert variables["MIRABEL_UPDATE_VERSION"] == "0.6.0"
+    assert variables["MIRABEL_UPDATE_HASH"] == "new"

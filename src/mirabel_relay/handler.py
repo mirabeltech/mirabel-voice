@@ -90,7 +90,26 @@ def build_relay(read_secret=aws_secret) -> Relay:
         openai_key=_read_key(read_secret, openai_name),
         forward=urllib_forward,
         signin=_google_signin(),
+        update_info=_update_info(),
     )
+
+
+def _update_info() -> dict | None:
+    """Read the endorsed update, when the environment carries one.
+
+    Both values or neither, like the sign-in: half an endorsement is a
+    deploy mistake, and refusing to start names it.
+    """
+    version = os.environ.get("MIRABEL_UPDATE_VERSION", "").strip()
+    digest = os.environ.get("MIRABEL_UPDATE_HASH", "").strip()
+    if version and digest:
+        return {"version": version, "sha256": digest}
+    if version or digest:
+        raise SecretProblem(
+            "The update endorsement needs both MIRABEL_UPDATE_VERSION "
+            "and MIRABEL_UPDATE_HASH. Only one is set."
+        )
+    return None
 
 
 def _google_signin() -> GoogleSignin | None:

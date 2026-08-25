@@ -15,6 +15,7 @@ to fetch the new zip, exactly as the bootstrap does.
 
 from __future__ import annotations
 
+import hashlib
 import io
 import json
 import logging
@@ -48,10 +49,63 @@ def parse_version(text: str) -> tuple[int, ...] | None:
     return tuple(int(part) for part in match.group(1).split("."))
 
 
-def _fetch(url: str) -> bytes:
+def _fetch(url: str, headers: dict | None = None) -> bytes:
     request = urllib.request.Request(url, headers={"User-Agent": "mirabel-voice"})
+    for name, value in (headers or {}).items():
+        request.add_header(name, value)
     with urllib.request.urlopen(request, timeout=30) as response:  # noqa: S310
         return response.read()
+
+
+def content_hash(root: Path) -> str:
+    """One hash for a folder's contents, stable across zip containers.
+
+    GitHub does not promise byte-identical archives forever - the
+    compression has changed under people before - so the endorsement
+    hashes what gets installed, not the zip it travelled in. The same
+    function runs here and in the endorse step of the relay deploy,
+    which is what makes the two answers comparable.
+    """
+    digest = hashlib.sha256()
+    for file in sorted(root.rglob("*")):
+        if not file.is_file():
+            continue
+        digest.update(file.relative_to(root).as_posix().encode())
+        digest.update(b"\x00")
+        digest.update(file.read_bytes())
+        digest.update(b"\x00")
+    return digest.hexdigest()
+
+
+def relay_endorsement(relay_url: str, credential, fetch=None):  # noqa: ANN001
+    """Return a callable that asks the relay which release it endorses.
+
+    credential is what the SDK clients hold: the person's sign-in as a
+    callable, or the static token. It is resolved on every ask, so a
+    sign-in refreshed between checks is used, not remembered.
+    """
+    base = relay_url.rstrip("/")
+
+    def ask() -> dict | None:
+        key = credential() if callable(credential) else credential
+        if not key:
+            return None
+        answer = json.loads((fetch or _fetch)(f"{base}/update", {"x-api-key": key}))
+        if answer.get("version") and answer.get("sha256"):
+            return answer
+        return None
+
+    return ask
+
+
+def endorsement_for(config, signin=None):  # noqa: ANN001
+    """Build this machine's endorsement asker, or None without a relay."""
+    if not getattr(config, "relay_url", None):
+        return None
+    credential = signin.credential if signin is not None else config.relay_token
+    if not credential:
+        return None
+    return relay_endorsement(config.relay_url, credential)
 
 
 class Updater:
@@ -63,14 +117,16 @@ class Updater:
         python_dir: Path,
         fetch=None,  # noqa: ANN001 - a callable url -> bytes, for tests
         prove=None,  # noqa: ANN001 - a callable () -> bool, for tests
+        endorsement=None,  # noqa: ANN001 - asks the relay what it endorses
     ) -> None:
         self.site_packages = site_packages
         self.python_dir = python_dir
         self._fetch = fetch or _fetch
         self._prove = prove if prove is not None else self._app_answers
+        self._endorsement = endorsement
 
     @classmethod
-    def discover(cls) -> "Updater | None":
+    def discover(cls, endorsement=None) -> "Updater | None":  # noqa: ANN001
         """Return an updater for this process, or None outside the bundle.
 
         The bundle's layout is python\\Lib\\site-packages\\mirabel_voice
@@ -86,7 +142,7 @@ class Updater:
             return None
         if not (python_dir / "pythonw.exe").exists():
             return None
-        return cls(site_packages=site, python_dir=python_dir)
+        return cls(site_packages=site, python_dir=python_dir, endorsement=endorsement)
 
     # --- What is installed, what is out ------------------------------------
 
@@ -117,17 +173,47 @@ class Updater:
 
     # --- The swap -----------------------------------------------------------
 
+    def _endorsed(self) -> dict | None:
+        """Ask the relay what it endorses. No answer is an answer."""
+        if self._endorsement is None:
+            return None
+        try:
+            return self._endorsement()
+        except Exception as error:  # noqa: BLE001 - fall back to the newest release
+            log.debug("The relay offered no endorsement: %s", error)
+            return None
+
     def apply_latest(self) -> str | None:
-        """Update to the newest release. Return its version, or None.
+        """Update to what the relay endorses, or to the newest release.
+
+        The endorsement outranks the release list: when the relay names
+        a version and a hash, only that version at that hash installs.
+        Without an endorsement - no relay, no answer, no network - the
+        newest published release is followed, which is how machines
+        behaved before endorsement existed.
 
         None means there was nothing to do, or nothing safe to do: no
-        newer release, no network, or a release the proof step refused,
-        in which case the old code is already back in place.
+        newer release, no network, a hash that did not match, or a
+        release the proof step refused, in which case the old code is
+        already back in place.
         """
-        release = self.latest()
-        if release is None:
-            return None
-        version, url = release
+        required_hash = None
+        endorsed = self._endorsed()
+        if endorsed:
+            version = parse_version(endorsed["version"])
+            if version is None:
+                log.warning(
+                    "The relay endorsed an unreadable version: %r.",
+                    endorsed["version"],
+                )
+                return None
+            url = f"{ARCHIVE_BASE}/v{endorsed['version']}.zip"
+            required_hash = endorsed["sha256"]
+        else:
+            release = self.latest()
+            if release is None:
+                return None
+            version, url = release
         installed = self.installed_version()
         if installed and version <= installed:
             return None
@@ -150,6 +236,12 @@ class Updater:
             )
             if staged is None:
                 log.warning("The release download holds no package; not applied.")
+                return None
+            if required_hash and content_hash(staged) != required_hash:
+                log.warning(
+                    "The download does not match what the relay endorses; "
+                    "nothing was changed."
+                )
                 return None
             return self._swap(staged, version)
 

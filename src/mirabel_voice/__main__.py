@@ -87,9 +87,11 @@ def _start_update_watch(app: VoiceApp, tray) -> None:  # noqa: ANN001
     once - the running code keeps its imported modules - and the
     restart into it waits for a moment with no dictation in flight.
     """
-    from .updater import Updater
+    from .updater import Updater, endorsement_for
 
-    updater = Updater.discover()
+    updater = Updater.discover(
+        endorsement=endorsement_for(app.config, app.signin)
+    )
     if updater is None or not app.config.auto_update:
         return
 

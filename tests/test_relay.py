@@ -48,7 +48,7 @@ class FakeForward:
         return self.status, {"content-type": "application/json"}, self.body
 
 
-def make_relay(forward=None):
+def make_relay(forward=None, update_info=None):
     forward = forward if forward is not None else FakeForward()
     relay = Relay(
         tokens=TOKENS,
@@ -56,8 +56,37 @@ def make_relay(forward=None):
         openai_key=REAL_OPENAI_KEY,
         forward=forward,
         clock=lambda: 0.0,
+        update_info=update_info,
     )
     return relay, forward
+
+
+ENDORSEMENT = {"version": "0.6.0", "sha256": "abc123"}
+
+
+def update_request(token="tommy-token-1"):
+    headers = {"x-api-key": token} if token else {}
+    return Request(method="GET", path="/update", headers=headers, body=b"")
+
+
+def test_the_update_route_serves_the_endorsement():
+    relay, forward = make_relay(update_info=ENDORSEMENT)
+    answer = relay.handle(update_request())
+    assert answer.status == 200
+    assert json.loads(answer.body) == ENDORSEMENT
+    assert not forward.calls  # answered here, never forwarded
+
+
+def test_no_endorsement_is_a_404_not_an_error():
+    relay, _ = make_relay()
+    answer = relay.handle(update_request())
+    assert answer.status == 404
+
+
+def test_the_update_route_still_needs_a_credential():
+    relay, _ = make_relay(update_info=ENDORSEMENT)
+    answer = relay.handle(update_request(token=None))
+    assert answer.status == 401
 
 
 def cleanup_request(token="tommy-token-1", header="x-api-key"):
