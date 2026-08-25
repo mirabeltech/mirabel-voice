@@ -30,8 +30,6 @@ Then:
 
 5. **Sign in when your browser opens.** The first time the app starts, it opens the Google sign-in page — use your Mirabel work account, the same one as your email. That is the whole setup: no token to paste, no API keys to enter, nothing new to keep. (An older download asks for a token instead; if yours does, ask Tommy for one.)
 
-It does not ask for an administrator password. Everything goes in your own profile.
-
 A microphone icon appears near your clock, and Mirabel Voice starts with Windows from then on. The whole thing takes about two minutes.
 
 One thing Windows does that we cannot stop: it tucks new icons behind the **^** arrow near the clock — click the arrow and the microphone is there. To keep it always in view: right-click an empty spot on the taskbar, choose **Taskbar settings**, open **Other system tray icons**, and switch on the row with the round grey microphone (the row may be named after Python, which is what the app runs on). Worth the minute — the icon's colour is how you know the app is listening.
