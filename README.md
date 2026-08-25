@@ -24,7 +24,10 @@ Then:
 
    ![The Extract all button in the toolbar](https://raw.githubusercontent.com/mirabeltech/mirabel-voice/main/docs/images/install-4-extract.png)
 
-4. **In the extracted folder, right-click `Install`**, choose **Show more options**, then **Run with PowerShell**. (Windows 11 tucks that option behind Show more options.)
+4. **Open the extracted folder, click `Install` once to select it, then right-click it** and choose **Run with PowerShell**. The option only appears when the file is selected first. If your menu does not show it, look under **Show more options**.
+
+   ![Run with PowerShell in the right-click menu](https://raw.githubusercontent.com/mirabeltech/mirabel-voice/main/docs/images/install-5-run.png)
+
 5. **Sign in when your browser opens.** The first time the app starts, it opens the Google sign-in page — use your Mirabel work account, the same one as your email. That is the whole setup: no token to paste, no API keys to enter, nothing new to keep. (An older download asks for a token instead; if yours does, ask Tommy for one.)
 
 It does not ask for an administrator password. Everything goes in your own profile.

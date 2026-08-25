@@ -1,7 +1,7 @@
 # Mirabel Voice - install from this folder.
 #
-# Right-click Install.ps1 and choose "Run with PowerShell" (behind
-# "Show more options" on Windows 11), or run:
+# Select Install.ps1, right-click it, and choose "Run with PowerShell"
+# (under "Show more options" on some Windows 11 builds), or run:
 #   powershell -ExecutionPolicy Bypass -File Install.ps1
 #
 # There is deliberately no double-click Install.cmd: Smart App Control
