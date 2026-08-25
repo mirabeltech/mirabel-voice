@@ -6,13 +6,13 @@ Press **Insert**, say what you want to write, then press **Insert** again. Your 
 
 ## Install
 
-**Ask Tommy for the download and your token.** They come together: a zip file and one line of text meant for you alone. There is no public download, because the file carries the address of our server and the pilot is a handful of people.
+**Ask Tommy for the download.** There is no public link, because the file carries the address of our server.
 
 Then:
 
 1. **Unzip it** somewhere you can find, such as your Downloads folder. Keep the whole folder together.
 2. **Right-click `Install.ps1`** and choose **Run with PowerShell**.
-3. **Paste your token** when it asks. There are no API keys to enter: they stay on our server, and your computer never holds one. It tests your token before it finishes, so a wrong one is caught now rather than mid-sentence next week.
+3. **Sign in when your browser opens.** The first time the app starts, it opens the Google sign-in page — use your Mirabel work account, the same one as your email. That is the whole setup: no token to paste, no API keys to enter, nothing new to keep. (An older download asks for a token instead; if yours does, ask Tommy for one.)
 
 It does not ask for an administrator password. Everything goes in your own profile.
 

@@ -122,7 +122,17 @@ class Config:
             development mode.
         relay_token: The personal token this machine shows the relay. The
             owner issues one per person, and the usage log names the
-            holder. It is needed whenever relay_url is set.
+            holder. It is needed whenever relay_url is set, unless the
+            Google sign-in below replaces it.
+        google_client_id: Our Google OAuth client. When this and the
+            secret are set beside relay_url, the app signs the person in
+            with their Mirabel Google account and shows that sign-in to
+            the relay, and relay_token is no longer used. Both values
+            ship in the zip; neither is a secret.
+        google_client_secret: The OAuth client's companion value. Google
+            issues one to desktop apps while documenting that they
+            cannot keep it secret; it grants nothing without a person
+            signing in.
     """
 
     hotkey: str = "insert"
@@ -148,6 +158,8 @@ class Config:
     show_status: bool = True
     relay_url: str | None = None
     relay_token: str | None = None
+    google_client_id: str | None = None
+    google_client_secret: str | None = None
 
     @classmethod
     def load(cls, path: Path | None = None) -> "Config":

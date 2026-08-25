@@ -20,7 +20,7 @@ class Transcriber:
         custom_words: list[str] | None = None,
         client=None,  # noqa: ANN001 - an OpenAI client, or None to build one
         relay_url: str | None = None,
-        relay_token: str | None = None,
+        relay_token=None,  # noqa: ANN001 - a str, or a callable returning one
     ) -> None:
         self.model = model
         self.language = language
@@ -41,14 +41,41 @@ class Transcriber:
 
             if self.relay_url:
                 # The SDK hangs its paths off the base URL, so the /v1 the
-                # relay serves belongs here.
+                # relay serves belongs here. A placeholder key is fine: a
+                # rotating credential replaces it per call, below.
                 self._client = OpenAI(
                     base_url=relay_base(self.relay_url) + "/v1",
-                    api_key=self.relay_token,
+                    api_key=self._current_key() or "signed-out",
                 )
             else:
                 self._client = OpenAI()
         return self._client
+
+    def _current_key(self) -> str | None:
+        """Return the relay credential as it stands right now.
+
+        A Google sign-in rotates hourly, so it arrives as a callable and
+        is asked fresh; a token is a string and is itself.
+        """
+        if callable(self.relay_token):
+            return self.relay_token()
+        return self.relay_token
+
+    def _for_this_call(self):  # noqa: ANN201
+        """Return the client to use for one request.
+
+        With a rotating credential the client is re-armed per call;
+        with a static token the built client is already right.
+        """
+        if not self.relay_url or not callable(self.relay_token):
+            return self.client
+        key = self._current_key()
+        if key is None:
+            raise TranscriptionError(
+                "You are signed out of Google. Right-click the Mirabel "
+                "Voice icon near the clock and choose Sign in with Google."
+            )
+        return self.client.with_options(api_key=key)
 
     def _prompt(self) -> str | None:
         """Return a spelling hint for names and terms, or None."""
@@ -74,7 +101,9 @@ class Transcriber:
             request["prompt"] = prompt
 
         try:
-            result = self.client.audio.transcriptions.create(**request)
+            result = self._for_this_call().audio.transcriptions.create(**request)
+        except TranscriptionError:
+            raise
         except Exception as error:  # noqa: BLE001 - report every API failure the same way
             raise TranscriptionError(str(error)) from error
 

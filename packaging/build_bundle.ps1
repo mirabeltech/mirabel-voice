@@ -8,6 +8,8 @@
 # through an interpreter it already trusts. No certificate is involved.
 param(
     [string]$RelayUrl = "",
+    [string]$GoogleClientId = "",
+    [string]$GoogleClientSecret = "",
     [string]$PythonVersion = "3.12.10"
 )
 
@@ -26,8 +28,13 @@ Say ""
 
 if (-not $RelayUrl -and $env:MIRABEL_VOICE_RELAY_URL) { $RelayUrl = $env:MIRABEL_VOICE_RELAY_URL }
 $relayFile = Join-Path $root "relay.json"
-if (-not $RelayUrl -and (Test-Path $relayFile)) {
-    $RelayUrl = (Get-Content $relayFile -Raw | ConvertFrom-Json).relay_url
+if (Test-Path $relayFile) {
+    $relayInfo = Get-Content $relayFile -Raw | ConvertFrom-Json
+    if (-not $RelayUrl) { $RelayUrl = $relayInfo.relay_url }
+    # The Google sign-in client rides beside the relay address; neither is
+    # a secret, and both stay out of the repository the same way.
+    if (-not $GoogleClientId) { $GoogleClientId = $relayInfo.google_client_id }
+    if (-not $GoogleClientSecret) { $GoogleClientSecret = $relayInfo.google_client_secret }
 }
 if (-not $RelayUrl) {
     Say "  No relay address. Pass -RelayUrl https://<the relay address>" "Red"
@@ -120,8 +127,10 @@ if ($LASTEXITCODE -ne 0) { Say "  pip failed." "Red"; exit 1 }
 
 # --- 3. The installer ------------------------------------------------------
 $installer = Get-Content (Join-Path $here "Install.ps1") -Raw
-$installer.Replace("__RELAY_URL__", $RelayUrl) |
-    Out-File -FilePath (Join-Path $staging "Install.ps1") -Encoding utf8
+$installer = $installer.Replace("__RELAY_URL__", $RelayUrl)
+$installer = $installer.Replace("__GOOGLE_CLIENT_ID__", "$GoogleClientId")
+$installer = $installer.Replace("__GOOGLE_CLIENT_SECRET__", "$GoogleClientSecret")
+$installer | Out-File -FilePath (Join-Path $staging "Install.ps1") -Encoding utf8
 
 # --- 4. The zip ------------------------------------------------------------
 $zip = Join-Path $root "dist\MirabelVoice-$version-python.zip"

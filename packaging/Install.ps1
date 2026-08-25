@@ -16,6 +16,12 @@ param([string]$Token = "")
 $ErrorActionPreference = "Stop"
 $here = $PSScriptRoot
 $relayUrl = "__RELAY_URL__"
+$googleClientId = "__GOOGLE_CLIENT_ID__"
+$googleClientSecret = "__GOOGLE_CLIENT_SECRET__"
+# With the Google client in the download, there is no token page at all:
+# the app signs the person in with their work account on first start.
+$googleMode = $googleClientId -and $googleClientSecret -and
+    ($googleClientId -notlike "__GOOGLE*") -and ($googleClientSecret -notlike "__GOOGLE*")
 $target = Join-Path $env:LOCALAPPDATA "Programs\Mirabel Voice"
 
 function Say($text, $colour = "Gray") { Write-Host $text -ForegroundColor $colour }
@@ -60,37 +66,45 @@ if ($kind -eq "packaged") {
 }
 Say "  Copied." "Green"
 
-# --- 3. Your token ---------------------------------------------------------
-# The app owns its settings file, so the app stores the token. Writing that
-# file from here would overwrite the dictation key and everything else.
-& $console @consoleArgs --has-relay-token | Out-Null
-$hasToken = ($LASTEXITCODE -eq 0)
-
-if ($Token) {
-    & $console @consoleArgs --set-relay $relayUrl $Token | Out-Null
-} elseif ($hasToken) {
-    # Keep the token already here, and follow the relay if it moved.
+# --- 3. Your sign-in, or your token ----------------------------------------
+# The app owns its settings file, so the app stores the credential. Writing
+# that file from here would overwrite the dictation key and everything else.
+if ($googleMode) {
     & $console @consoleArgs --set-relay $relayUrl | Out-Null
+    & $console @consoleArgs --set-google $googleClientId $googleClientSecret | Out-Null
+    Say ""
+    Say "  No token to enter: you sign in with your Mirabel Google account." "DarkGray"
+    Say "  Your browser opens once, the first time the app starts." "DarkGray"
 } else {
-    Say ""
-    Say "  The app needs your token. Ask Tommy for it." "Yellow"
-    Say "  There are no API keys to enter: they stay on our server." "DarkGray"
-    $answer = Read-Host "  Token"
-    if (-not $answer) { Say "  A token is needed. Run this again when you have one." "Red"; exit 1 }
-    & $console @consoleArgs --set-relay $relayUrl $answer.Trim() | Out-Null
-}
+    & $console @consoleArgs --has-relay-token | Out-Null
+    $hasToken = ($LASTEXITCODE -eq 0)
 
-Say "  Checking your token..."
-$check = & $console @consoleArgs --check-keys
-if ($LASTEXITCODE -ne 0) {
-    # Clear the refused token, so that running this again asks for one.
-    & $console @consoleArgs --forget-relay-token | Out-Null
-    Say "  $check" "Red"
-    Say ""
-    Say "  That token was not accepted. Check it with Tommy and run this again." "Red"
-    exit 1
+    if ($Token) {
+        & $console @consoleArgs --set-relay $relayUrl $Token | Out-Null
+    } elseif ($hasToken) {
+        # Keep the token already here, and follow the relay if it moved.
+        & $console @consoleArgs --set-relay $relayUrl | Out-Null
+    } else {
+        Say ""
+        Say "  The app needs your token. Ask Tommy for it." "Yellow"
+        Say "  There are no API keys to enter: they stay on our server." "DarkGray"
+        $answer = Read-Host "  Token"
+        if (-not $answer) { Say "  A token is needed. Run this again when you have one." "Red"; exit 1 }
+        & $console @consoleArgs --set-relay $relayUrl $answer.Trim() | Out-Null
+    }
+
+    Say "  Checking your token..."
+    $check = & $console @consoleArgs --check-keys
+    if ($LASTEXITCODE -ne 0) {
+        # Clear the refused token, so that running this again asks for one.
+        & $console @consoleArgs --forget-relay-token | Out-Null
+        Say "  $check" "Red"
+        Say ""
+        Say "  That token was not accepted. Check it with Tommy and run this again." "Red"
+        exit 1
+    }
+    Say "  Your token works." "Green"
 }
-Say "  Your token works." "Green"
 
 # --- 4. Shortcuts ----------------------------------------------------------
 $shell = New-Object -ComObject WScript.Shell
