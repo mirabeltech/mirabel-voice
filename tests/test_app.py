@@ -517,3 +517,26 @@ def test_switching_language_tells_the_tray(monkeypatch, tmp_path):
     app._on_state = lambda state, detail: told.append(detail)
     app.set_language("te")
     assert any("Telugu" in detail for detail in told)
+
+
+def test_every_offered_language_switches_and_announces_itself(monkeypatch, tmp_path):
+    # The tray builds its submenu from this list, so this is the menu.
+    from mirabel_voice.app import LANGUAGES
+
+    assert dict(LANGUAGES) == {
+        "en": "English",
+        "hi": "Hindi",
+        "hu": "Hungarian",
+        "kn": "Kannada",
+        "mr": "Marathi",
+        "ta": "Tamil",
+        "te": "Telugu",
+    }
+
+    app = language_app(monkeypatch, tmp_path)
+    told = []
+    app._on_state = lambda state, detail: told.append(detail)
+    for code, label in LANGUAGES:
+        app.set_language(code)
+        assert app.transcriber.language == code
+        assert any(label in detail for detail in told)

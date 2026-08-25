@@ -18,7 +18,14 @@ import sys
 import threading
 from pathlib import Path
 
-from .app import STATE_ERROR, STATE_IDLE, STATE_RECORDING, STATE_WORKING, VoiceApp
+from .app import (
+    LANGUAGES,
+    STATE_ERROR,
+    STATE_IDLE,
+    STATE_RECORDING,
+    STATE_WORKING,
+    VoiceApp,
+)
 from .config import config_dir, config_path
 
 log = logging.getLogger(__name__)
@@ -120,9 +127,7 @@ class Tray:
             pystray.MenuItem(
                 "Language",
                 pystray.Menu(
-                    self._language_item("English", "en"),
-                    self._language_item("Hindi", "hi"),
-                    self._language_item("Telugu", "te"),
+                    *[self._language_item(label, code) for code, label in LANGUAGES],
                     self._language_item("Detect automatically", None),
                 ),
             ),

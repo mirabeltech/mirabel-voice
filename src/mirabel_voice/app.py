@@ -53,6 +53,20 @@ INSERTED_PREFIX = "Inserted "
 
 SILENCE_PEAK = 0.01  # Below this level the microphone captured nothing.
 
+# The Language submenu, in the order it is shown. English leads because
+# it is the default; the rest are alphabetical. The codes go to the
+# transcriber as-is (ISO 639-1). The tray adds the Detect entry itself,
+# because that one is a None, not a code.
+LANGUAGES = [
+    ("en", "English"),
+    ("hi", "Hindi"),
+    ("hu", "Hungarian"),
+    ("kn", "Kannada"),
+    ("mr", "Marathi"),
+    ("ta", "Tamil"),
+    ("te", "Telugu"),
+]
+
 
 class _FocusMoved(Exception):
     """The user changed window, so the app must not edit any text."""
@@ -155,8 +169,7 @@ class VoiceApp:
         self.config.language = code
         self.transcriber.language = code
         self.config.save()
-        names = {"en": "English", "hi": "Hindi", "te": "Telugu"}
-        chosen = names.get(code, "detected automatically")
+        chosen = dict(LANGUAGES).get(code, "detected automatically")
         log.info("The dictation language is now %s.", chosen)
         self._set_state(self.state, f"Language: {chosen}.")
 

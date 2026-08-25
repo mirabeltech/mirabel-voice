@@ -20,7 +20,7 @@ Then:
    It finds the zip you downloaded, unpacks it, and runs the installer inside. There is nothing to unblock, nothing to extract, and nothing to right-click. Pasted the line before downloading? It opens the shared drive for you and waits.
 
 3. **Sign in when your browser opens.** Use your Mirabel work account, the same one as your email. That is the whole setup: no token to paste, no API keys to enter, nothing new to keep. (An older download asks for a token instead; if yours does, ask Tommy for one.)
-4. **Pick your language**: right-click the microphone icon near the clock (click the **^** arrow if it is hidden), choose **Language**, and pick English, Hindi, or Telugu — or **Detect automatically** if you mix languages when you speak. English is the default, so skip this step if that is you.
+4. **Pick your language**: right-click the microphone icon near the clock (click the **^** arrow if it is hidden), choose **Language**, and pick English, Hindi, Hungarian, Kannada, Marathi, Tamil, or Telugu — or **Detect automatically** if you mix languages when you speak. English is the default, so skip this step if that is you.
 
 A microphone icon appears near your clock, and Mirabel Voice starts with Windows from then on. The whole thing takes about two minutes.
 
@@ -136,13 +136,13 @@ To add your own words, right-click the icon near your clock, choose **Open the s
 "custom_words": ["Acme Publishing", "Priya Ramesh"]
 ```
 
-## Dictating in Hindi or Telugu
+## Dictating in another language
 
-Right-click the icon near your clock, choose **Language**, and pick Hindi, Telugu, or English. The switch applies to your very next dictation — no restart. Your words come back in the language you spoke; nothing is ever translated.
+Right-click the icon near your clock, choose **Language**, and pick Hindi, Hungarian, Kannada, Marathi, Tamil, Telugu, or English. The switch applies to your very next dictation — no restart. Your words come back in the language you spoke; nothing is ever translated.
 
 If you often mix languages in one sentence, pick **Detect automatically** and the app works out each dictation's language itself.
 
-The same setting lives in `config.json` as `"language"`: `"hi"`, `"te"`, `"en"`, or `null` to detect.
+The same setting lives in `config.json` as `"language"`: `"en"`, `"hi"`, `"hu"`, `"kn"`, `"mr"`, `"ta"`, `"te"`, or `null` to detect.
 
 ## Good to know
 
