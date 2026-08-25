@@ -47,7 +47,9 @@ ANTHROPIC_SECRET = "mirabel-voice/anthropic"
 TOKENS_SECRET = "mirabel-voice/tokens"
 
 SOURCE = Path(__file__).resolve().parent.parent / "src" / "mirabel_relay"
-PACKAGED = ("__init__.py", "relay.py", "handler.py")
+PACKAGED = ("__init__.py", "relay.py", "handler.py", "signin.py")
+
+GOOGLE_VARIABLES = ("MIRABEL_GOOGLE_CLIENT_ID", "MIRABEL_GOOGLE_DOMAIN")
 
 TRUST_POLICY = {
     "Version": "2012-10-17",
@@ -76,10 +78,18 @@ def main(argv=None) -> int:
         account = _identity(session)
         say(f"Account {account}, region {parsed.region}.")
         _require_provider_secrets(session)
+        if bool(parsed.google_client_id) != bool(parsed.google_domain):
+            raise Stop(
+                "Google sign-in needs both --google-client-id and "
+                "--google-domain. Pass both, or neither."
+            )
         role_arn = ensure_role(session, account, parsed.region)
         package = build_package()
         say(f"Packaged {len(package):,} bytes from {len(PACKAGED)} files.")
-        ensure_function(session, package, role_arn)
+        ensure_function(
+            session, package, role_arn,
+            parsed.google_client_id, parsed.google_domain,
+        )
         url = ensure_function_url(session)
         say(f"The relay answers at {url}")
         if parsed.no_smoke:
@@ -102,6 +112,15 @@ def _arguments(argv):
     )
     parser.add_argument(
         "--no-smoke", action="store_true", help="Deploy without the live test calls."
+    )
+    parser.add_argument(
+        "--google-client-id",
+        help="Our Google OAuth client id. Set once with --google-domain; "
+        "later deploys keep it without the flag.",
+    )
+    parser.add_argument(
+        "--google-domain",
+        help="The Mirabel Workspace primary domain, for the sign-in check.",
     )
     return parser.parse_args(argv)
 
@@ -268,26 +287,66 @@ def build_package() -> bytes:
     return buffer.getvalue()
 
 
-def ensure_function(session, package: bytes, role_arn: str) -> None:
+def environment_variables(
+    google_client_id: str | None,
+    google_domain: str | None,
+    existing: dict | None = None,
+) -> dict:
+    """The Lambda's environment: the secret names, plus Google sign-in.
+
+    The Google values are not secrets, but they are also not in this
+    public repository, so they arrive by flag once and are carried
+    forward from the deployed function on every later deploy. A deploy
+    without the flags must never quietly turn sign-in off.
+    """
+    variables = {
+        "MIRABEL_OPENAI_SECRET": OPENAI_SECRET,
+        "MIRABEL_ANTHROPIC_SECRET": ANTHROPIC_SECRET,
+        "MIRABEL_TOKENS_SECRET": TOKENS_SECRET,
+    }
+    if google_client_id and google_domain:
+        variables["MIRABEL_GOOGLE_CLIENT_ID"] = google_client_id
+        variables["MIRABEL_GOOGLE_DOMAIN"] = google_domain
+    elif existing:
+        for name in GOOGLE_VARIABLES:
+            if existing.get(name):
+                variables[name] = existing[name]
+    return variables
+
+
+def ensure_function(
+    session,
+    package: bytes,
+    role_arn: str,
+    google_client_id: str | None = None,
+    google_domain: str | None = None,
+) -> None:
     """Create the function, or update the one that is already there."""
     from botocore.exceptions import ClientError
 
     lam = session.client("lambda")
-    environment = {
-        "Variables": {
-            "MIRABEL_OPENAI_SECRET": OPENAI_SECRET,
-            "MIRABEL_ANTHROPIC_SECRET": ANTHROPIC_SECRET,
-            "MIRABEL_TOKENS_SECRET": TOKENS_SECRET,
-        }
-    }
     try:
-        _attempt("reading the relay function", lam.get_function, FunctionName=FUNCTION)
+        deployed = _attempt(
+            "reading the relay function", lam.get_function, FunctionName=FUNCTION
+        )
     except ClientError as failure:
         if failure.response["Error"]["Code"] != "ResourceNotFoundException":
             raise
+        environment = {
+            "Variables": environment_variables(google_client_id, google_domain)
+        }
         _create_function(lam, package, role_arn, environment)
         say(f"Created the function {FUNCTION}.")
         return
+
+    already_there = (
+        deployed["Configuration"].get("Environment", {}).get("Variables", {})
+    )
+    environment = {
+        "Variables": environment_variables(
+            google_client_id, google_domain, already_there
+        )
+    }
 
     _attempt(
         "updating the relay's code",
@@ -309,6 +368,10 @@ def ensure_function(session, package: bytes, role_arn: str) -> None:
     )
     lam.get_waiter("function_updated_v2").wait(FunctionName=FUNCTION)
     say(f"Updated the function {FUNCTION}.")
+    if "MIRABEL_GOOGLE_CLIENT_ID" in environment["Variables"]:
+        say("Google sign-in is on: work accounts and tokens both open the door.")
+    else:
+        say("Google sign-in is not configured yet; tokens only.")
 
 
 def _create_function(lam, package: bytes, role_arn: str, environment: dict) -> None:

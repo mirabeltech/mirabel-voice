@@ -380,3 +380,69 @@ def test_the_usage_line_is_emitted_at_a_level_lambda_keeps(caplog):
     with caplog.at_level(logging.INFO, logger="mirabel_relay.relay"):
         relay.handle(cleanup_request())
     assert any(record.levelno >= logging.INFO for record in caplog.records)
+
+
+class FakeSignin:
+    """Stand in for the Google verifier, answering a fixed email or None."""
+
+    def __init__(self, email=None):
+        self.email = email
+        self.seen = []
+
+    def verify(self, credential):
+        self.seen.append(credential)
+        return self.email
+
+
+A_JWT = "eyJhbGciOiJSUzI1NiJ9.eyJlbWFpbCI6InByaXlhIn0.c2lnbmF0dXJl"
+
+
+def make_signin_relay(email=None):
+    forward = FakeForward()
+    relay = Relay(
+        tokens=TOKENS,
+        anthropic_key=REAL_KEY,
+        openai_key=REAL_OPENAI_KEY,
+        forward=forward,
+        clock=lambda: 0.0,
+        signin=FakeSignin(email),
+    )
+    return relay, forward
+
+
+def test_a_verified_sign_in_opens_the_door():
+    relay, forward = make_signin_relay(email="priya@mirabeltech.com")
+    reply = relay.handle(cleanup_request(token=A_JWT))
+    assert reply.status == 200
+    assert len(forward.calls) == 1
+
+
+def test_the_usage_line_names_the_verified_account(caplog):
+    relay, _ = make_signin_relay(email="priya@mirabeltech.com")
+    with caplog.at_level(logging.INFO):
+        relay.handle(cleanup_request(token=A_JWT))
+    lines = [r.message for r in caplog.records if r.message.startswith("usage")]
+    assert any("priya@mirabeltech.com" in line for line in lines)
+
+
+def test_a_refused_sign_in_is_401_and_never_tries_the_token_list():
+    """The two doors stay separate: a bad JWT must not be retried as a
+    token, and no provider call may happen."""
+    relay, forward = make_signin_relay(email=None)
+    reply = relay.handle(cleanup_request(token=A_JWT))
+    assert reply.status == 401
+    assert forward.calls == []
+
+
+def test_static_tokens_still_work_beside_sign_in():
+    relay, forward = make_signin_relay(email="priya@mirabeltech.com")
+    reply = relay.handle(cleanup_request(token="tommy-token-1"))
+    assert reply.status == 200
+    assert relay.signin.seen == []
+
+
+def test_a_jwt_shaped_credential_without_sign_in_configured_is_refused():
+    relay, forward = make_relay()
+    reply = relay.handle(cleanup_request(token=A_JWT))
+    assert reply.status == 401
+    assert forward.calls == []

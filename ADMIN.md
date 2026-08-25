@@ -132,6 +132,18 @@ python scripts\setup_relay.py
 
 Press `r`, type their name exactly as the list shows it, press `d`. Their token stops working the moment the deploy finishes, and nobody else is touched. There is nothing to collect from their laptop, because the token is all they ever had.
 
+### Turn on Google sign-in
+
+Done once, when the OAuth client from IT exists (issue #40):
+
+```powershell
+python scripts\deploy_relay.py --google-client-id <the client id> --google-domain <our Workspace domain>
+```
+
+From then on the relay accepts a Mirabel Google sign-in wherever it accepts a token, and the usage report names the verified account. Tokens keep working beside it — the smoke test and any machine not yet moved over rely on that. A later plain `deploy_relay.py` keeps sign-in on; the two values live on the Lambda, not in this repository, which is public.
+
+Sign-in access needs no issuing and no revoking: an account that leaves the Workspace stops being able to sign in, and its access to the relay ends within the hour on its own.
+
 ### Rotate a provider key
 
 1. Make the new key on the provider dashboard.

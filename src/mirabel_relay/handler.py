@@ -27,6 +27,7 @@ import urllib.error
 import urllib.request
 
 from mirabel_relay.relay import Relay, Request, Response
+from mirabel_relay.signin import GoogleSignin
 
 log = logging.getLogger(__name__)
 
@@ -88,7 +89,27 @@ def build_relay(read_secret=aws_secret) -> Relay:
         anthropic_key=_read_key(read_secret, anthropic_name),
         openai_key=_read_key(read_secret, openai_name),
         forward=urllib_forward,
+        signin=_google_signin(),
     )
+
+
+def _google_signin() -> GoogleSignin | None:
+    """Build the sign-in verifier, when the environment configures one.
+
+    Both values or neither: a half-configured sign-in is a deploy
+    mistake, and refusing to start names it, where starting without
+    sign-in would hide it until someone could not dictate.
+    """
+    client_id = os.environ.get("MIRABEL_GOOGLE_CLIENT_ID", "").strip()
+    domain = os.environ.get("MIRABEL_GOOGLE_DOMAIN", "").strip()
+    if client_id and domain:
+        return GoogleSignin(client_id, domain)
+    if client_id or domain:
+        raise SecretProblem(
+            "Google sign-in needs both MIRABEL_GOOGLE_CLIENT_ID and "
+            "MIRABEL_GOOGLE_DOMAIN. Only one is set."
+        )
+    return None
 
 
 def _read_key(read_secret, name: str) -> str:

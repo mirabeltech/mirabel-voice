@@ -219,3 +219,25 @@ def test_a_provider_refusal_comes_back_as_an_answer(monkeypatch):
         "POST", "https://api.anthropic.com/v1/messages", {}, b"{}"
     )
     assert status == 400
+
+
+def test_sign_in_arrives_from_the_environment(monkeypatch):
+    monkeypatch.setenv("MIRABEL_GOOGLE_CLIENT_ID", "12345-mirabel.apps")
+    monkeypatch.setenv("MIRABEL_GOOGLE_DOMAIN", "mirabeltech.com")
+    relay = build_relay(read_secret=fake_reader())
+    assert relay.signin is not None
+    assert relay.signin.client_id == "12345-mirabel.apps"
+    assert relay.signin.domain == "mirabeltech.com"
+
+
+def test_without_the_environment_the_relay_is_tokens_only():
+    relay = build_relay(read_secret=fake_reader())
+    assert relay.signin is None
+
+
+def test_half_a_sign_in_configuration_refuses_to_start(monkeypatch):
+    """One variable without the other is a deploy mistake, and it must
+    be named at start rather than discovered as unexplained 401s."""
+    monkeypatch.setenv("MIRABEL_GOOGLE_CLIENT_ID", "12345-mirabel.apps")
+    with pytest.raises(SecretProblem, match="MIRABEL_GOOGLE_DOMAIN"):
+        build_relay(read_secret=fake_reader())

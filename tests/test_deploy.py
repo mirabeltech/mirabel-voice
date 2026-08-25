@@ -22,6 +22,7 @@ def test_the_package_holds_the_relay_and_its_entry_point():
         "mirabel_relay/__init__.py",
         "mirabel_relay/relay.py",
         "mirabel_relay/handler.py",
+        "mirabel_relay/signin.py",
     }
 
 
@@ -99,3 +100,40 @@ def test_the_holder_list_names_people_and_never_tokens():
 
 def test_every_token_is_long_enough_to_be_unguessable():
     assert setup_relay.TOKEN_LENGTH >= 24
+
+
+SECRET_NAMES = {
+    "MIRABEL_OPENAI_SECRET",
+    "MIRABEL_ANTHROPIC_SECRET",
+    "MIRABEL_TOKENS_SECRET",
+}
+
+
+def test_the_google_flags_reach_the_environment():
+    variables = deploy_relay.environment_variables("12345-mirabel.apps", "mirabeltech.com")
+    assert variables["MIRABEL_GOOGLE_CLIENT_ID"] == "12345-mirabel.apps"
+    assert variables["MIRABEL_GOOGLE_DOMAIN"] == "mirabeltech.com"
+    assert SECRET_NAMES <= set(variables)
+
+
+def test_a_deploy_without_the_flags_keeps_sign_in_on():
+    """Once configured, a plain redeploy must never quietly turn
+    sign-in off."""
+    deployed = {
+        "MIRABEL_GOOGLE_CLIENT_ID": "12345-mirabel.apps",
+        "MIRABEL_GOOGLE_DOMAIN": "mirabeltech.com",
+    }
+    variables = deploy_relay.environment_variables(None, None, deployed)
+    assert variables["MIRABEL_GOOGLE_CLIENT_ID"] == "12345-mirabel.apps"
+    assert variables["MIRABEL_GOOGLE_DOMAIN"] == "mirabeltech.com"
+
+
+def test_before_sign_in_the_environment_is_the_three_secret_names():
+    assert set(deploy_relay.environment_variables(None, None)) == SECRET_NAMES
+
+
+def test_the_flags_replace_what_was_deployed_before():
+    deployed = {"MIRABEL_GOOGLE_CLIENT_ID": "old", "MIRABEL_GOOGLE_DOMAIN": "old.com"}
+    variables = deploy_relay.environment_variables("new-id", "new.com", deployed)
+    assert variables["MIRABEL_GOOGLE_CLIENT_ID"] == "new-id"
+    assert variables["MIRABEL_GOOGLE_DOMAIN"] == "new.com"
