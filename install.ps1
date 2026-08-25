@@ -5,7 +5,10 @@
 # Not installed yet? Download the zip from the company shared drive
 # first. This finds it in Downloads, unblocks it, unpacks it, and runs
 # the installer inside - the old Properties / Unblock / Extract /
-# right-click routine, with none of the clicking.
+# right-click routine, with none of the clicking. The zip on the drive
+# may lag the newest release; that does not matter, because a fresh
+# install chains straight into the update below and one paste still
+# ends on the newest release.
 #
 # Already installed? Then there is nothing to download: this fetches
 # the newest release's source from this repository, swaps it into the
@@ -50,69 +53,30 @@ function Read-Version($text) {
     return $null
 }
 
-Say ""
-Say "  Mirabel Voice" "Cyan"
-Say "  Speak instead of type." "DarkGray"
-Say ""
-
-if (-not $Target) { $Target = Join-Path $env:LOCALAPPDATA "Programs\Mirabel Voice" }
-if (-not $PythonExe) { $PythonExe = Join-Path $Target "python\python.exe" }
-if (-not $WorkDir) { $WorkDir = Join-Path $env:TEMP "MirabelVoiceInstall" }
-$sitePackages = Join-Path $Target "python\Lib\site-packages"
-
-if (-not $DownloadsDir) {
-    # OneDrive moves the Downloads folder; the registry knows where it went.
-    $shell = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\User Shell Folders"
-    try { $DownloadsDir = (Get-ItemProperty $shell)."{374DE290-123F-4565-9164-39C4925E467B}" } catch {}
-    if (-not $DownloadsDir) { $DownloadsDir = Join-Path $env:USERPROFILE "Downloads" }
-}
-$searched = @($DownloadsDir, (Get-Location).Path)
-
-# --- Which job is this? -----------------------------------------------------
-# A bundle that is already installed updates from the public repository:
-# no download, no zip. The zip flow runs for a first install, and for a
-# downloaded zip newer than what is installed, which is how a release
-# that changes the runtime itself arrives.
-$bundled = Test-Path (Join-Path $Target "python\pythonw.exe")
-$packaged = Test-Path (Join-Path $Target "MirabelVoice.exe")
-$zip = Find-Zip $searched
-
-$installedVersion = $null
-if ($bundled) {
-    $distInfo = Get-ChildItem $sitePackages -Directory -Filter "mirabel_voice-*.dist-info" -ErrorAction SilentlyContinue |
+function Get-DistInfo {
+    # The version marker pip wrote. pyproject.toml is the one place the
+    # version lives, and this folder's name descends from it.
+    Get-ChildItem $sitePackages -Directory -Filter "mirabel_voice-*.dist-info" -ErrorAction SilentlyContinue |
         Select-Object -First 1
-    if ($distInfo) { $installedVersion = Read-Version $distInfo.Name }
 }
 
-$job = "install"
-if ($bundled) {
-    $job = "update"
-    if ($zip) {
-        $zipVersion = Read-Version $zip.Name
-        if (-not $installedVersion -or ($zipVersion -and $zipVersion -gt $installedVersion)) {
-            $job = "install"  # the downloaded zip is ahead: use it
-        }
-    }
-} elseif ($packaged -and -not $zip) {
-    Say "  This machine runs the packaged program, which updates from the" "Yellow"
-    Say "  zip. Download the newest one from the shared drive, then paste" "Yellow"
-    Say "  the same line again:" "Yellow"
-    Say "  $driveLink" "DarkGray"
-    return
-}
-
-# --- Update: fetch the newest source and swap it in -------------------------
-if ($job -eq "update") {
+function Update-FromNewestRelease {
+    # Fetch the newest release's source and swap it into the installed
+    # bundle: prove the result imports, or put the old code back. Runs
+    # for a machine that is already installed, and again right after a
+    # fresh zip install, so one paste always ends on the newest release
+    # however old the downloaded zip is.
     if (Test-Path $WorkDir) { Remove-Item $WorkDir -Recurse -Force }
     New-Item -ItemType Directory -Force $WorkDir | Out-Null
 
-    if (-not $SourceZip) {
+    $source = $SourceZip
+    if (-not $source) {
         Say "  Checking the newest release..."
         $tag = (Invoke-RestMethod $releaseApi).tag_name
-        $SourceZip = Join-Path $WorkDir "source.zip"
-        Invoke-WebRequest "$archiveBase/$tag.zip" -OutFile $SourceZip
+        $source = Join-Path $WorkDir "source.zip"
+        Invoke-WebRequest "$archiveBase/$tag.zip" -OutFile $source
     }
-    Expand-Archive $SourceZip (Join-Path $WorkDir "source") -Force
+    Expand-Archive $source (Join-Path $WorkDir "source") -Force
 
     $newPackage = Get-ChildItem (Join-Path $WorkDir "source") -Recurse -Directory -Filter "mirabel_voice" |
         Where-Object { Test-Path (Join-Path $_.FullName "__init__.py") } | Select-Object -First 1
@@ -121,10 +85,11 @@ if ($job -eq "update") {
         Say "  The release download looks wrong; nothing was changed." "Red"
         return
     }
-    # pyproject.toml is the one place the version lives, and it is
-    # what names the release.
     $newVersion = Read-Version ((Get-Content $pyproject.FullName | Where-Object { $_ -match '^version' }) -join "")
 
+    $distInfo = Get-DistInfo
+    $installedVersion = $null
+    if ($distInfo) { $installedVersion = Read-Version $distInfo.Name }
     if ($installedVersion -and $newVersion -and $newVersion -le $installedVersion) {
         Say "  Already up to date (version $installedVersion)." "Green"
         Remove-Item $WorkDir -Recurse -Force -ErrorAction SilentlyContinue
@@ -172,6 +137,57 @@ if ($job -eq "update") {
         Say "  Could not restart the app - open Mirabel Voice from the Start menu." "Yellow"
     }
     Remove-Item $WorkDir -Recurse -Force -ErrorAction SilentlyContinue
+}
+
+Say ""
+Say "  Mirabel Voice" "Cyan"
+Say "  Speak instead of type." "DarkGray"
+Say ""
+
+if (-not $Target) { $Target = Join-Path $env:LOCALAPPDATA "Programs\Mirabel Voice" }
+if (-not $PythonExe) { $PythonExe = Join-Path $Target "python\python.exe" }
+if (-not $WorkDir) { $WorkDir = Join-Path $env:TEMP "MirabelVoiceInstall" }
+$sitePackages = Join-Path $Target "python\Lib\site-packages"
+
+if (-not $DownloadsDir) {
+    # OneDrive moves the Downloads folder; the registry knows where it went.
+    $shell = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\User Shell Folders"
+    try { $DownloadsDir = (Get-ItemProperty $shell)."{374DE290-123F-4565-9164-39C4925E467B}" } catch {}
+    if (-not $DownloadsDir) { $DownloadsDir = Join-Path $env:USERPROFILE "Downloads" }
+}
+$searched = @($DownloadsDir, (Get-Location).Path)
+
+# --- Which job is this? -----------------------------------------------------
+# A bundle that is already installed updates from the public repository:
+# no download, no zip. The zip flow runs for a first install, and for a
+# downloaded zip newer than what is installed, which is how a release
+# that changes the runtime itself arrives.
+$bundled = Test-Path (Join-Path $Target "python\pythonw.exe")
+$packaged = Test-Path (Join-Path $Target "MirabelVoice.exe")
+$zip = Find-Zip $searched
+
+$job = "install"
+if ($bundled) {
+    $job = "update"
+    if ($zip) {
+        $marker = Get-DistInfo
+        $haveVersion = $null
+        if ($marker) { $haveVersion = Read-Version $marker.Name }
+        $zipVersion = Read-Version $zip.Name
+        if (-not $haveVersion -or ($zipVersion -and $zipVersion -gt $haveVersion)) {
+            $job = "install"  # the downloaded zip is ahead: use it
+        }
+    }
+} elseif ($packaged -and -not $zip) {
+    Say "  This machine runs the packaged program, which updates from the" "Yellow"
+    Say "  zip. Download the newest one from the shared drive, then paste" "Yellow"
+    Say "  the same line again:" "Yellow"
+    Say "  $driveLink" "DarkGray"
+    return
+}
+
+if ($job -eq "update") {
+    Update-FromNewestRelease
     return
 }
 
@@ -219,4 +235,14 @@ if ($ExecutionContext.SessionState.LanguageMode -ne "FullLanguage") {
 $result = $LASTEXITCODE
 
 Remove-Item $WorkDir -Recurse -Force -ErrorAction SilentlyContinue
-if ($result -ne 0) { Say "  The install did not finish. The message above says why." "Red" }
+if ($result -ne 0) {
+    Say "  The install did not finish. The message above says why." "Red"
+    return
+}
+
+# The zip on the shared drive may lag the newest release. One paste
+# still ends current: chain straight into the same update a later
+# paste would run.
+if (Test-Path (Join-Path $Target "python\pythonw.exe")) {
+    Update-FromNewestRelease
+}

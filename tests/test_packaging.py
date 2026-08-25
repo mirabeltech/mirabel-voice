@@ -317,6 +317,14 @@ def test_the_update_proves_the_app_answers_or_puts_the_old_code_back():
     )
 
 
+def test_a_fresh_install_chains_straight_into_an_update():
+    # The zip on the shared drive can lag the newest release. One paste
+    # still ends current, because the install path runs the update path
+    # right after the zip's own installer finishes.
+    installer_run = BOOTSTRAP.index("-File $installer.FullName")
+    assert "Update-FromNewestRelease" in BOOTSTRAP[installer_run:]
+
+
 def test_the_version_lives_in_pyproject_alone():
     # A second copy in the package drifted once (0.2.4 under a v0.3.0
     # tag) and misled the release check. There is one version now.
