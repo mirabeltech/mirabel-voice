@@ -28,7 +28,7 @@ One thing Windows does that we cannot stop: it tucks new icons behind the **^** 
 
 ![The grey microphone icon behind the ^ arrow near the clock](https://raw.githubusercontent.com/mirabeltech/mirabel-voice/main/docs/images/tray-icon.png)
 
-To update later, download the newer zip and paste the same line again. Your settings and your token stay as they are.
+To update later, just paste the same line again — no new download. It fetches the newest release, swaps it in, and restarts the app; your settings and your token stay as they are. (The rare release that changes the app's foundations says so, and sends you back to the shared drive for a fresh zip.)
 
 <details>
 <summary>If the pasted line will not run</summary>

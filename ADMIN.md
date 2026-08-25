@@ -23,6 +23,8 @@ git push origin v0.2.0
 
 GitHub Actions then runs the tests and publishes release notes. It attaches no file, on purpose: the download carries the relay's address and this repository is public. The tag must match `__version__`, or the build stops and says so.
 
+Publishing the release is also the rollout. An installed machine that pastes the README's install line pulls the newest release's source from this repository and swaps it into its bundle — no zip, no shared drive. The updater proves the new code still imports before keeping it, so a release that changes the bundle itself (a Python bump, a new library, Tkinter) makes the machine put the old code back and send its person to the shared drive. Only those releases need the zip rebuilt and re-uploaded.
+
 Every push to `main` builds the installer with a deliberately useless relay address, so a broken build is found on the day it breaks. That artifact is a compile check and is not something to hand anybody.
 
 The download people actually install is built on your machine, with the real address:

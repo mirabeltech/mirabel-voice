@@ -274,7 +274,9 @@ BOOTSTRAP = (PACKAGING.parent / "install.ps1").read_text(encoding="utf-8")
 def test_the_bootstrap_unblocks_the_zip_before_unpacking_it():
     # The whole point of the pasted line: the Properties/Unblock and
     # Extract steps happen in the right order without anybody clicking.
-    assert BOOTSTRAP.index("Unblock-File") < BOOTSTRAP.index("Expand-Archive")
+    assert BOOTSTRAP.index("Unblock-File $zip.FullName") < BOOTSTRAP.index(
+        "Expand-Archive $zip.FullName"
+    )
 
 
 def test_the_bootstrap_runs_the_installer_past_the_execution_policy():
@@ -290,5 +292,26 @@ def test_the_bootstrap_carries_no_relay_address():
 
     for url in re.findall(r"https?://[^\s\"')]+", BOOTSTRAP):
         assert url.startswith(
-            ("https://raw.githubusercontent.com/", "https://drive.google.com/")
+            (
+                "https://raw.githubusercontent.com/",
+                "https://drive.google.com/",
+                "https://api.github.com/repos/mirabeltech/",
+                "https://github.com/mirabeltech/",
+            )
         ), url
+
+
+def test_the_bootstrap_updates_an_installed_bundle_from_the_releases():
+    # An installed machine already holds the relay address, and the code
+    # is public, so an update needs no zip and no shared drive.
+    assert "releases/latest" in BOOTSTRAP
+    assert "site-packages" in BOOTSTRAP
+
+
+def test_the_update_proves_the_app_answers_or_puts_the_old_code_back():
+    # A release that needs a new library must not leave a broken install:
+    # the swap out comes first, the swap back stands ready after it.
+    assert "--config" in BOOTSTRAP
+    assert BOOTSTRAP.index("Move-Item $installed $backup") < BOOTSTRAP.index(
+        "Move-Item $backup $installed"
+    )
