@@ -64,8 +64,15 @@ function Save-RelayToken {
 
 function Save-Keys {
     Say ""
-    Say "  The app needs two keys. Ask Tommy for them." "Yellow"
-    $a = Read-Host "  OpenAI key"
+    Say "  This is DEVELOPER mode: the app will call OpenAI and Anthropic" "Yellow"
+    Say "  directly, which needs your own two API keys." "Yellow"
+    Say ""
+    Say "  Just want to USE Mirabel Voice? Stop here - there are no keys to" "Cyan"
+    Say "  enter. Install from the company shared drive instead (the link is" "Cyan"
+    Say "  in the README); it signs you in with your Mirabel Google account." "Cyan"
+    Say ""
+    $a = Read-Host "  OpenAI key (or press Enter to stop)"
+    if (-not $a) { Say "  Nothing saved. Use the shared-drive install." "Gray"; exit 1 }
     $b = Read-Host "  Anthropic key"
     if (-not $a -or -not $b) { Say "  Both keys are needed. Run this again when you have them." "Red"; exit 1 }
     New-Item -ItemType Directory -Force $configDir | Out-Null
