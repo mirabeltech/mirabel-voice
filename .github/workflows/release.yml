@@ -94,7 +94,8 @@ jobs:
             the address of our relay, and this repository is public, so it
             is shared directly with the people on the pilot instead.
 
-            Once you have it: unzip the folder, right-click `Install.ps1`,
-            choose **Run with PowerShell**, and paste your token. No API
-            keys, no administrator password. The app installs in your own
-            profile and starts with Windows.
+            Once you have it: paste the install line from the README into
+            PowerShell. It unpacks the zip and runs the installer inside;
+            type your token if it asks. No API keys, no administrator
+            password. The app installs in your own profile and starts
+            with Windows.

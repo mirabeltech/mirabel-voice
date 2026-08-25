@@ -10,26 +10,17 @@ Press **Insert**, say what you want to write, then press **Insert** again. Your 
 
 Then:
 
-1. **Double-click the downloaded zip**, then click the **⋯** button in the toolbar and choose **Properties**.
+1. **Open PowerShell**: press the Windows key, type `powershell`, and press Enter.
+2. **Paste this line and press Enter** (a right-click pastes in PowerShell, if Ctrl+V does nothing):
 
-   ![The ⋯ menu in the zip's toolbar](https://raw.githubusercontent.com/mirabeltech/mirabel-voice/main/docs/images/install-1-open-zip.png)
+   ```powershell
+   irm https://raw.githubusercontent.com/mirabeltech/mirabel-voice/main/install.ps1 | iex
+   ```
 
-   ![Properties in the ⋯ menu](https://raw.githubusercontent.com/mirabeltech/mirabel-voice/main/docs/images/install-2-properties.png)
+   It finds the zip you downloaded, unpacks it, and runs the installer inside. There is nothing to unblock, nothing to extract, and nothing to right-click. Pasted the line before downloading? It opens the shared drive for you and waits.
 
-2. **Tick `Unblock` at the bottom, then click OK.** Windows marks everything that arrives from the internet and refuses to run marked scripts; that one tick says you trust where this came from. Skip it and the install ends in a "blocked a file that may be unsafe" message.
-
-   ![The Unblock checkbox at the bottom of Properties](https://raw.githubusercontent.com/mirabeltech/mirabel-voice/main/docs/images/install-3-unblock.png)
-
-3. **Click `Extract all`** in the same toolbar, and extract to somewhere you can find, such as your Downloads folder.
-
-   ![The Extract all button in the toolbar](https://raw.githubusercontent.com/mirabeltech/mirabel-voice/main/docs/images/install-4-extract.png)
-
-4. **Open the extracted folder, click `Install` once to select it, then right-click it** and choose **Run with PowerShell**. The option only appears when the file is selected first. If your menu does not show it, look under **Show more options**.
-
-   ![Run with PowerShell in the right-click menu](https://raw.githubusercontent.com/mirabeltech/mirabel-voice/main/docs/images/install-5-run.png)
-
-5. **Sign in when your browser opens.**
-6. **Pick your language**: right-click the microphone icon near the clock (click the **^** arrow if it is hidden), choose **Language**, and pick English, Hindi, or Telugu — or **Detect automatically** if you mix languages when you speak. English is the default, so skip this step if that is you. The first time the app starts, it opens the Google sign-in page — use your Mirabel work account, the same one as your email. That is the whole setup: no token to paste, no API keys to enter, nothing new to keep. (An older download asks for a token instead; if yours does, ask Tommy for one.)
+3. **Sign in when your browser opens.** Use your Mirabel work account, the same one as your email. That is the whole setup: no token to paste, no API keys to enter, nothing new to keep. (An older download asks for a token instead; if yours does, ask Tommy for one.)
+4. **Pick your language**: right-click the microphone icon near the clock (click the **^** arrow if it is hidden), choose **Language**, and pick English, Hindi, or Telugu — or **Detect automatically** if you mix languages when you speak. English is the default, so skip this step if that is you.
 
 A microphone icon appears near your clock, and Mirabel Voice starts with Windows from then on. The whole thing takes about two minutes.
 
@@ -37,12 +28,26 @@ One thing Windows does that we cannot stop: it tucks new icons behind the **^** 
 
 ![The grey microphone icon behind the ^ arrow near the clock](https://raw.githubusercontent.com/mirabeltech/mirabel-voice/main/docs/images/tray-icon.png)
 
-To update later, unzip the newer file and run `Install.ps1` again. Your settings and your token stay as they are, and it does not ask for the token again.
+To update later, download the newer zip and paste the same line again. Your settings and your token stay as they are.
 
 <details>
-<summary>If Windows says it cannot run the script</summary>
+<summary>If the pasted line will not run</summary>
 
-Windows blocks downloaded scripts until you say otherwise. Open PowerShell in the unzipped folder and run this instead, which does the same thing:
+The zip installs by hand too — this is what the pasted line does for you:
+
+1. **Double-click the downloaded zip**, click the **⋯** button in the toolbar, choose **Properties**, tick **`Unblock`** at the bottom, and click OK. Windows marks everything that arrives from the internet and refuses to run marked scripts; that one tick says you trust where this came from. Skip it and the install ends in a "blocked a file that may be unsafe" message.
+
+   ![The ⋯ menu in the zip's toolbar](https://raw.githubusercontent.com/mirabeltech/mirabel-voice/main/docs/images/install-1-open-zip.png)
+
+   ![The Unblock checkbox at the bottom of Properties](https://raw.githubusercontent.com/mirabeltech/mirabel-voice/main/docs/images/install-3-unblock.png)
+
+2. **Click `Extract all`** in the same toolbar, and extract to somewhere you can find, such as your Downloads folder.
+
+3. **Open the extracted folder, click `Install` once to select it, then right-click it** and choose **Run with PowerShell**. The option only appears when the file is selected first. If your menu does not show it, look under **Show more options**.
+
+   ![Run with PowerShell in the right-click menu](https://raw.githubusercontent.com/mirabeltech/mirabel-voice/main/docs/images/install-5-run.png)
+
+If Windows still refuses the script, open PowerShell in the extracted folder and run:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File Install.ps1

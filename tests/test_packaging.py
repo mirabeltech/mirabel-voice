@@ -266,3 +266,29 @@ def test_the_bundle_build_insists_on_a_valid_signature():
     build = (PACKAGING / "build_bundle.ps1").read_text(encoding="utf-8")
     assert "Get-AuthenticodeSignature" in build
     assert '$signature.Status -ne "Valid"' in build
+
+
+BOOTSTRAP = (PACKAGING.parent / "install.ps1").read_text(encoding="utf-8")
+
+
+def test_the_bootstrap_unblocks_the_zip_before_unpacking_it():
+    # The whole point of the pasted line: the Properties/Unblock and
+    # Extract steps happen in the right order without anybody clicking.
+    assert BOOTSTRAP.index("Unblock-File") < BOOTSTRAP.index("Expand-Archive")
+
+
+def test_the_bootstrap_runs_the_installer_past_the_execution_policy():
+    # The extracted Install.ps1 is unsigned; without Bypass a machine on
+    # the default policy stops right after the unpack.
+    assert "-ExecutionPolicy Bypass" in BOOTSTRAP
+
+
+def test_the_bootstrap_carries_no_relay_address():
+    # It lives in a public repository. Every address in it must be one
+    # that is public already.
+    import re
+
+    for url in re.findall(r"https?://[^\s\"')]+", BOOTSTRAP):
+        assert url.startswith(
+            ("https://raw.githubusercontent.com/", "https://drive.google.com/")
+        ), url

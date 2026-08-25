@@ -4,7 +4,7 @@ This is for whoever hands the app out. Everyone else only needs the README.
 
 ## Handing it out
 
-Send each person two things on a channel you trust: the zip, and their own token. They unzip it, run `Install.ps1`, and paste the token. They do not need Git, Python, an API key, or an administrator password.
+Point each person at the README: they download the zip from the shared drive and paste the install line into PowerShell. The bootstrap in this repository's `install.ps1` finds the zip in their Downloads folder, unblocks it, unpacks it, and runs the `Install.ps1` inside — the unblock/extract/right-click routine, done for them. For a token build, also send their own token on a channel you trust. They do not need Git, Python, an API key, or an administrator password.
 
 **Do not attach the zip to a GitHub release.** The repository is public, and the zip carries the relay's address in `Install.ps1`. A token still gates every request, but a public address is one anybody can hammer, and every refused call is a billed Lambda invocation.
 
@@ -28,10 +28,10 @@ Every push to `main` builds the installer with a deliberately useless relay addr
 The download people actually install is built on your machine, with the real address:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File packaginguild_bundle.ps1 -RelayUrl https://<the relay address>
+powershell -ExecutionPolicy Bypass -File packaging\build_bundle.ps1 -RelayUrl https://<the relay address>
 ```
 
-`packaginguild.ps1` makes the packaged program instead, and needs [Inno Setup](https://jrsoftware.org/isdl.php) 6.3 or newer. See **Build the download** below for which to use.
+`packaging\build.ps1` makes the packaged program instead, and needs [Inno Setup](https://jrsoftware.org/isdl.php) 6.3 or newer. See **Build the download** below for which to use.
 
 ## When Windows blocks it
 
@@ -76,11 +76,7 @@ You only rebuild when the app changes. The same zip serves everybody, because th
 
 Issue it with `python scripts\setup_relay.py` (press `a`, their name, `d`) and send them two things: the zip, and their own token. Send the token on a channel you trust. It is printed once and cannot be read back.
 
-They then:
-
-1. Unzip the whole folder.
-2. Right-click `Install.ps1` and choose **Run with PowerShell**.
-3. Paste their token when asked.
+They then download the zip, paste the README's install line into PowerShell, and type their token when asked.
 
 The install checks the token through the relay before it finishes. A token the relay does not know is refused there, with a plain sentence, and cleared so that a second run asks again rather than skipping the page.
 
