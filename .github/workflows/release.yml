@@ -86,16 +86,20 @@ jobs:
         with:
           generate_release_notes: true
           body: |
-            ## Install
+            ## Install, or update
 
-            **Ask Tommy for the download and your token.** They come together.
+            **Already running Mirabel Voice?** Paste the install line from
+            the README into PowerShell and this release swaps itself in.
+            Nothing to download, and your settings stay. (If this release
+            changes the app's foundations, the line says so and sends you
+            to the shared drive for a fresh zip.)
 
-            There is no file attached here on purpose. The download carries
-            the address of our relay, and this repository is public, so it
-            is shared directly with the people on the pilot instead.
+            **New machine?** Download the zip from the company shared
+            drive - the README links it - then paste the same line. You
+            sign in with your Mirabel Google account. No API keys, no
+            administrator password. The app installs in your own profile
+            and starts with Windows.
 
-            Once you have it: paste the install line from the README into
-            PowerShell. It unpacks the zip and runs the installer inside;
-            type your token if it asks. No API keys, no administrator
-            password. The app installs in your own profile and starts
-            with Windows.
+            There is no file attached here on purpose: the download
+            carries the address of our relay, and this repository is
+            public.
