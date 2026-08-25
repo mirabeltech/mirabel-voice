@@ -12,7 +12,7 @@ The install puts the app in `%LOCALAPPDATA%\Programs\Mirabel Voice` and starts i
 
 ## Cutting a release
 
-1. Change `__version__` in `src/mirabel_voice/__init__.py`.
+1. Change `version` in `pyproject.toml`. It is the only place the version lives.
 2. Commit that on `main`.
 3. Tag it and push the tag:
 
@@ -21,7 +21,7 @@ git tag v0.2.0
 git push origin v0.2.0
 ```
 
-GitHub Actions then runs the tests and publishes release notes. It attaches no file, on purpose: the download carries the relay's address and this repository is public. The tag must match `__version__`, or the build stops and says so.
+GitHub Actions then runs the tests and publishes release notes. It attaches no file, on purpose: the download carries the relay's address and this repository is public. The tag must match the version in `pyproject.toml`, or the build stops and says so.
 
 Publishing the release is also the rollout. An installed machine that pastes the README's install line pulls the newest release's source from this repository and swaps it into its bundle — no zip, no shared drive. From v0.5.0 the app does the same on its own: it checks the newest release once a day and applies it, restarting between dictations, so the whole team is current within a day of the tag. Both paths prove the new code still imports before keeping it, so a release that changes the bundle itself (a Python bump, a new library, Tkinter) makes the machine put the old code back and send its person to the shared drive. Only those releases need the zip rebuilt and re-uploaded.
 

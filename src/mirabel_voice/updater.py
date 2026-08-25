@@ -149,8 +149,8 @@ class Updater:
     def installed_version(self) -> tuple[int, ...] | None:
         """Read the version from the dist-info marker the installer wrote.
 
-        Not from __version__: pyproject.toml is what names a release,
-        and __version__ has drifted from it before.
+        The marker's version descends from pyproject.toml, the one
+        place the version lives.
         """
         marker = self._dist_info()
         return parse_version(marker.name) if marker else None

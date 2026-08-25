@@ -121,8 +121,8 @@ if ($job -eq "update") {
         Say "  The release download looks wrong; nothing was changed." "Red"
         return
     }
-    # The version the build tools read. __version__ in the package has
-    # drifted before; pyproject.toml is what names the release.
+    # pyproject.toml is the one place the version lives, and it is
+    # what names the release.
     $newVersion = Read-Version ((Get-Content $pyproject.FullName | Where-Object { $_ -match '^version' }) -join "")
 
     if ($installedVersion -and $newVersion -and $newVersion -le $installedVersion) {

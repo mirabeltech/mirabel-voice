@@ -87,7 +87,7 @@ A small panel appears near the bottom of your screen while this happens. It says
 
 When a dictation produces nothing, the panel says why instead of vanishing: too short, no sound, nothing heard.
 
-The icon near your clock shows the same thing in colour: **grey** ready, **red** listening, **blue** writing, **orange** something went wrong. Right-click it to turn the tidying off, copy the last text, change your dictation key, or quit.
+The icon near your clock shows the same thing in colour: **grey** ready, **red** listening, **blue** writing, **orange** something went wrong. Right-click it to pick your language, turn the tidying off, check for updates, copy the last text, change your dictation key, open the settings folder, or quit.
 
 To turn the panel off, set `"show_status": false` in `config.json` (right-click the icon, **Open the settings folder**).
 
@@ -155,7 +155,7 @@ The same setting lives in `config.json` as `"language"`: `"en"`, `"hi"`, `"hu"`,
 ## Something is wrong?
 
 - **Nothing appears.** The panel near the bottom of the screen says what happened, and stays for a few seconds. If you missed it, look at the icon near your clock: orange means an error, and hovering over it shows the same reason. Usually the network.
-- **No icon near your clock.** It is hiding behind the **^** arrow. Click the arrow, then drag the microphone onto the taskbar so it stays put.
+- **No icon near your clock.** It is hiding behind the **^** arrow. Click the arrow and it is there; the Taskbar settings step under Install keeps it in view for good.
 - **Your text landed in the wrong window.** Press **Shift+Alt+Z** in the right one.
 - **Your key does nothing.** It may be one your laptop keeps for itself. Run the key picker above and choose another.
 - **Words appear in a small box instead of your text box.** Your key has Ctrl, Alt, Shift, or Windows in it. Pick a plain key.
@@ -163,7 +163,11 @@ The same setting lives in `config.json` as `"language"`: `"en"`, `"hi"`, `"hu"`,
 
 ## Removing it
 
-Open **Settings**, then **Apps**, find **Mirabel Voice**, and choose **Uninstall**. Your settings and your token stay in `%APPDATA%\MirabelVoice`, so a later install picks up where you left off. Delete that folder too if you want nothing left behind.
+1. Right-click the icon near your clock and choose **Quit**.
+2. Delete the folder `%LOCALAPPDATA%\Programs\Mirabel Voice` (paste that into the File Explorer address bar).
+3. Delete the **Mirabel Voice** shortcut from your Desktop, and the one in your Startup folder (paste `shell:startup` into the address bar) so Windows stops starting it.
+
+Your settings stay in `%APPDATA%\MirabelVoice`, so a later install picks up where you left off. Delete that folder too if you want nothing left behind.
 
 ---
 

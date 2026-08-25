@@ -315,3 +315,17 @@ def test_the_update_proves_the_app_answers_or_puts_the_old_code_back():
     assert BOOTSTRAP.index("Move-Item $installed $backup") < BOOTSTRAP.index(
         "Move-Item $backup $installed"
     )
+
+
+def test_the_version_lives_in_pyproject_alone():
+    # A second copy in the package drifted once (0.2.4 under a v0.3.0
+    # tag) and misled the release check. There is one version now.
+    import tomllib
+
+    import mirabel_voice
+
+    assert not hasattr(mirabel_voice, "__version__")
+    named = tomllib.loads(
+        (PACKAGING.parent / "pyproject.toml").read_text(encoding="utf-8")
+    )["project"]["version"]
+    assert prepare.project_version() == named

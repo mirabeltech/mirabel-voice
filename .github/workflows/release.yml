@@ -49,7 +49,7 @@ jobs:
           $tag = "${{ github.ref_name }}".TrimStart('v')
           $code = "${{ steps.prep.outputs.version }}"
           if ($tag -ne $code) {
-            Write-Host "::error::Tag $tag does not match __version__ $code. Update src/mirabel_voice/__init__.py, or tag the right version."
+            Write-Host "::error::Tag $tag does not match the version $code in pyproject.toml. Update pyproject.toml, or tag the right version."
             exit 1
           }
 

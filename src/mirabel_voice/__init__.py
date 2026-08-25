@@ -1,3 +1,5 @@
-"""Mirabel Voice - push-to-talk dictation for Windows."""
+"""Mirabel Voice - push-to-talk dictation for Windows.
 
-__version__ = "0.5.0"
+The version lives in pyproject.toml, nowhere else. A copy here drifted
+from it once and misled the release check; see packaging/prepare.py.
+"""
