@@ -6,7 +6,7 @@ Press **Insert**, say what you want to write, then press **Insert** again. Your 
 
 ## Install
 
-**Ask Tommy for the download.** There is no public link, because the file carries the address of our server.
+**[Get the download from the shared drive](https://drive.google.com/drive/folders/0AL2zqxan1Ec6Uk9PVA)** — sign in with your Mirabel Google account if Drive asks. The download is only open to Mirabel people, because the file carries the address of our server.
 
 Then:
 
