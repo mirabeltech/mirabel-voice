@@ -34,7 +34,7 @@ It does not ask for an administrator password. Everything goes in your own profi
 
 A microphone icon appears near your clock, and Mirabel Voice starts with Windows from then on. The whole thing takes about two minutes.
 
-One thing Windows does that we cannot stop: it tucks new icons behind the **^** arrow near the clock. Click the arrow to find the microphone, then drag the icon onto the taskbar itself so it is always in view. Worth the five seconds — the icon's colour is how you know the app is listening.
+One thing Windows does that we cannot stop: it tucks new icons behind the **^** arrow near the clock — click the arrow and the microphone is there. To keep it always in view: right-click an empty spot on the taskbar, choose **Taskbar settings**, open **Other system tray icons**, and switch on the row with the round grey microphone (the row may be named after Python, which is what the app runs on). Worth the minute — the icon's colour is how you know the app is listening.
 
 ![The grey microphone icon behind the ^ arrow near the clock](https://raw.githubusercontent.com/mirabeltech/mirabel-voice/main/docs/images/tray-icon.png)
 
