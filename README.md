@@ -10,9 +10,10 @@ Press **Insert**, say what you want to write, then press **Insert** again. Your 
 
 Then:
 
-1. **Unzip it first**: right-click the downloaded file and choose **Extract All**. Double-clicking the zip only peeks inside it — Explorer shows the same files, but nothing can install from in there. Extract to somewhere you can find, such as your Downloads folder.
-2. **In the extracted folder, right-click `Install`**, choose **Show more options**, then **Run with PowerShell**. (Windows 11 tucks that option behind Show more options.)
-3. **Sign in when your browser opens.** The first time the app starts, it opens the Google sign-in page — use your Mirabel work account, the same one as your email. That is the whole setup: no token to paste, no API keys to enter, nothing new to keep. (An older download asks for a token instead; if yours does, ask Tommy for one.)
+1. **Unblock the download**: in your Downloads folder, right-click the zip, choose **Properties**, tick **Unblock** at the bottom, and click **OK**. Windows marks everything that arrives from the internet and refuses to run marked scripts; that one tick says you trust where this came from. Skip it and the next steps end in a "blocked a file that may be unsafe" message.
+2. **Then unzip it**: right-click the zip again and choose **Extract All**. Double-clicking the zip only peeks inside it — nothing can install from in there.
+3. **In the extracted folder, right-click `Install`**, choose **Show more options**, then **Run with PowerShell**. (Windows 11 tucks that option behind Show more options.)
+4. **Sign in when your browser opens.** The first time the app starts, it opens the Google sign-in page — use your Mirabel work account, the same one as your email. That is the whole setup: no token to paste, no API keys to enter, nothing new to keep. (An older download asks for a token instead; if yours does, ask Tommy for one.)
 
 It does not ask for an administrator password. Everything goes in your own profile.
 
