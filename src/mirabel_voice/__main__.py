@@ -62,6 +62,63 @@ def already_running(name: str = "Local\\MirabelVoiceSingleInstance") -> bool:
         return False
 
 
+def _wait_for_exit(check, seconds: float = 20.0, sleep=None) -> bool:  # noqa: ANN001
+    """Return True once check() goes False, or False at the deadline.
+
+    An updated copy starts while the copy it replaces is still leaving.
+    It waits here for the instance mutex instead of telling the person
+    the app is already running.
+    """
+    import time
+
+    sleep = sleep or time.sleep
+    deadline = time.monotonic() + seconds
+    while check():
+        if time.monotonic() > deadline:
+            return False
+        sleep(0.5)
+    return True
+
+
+def _start_update_watch(app: VoiceApp, tray) -> None:  # noqa: ANN001
+    """Apply the newest release once a day, quietly.
+
+    The check runs off the main thread. A found update is applied at
+    once - the running code keeps its imported modules - and the
+    restart into it waits for a moment with no dictation in flight.
+    """
+    from .updater import Updater
+
+    updater = Updater.discover()
+    if updater is None or not app.config.auto_update:
+        return
+
+    import threading
+    import time
+
+    from .app import STATE_ERROR, STATE_IDLE
+
+    def run() -> None:
+        time.sleep(60)  # let the start settle first
+        while True:
+            version = None
+            try:
+                version = updater.apply_latest()
+            except Exception:  # noqa: BLE001 - next day is another chance
+                logging.getLogger(__name__).exception("The update check failed.")
+            if version:
+                while app.state not in (STATE_IDLE, STATE_ERROR):
+                    time.sleep(5)
+                if updater.start_new_copy():
+                    tray.stop()
+                return
+            time.sleep(24 * 60 * 60)
+
+    threading.Thread(
+        target=run, name="mirabel-voice-updater", daemon=True
+    ).start()
+
+
 def _show_error_box(message: str) -> None:
     """Show a Windows message box, so errors are visible without a console."""
     _show_box(
@@ -243,14 +300,20 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if already_running():
-        message = (
-            "Mirabel Voice is already running. Look for the microphone "
-            "icon near the clock (click the ^ arrow if it is hidden)."
-        )
-        print(message, file=sys.stderr)
-        if not args.no_tray:
-            _show_info_box(message)
-        return 0
+        from .updater import RELAUNCH_ENV
+
+        relaunch = bool(os.environ.get(RELAUNCH_ENV))
+        if not (relaunch and _wait_for_exit(already_running)):
+            message = (
+                "Mirabel Voice is already running. Look for the microphone "
+                "icon near the clock (click the ^ arrow if it is hidden)."
+            )
+            print(message, file=sys.stderr)
+            # After an update the old copy leaves on its own; a box here
+            # would only confuse. The plain start keeps its box.
+            if not args.no_tray and not relaunch:
+                _show_info_box(message)
+            return 0
 
     load_api_keys()
     config = Config.load()
@@ -321,6 +384,7 @@ def main(argv: list[str] | None = None) -> int:
             overlay = None
 
     tray = Tray(app)
+    _start_update_watch(app, tray)
     app.start()
     try:
         tray.run()

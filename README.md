@@ -28,7 +28,7 @@ One thing Windows does that we cannot stop: it tucks new icons behind the **^** 
 
 ![The grey microphone icon behind the ^ arrow near the clock](https://raw.githubusercontent.com/mirabeltech/mirabel-voice/main/docs/images/tray-icon.png)
 
-To update later, just paste the same line again — no new download. It fetches the newest release, swaps it in, and restarts the app; your settings and your token stay as they are. (The rare release that changes the app's foundations says so, and sends you back to the shared drive for a fresh zip.)
+Updates take care of themselves: once a day the app checks for the newest release, swaps it in, and restarts between dictations. In a hurry, right-click the icon near your clock and choose **Check for updates** — or paste the same line again; all three do the same careful thing, and your settings stay as they are. (The rare release that changes the app's foundations is the exception: the app keeps the old version, and the icon's tooltip sends you back to the shared drive for a fresh zip.) To keep a version, set `"auto_update": false` in `config.json`.
 
 <details>
 <summary>If the pasted line will not run</summary>

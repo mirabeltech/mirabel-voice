@@ -23,7 +23,9 @@ git push origin v0.2.0
 
 GitHub Actions then runs the tests and publishes release notes. It attaches no file, on purpose: the download carries the relay's address and this repository is public. The tag must match `__version__`, or the build stops and says so.
 
-Publishing the release is also the rollout. An installed machine that pastes the README's install line pulls the newest release's source from this repository and swaps it into its bundle — no zip, no shared drive. The updater proves the new code still imports before keeping it, so a release that changes the bundle itself (a Python bump, a new library, Tkinter) makes the machine put the old code back and send its person to the shared drive. Only those releases need the zip rebuilt and re-uploaded.
+Publishing the release is also the rollout. An installed machine that pastes the README's install line pulls the newest release's source from this repository and swaps it into its bundle — no zip, no shared drive. From v0.5.0 the app does the same on its own: it checks the newest release once a day and applies it, restarting between dictations, so the whole team is current within a day of the tag. Both paths prove the new code still imports before keeping it, so a release that changes the bundle itself (a Python bump, a new library, Tkinter) makes the machine put the old code back and send its person to the shared drive. Only those releases need the zip rebuilt and re-uploaded.
+
+Treat the tag as the deploy button: the newest published release is what every machine installs, on its own, within a day. A bad release is recalled by tagging a good one with a higher number, not by deleting anything — machines only ever move forward. The planned tightening is for the relay to announce the version and checksum it endorses, so the authority to update the fleet sits with the relay deploy rather than with whoever can publish a GitHub release.
 
 Every push to `main` builds the installer with a deliberately useless relay address, so a broken build is found on the day it breaks. That artifact is a compile check and is not something to hand anybody.
 

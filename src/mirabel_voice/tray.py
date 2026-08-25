@@ -87,9 +87,13 @@ class Tray:
     """Show the app in the Windows notification area."""
 
     def __init__(self, app: VoiceApp) -> None:
+        from .updater import Updater
+
         self.app = app
         self.icon = None
         self.detail = ""
+        # None outside the installed bundle, and the menu item hides.
+        self.updater = Updater.discover()
         app._on_state = self.update  # noqa: SLF001 - the tray owns the display
 
     def _title(self) -> str:
@@ -130,6 +134,11 @@ class Tray:
                     *[self._language_item(label, code) for code, label in LANGUAGES],
                     self._language_item("Detect automatically", None),
                 ),
+            ),
+            pystray.MenuItem(
+                "Check for updates",
+                self._check_updates,
+                visible=lambda _: self.updater is not None,
             ),
             pystray.MenuItem("Copy the last text", self._copy_last),
             pystray.MenuItem("Change my dictation key", self._pick_hotkey),
@@ -213,8 +222,46 @@ class Tray:
         except AttributeError:
             subprocess.Popen(["explorer", str(folder)])  # noqa: S607
 
+    def _check_updates(self) -> None:
+        """Fetch and apply the newest release, then restart into it.
+
+        Off the menu thread, like the sign-in: the download can take a
+        while, and the menu must stay alive through it.
+        """
+
+        def run() -> None:
+            updater = self.updater
+            if updater is None:
+                return
+            self.update(self.app.state, "Checking for updates...")
+            release = updater.latest()
+            if release is None:
+                self.update(self.app.state, "The update check could not reach GitHub.")
+                return
+            installed = updater.installed_version()
+            if installed and release[0] <= installed:
+                self.update(self.app.state, "Already up to date.")
+                return
+            version = updater.apply_latest()
+            if version and updater.start_new_copy():
+                self.stop()
+            elif not version:
+                self.update(
+                    self.app.state,
+                    "This update needs the full download. Paste the install "
+                    "line from the README after fetching the new zip.",
+                )
+
+        threading.Thread(
+            target=run, name="mirabel-voice-update", daemon=True
+        ).start()
+
     def _quit(self) -> None:
         """Stop the app."""
+        self.stop()
+
+    def stop(self) -> None:
+        """Stop the app and close the icon. Safe from any thread."""
         self.app.stop()
         if self.icon is not None:
             self.icon.stop()

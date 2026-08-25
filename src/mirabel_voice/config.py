@@ -115,6 +115,11 @@ class Config:
             so that the wait does not look like a failure. It also shows
             the reason when a dictation produces nothing. It never takes
             the keyboard focus and clicks pass through it.
+        auto_update: True lets the installed app keep itself current:
+            once a day it fetches the newest release, applies it, and
+            restarts between dictations. Only the installed bundle does
+            this; a source checkout and the packaged program never
+            self-update.
         relay_url: The address of the relay that holds the provider keys.
             When it is set, transcription and cleanup travel through the
             relay and this machine needs no provider keys of its own.
@@ -156,6 +161,7 @@ class Config:
     restore_clipboard: bool = True
     play_sounds: bool = True
     show_status: bool = True
+    auto_update: bool = True
     relay_url: str | None = None
     relay_token: str | None = None
     google_client_id: str | None = None
