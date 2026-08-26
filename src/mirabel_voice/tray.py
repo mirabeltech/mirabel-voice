@@ -10,7 +10,6 @@ The icon colour shows the state:
 
 from __future__ import annotations
 
-import functools
 import logging
 import os
 import subprocess
@@ -153,9 +152,16 @@ class Tray:
         """One radio entry of the Language submenu."""
         import pystray
 
+        # pystray calls an action as action(icon, item), and it only adapts
+        # callables that expose __code__. A functools.partial has none, so it
+        # would receive both extra arguments and raise before set_language
+        # runs. The closure takes them explicitly.
+        def choose(icon, item):  # noqa: ANN001, ARG001
+            self.app.set_language(code)
+
         return pystray.MenuItem(
             label,
-            functools.partial(self.app.set_language, code),
+            choose,
             checked=lambda _, code=code: self.app.config.language == code,
             radio=True,
         )

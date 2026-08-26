@@ -105,6 +105,29 @@ def test_a_download_with_no_package_changes_nothing(tmp_path):
     assert (site / "mirabel_voice" / "__init__.py").read_text() == "old code"
 
 
+def test_a_stale_marker_does_not_hide_the_installed_version(tmp_path):
+    # Install.ps1 used to copy the new bundle over the old one, leaving
+    # both version markers behind. The newest one is the truth.
+    site, python_dir = a_bundle(tmp_path, version="0.5.1")
+    (site / "mirabel_voice-0.5.0.dist-info").mkdir()
+    updater = Updater(site, python_dir, fetch=a_release("v0.5.1"), prove=lambda: True)
+
+    assert updater.installed_version() == (0, 5, 1)
+    assert updater.apply_latest() is None  # already current, no re-install
+
+
+def test_an_update_sweeps_stale_markers_away(tmp_path):
+    site, python_dir = a_bundle(tmp_path, version="0.4.1")
+    (site / "mirabel_voice-0.4.0.dist-info").mkdir()
+    updater = Updater(site, python_dir, fetch=a_release("v0.5.0"), prove=lambda: True)
+
+    assert updater.apply_latest() == "0.5.0"
+
+    assert (site / "mirabel_voice-0.5.0.dist-info").exists()
+    assert not (site / "mirabel_voice-0.4.0.dist-info").exists()
+    assert not (site / "mirabel_voice-0.4.1.dist-info").exists()
+
+
 def test_discover_declines_this_source_checkout():
     # The tests run from the repository, which git manages. Only the
     # installed bundle - site-packages beside a pythonw.exe - updates.

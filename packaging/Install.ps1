@@ -63,6 +63,10 @@ if ($kind -eq "packaged") {
     $console = Join-Path $target "MirabelVoiceConsole.exe"
     $consoleArgs = @()
 } else {
+    # A copy over an old install must not merge with it: a leftover
+    # dist-info from the old version misleads the in-app updater.
+    $oldPython = Join-Path $target "python"
+    if (Test-Path $oldPython) { Remove-Item $oldPython -Recurse -Force }
     Copy-Item (Join-Path $here "python") $target -Recurse -Force
     $launch = Join-Path $target "python\pythonw.exe"
     $launchArgs = @("-m", "mirabel_voice")

@@ -22,7 +22,7 @@ from typing import Callable
 
 from .audio import Recorder
 from .cleanup import Cleaner
-from .config import Config
+from .config import LANGUAGES, Config
 from .dictionary import all_words
 from .hotkey import HotkeyListener, UnknownHotkeyError
 from .inject import (
@@ -53,19 +53,6 @@ INSERTED_PREFIX = "Inserted "
 
 SILENCE_PEAK = 0.01  # Below this level the microphone captured nothing.
 
-# The Language submenu, in the order it is shown. English leads because
-# it is the default; the rest are alphabetical. The codes go to the
-# transcriber as-is (ISO 639-1). The tray adds the Detect entry itself,
-# because that one is a None, not a code.
-LANGUAGES = [
-    ("en", "English"),
-    ("hi", "Hindi"),
-    ("hu", "Hungarian"),
-    ("kn", "Kannada"),
-    ("mr", "Marathi"),
-    ("ta", "Tamil"),
-    ("te", "Telugu"),
-]
 
 
 class _FocusMoved(Exception):

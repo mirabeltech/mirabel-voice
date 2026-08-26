@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from .audio import Recording
-from .config import relay_base
+from .config import LANGUAGES, relay_base
 
 
 class TranscriptionError(RuntimeError):
@@ -78,10 +78,24 @@ class Transcriber:
         return self.client.with_options(api_key=key)
 
     def _prompt(self) -> str | None:
-        """Return a spelling hint for names and terms, or None."""
-        if not self.custom_words:
-            return None
-        return "Spell these terms correctly: " + ", ".join(self.custom_words)
+        """Return the transcription hint: the language, then spellings.
+
+        The gpt-4o transcription models take the language parameter as a
+        hint only and still follow the spoken language. The prompt is the
+        stronger lever, so a pinned language goes there as well.
+        """
+        parts = []
+        name = dict(LANGUAGES).get(self.language)
+        if name:
+            parts.append(
+                f"The dictation is spoken in {name}. "
+                f"Write the transcript in {name}."
+            )
+        if self.custom_words:
+            parts.append(
+                "Spell these terms correctly: " + ", ".join(self.custom_words)
+            )
+        return " ".join(parts) or None
 
     def transcribe(self, recording: Recording) -> str:
         """Return the text of the recording.

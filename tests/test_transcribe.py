@@ -42,9 +42,27 @@ def test_custom_words_become_a_spelling_prompt():
     assert "Mirabel" in prompt and "Kubernetes" in prompt
 
 
-def test_no_prompt_key_without_custom_words():
+def test_a_pinned_language_goes_into_the_prompt():
+    # The gpt-4o transcription models take the language parameter as a
+    # hint only, so the pin must also arrive as words in the prompt.
     client = FakeOpenAI()
-    Transcriber(client=client).transcribe(a_recording())
+    Transcriber(language="te", client=client).transcribe(a_recording())
+    prompt = client.transcriptions.calls[0]["prompt"]
+    assert "Telugu" in prompt
+
+
+def test_the_prompt_carries_the_language_and_the_spellings_together():
+    client = FakeOpenAI()
+    Transcriber(
+        language="hi", custom_words=["Mirabel"], client=client
+    ).transcribe(a_recording())
+    prompt = client.transcriptions.calls[0]["prompt"]
+    assert "Hindi" in prompt and "Mirabel" in prompt
+
+
+def test_no_prompt_key_without_a_language_or_custom_words():
+    client = FakeOpenAI()
+    Transcriber(language=None, client=client).transcribe(a_recording())
     assert "prompt" not in client.transcriptions.calls[0]
 
 

@@ -12,6 +12,20 @@ from pathlib import Path
 
 APP_NAME = "MirabelVoice"
 
+# The Language submenu, in the order it is shown. English leads because
+# it is the default; the rest are alphabetical. The codes go to the
+# transcriber as-is (ISO 639-1). The tray adds the Detect entry itself,
+# because that one is a None, not a code.
+LANGUAGES = [
+    ("en", "English"),
+    ("hi", "Hindi"),
+    ("hu", "Hungarian"),
+    ("kn", "Kannada"),
+    ("mr", "Marathi"),
+    ("ta", "Tamil"),
+    ("te", "Telugu"),
+]
+
 
 def config_dir() -> Path:
     """Return the folder that holds the settings file."""

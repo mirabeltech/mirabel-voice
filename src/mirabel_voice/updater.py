@@ -156,8 +156,15 @@ class Updater:
         return parse_version(marker.name) if marker else None
 
     def _dist_info(self) -> Path | None:
-        markers = sorted(self.site_packages.glob("mirabel_voice-*.dist-info"))
-        return markers[0] if markers else None
+        """Return the newest version marker.
+
+        An install over an old bundle can leave the old marker beside
+        the new one, and the newest of them is the truth.
+        """
+        markers = list(self.site_packages.glob("mirabel_voice-*.dist-info"))
+        if not markers:
+            return None
+        return max(markers, key=lambda marker: parse_version(marker.name) or (0,))
 
     def latest(self) -> tuple[tuple[int, ...], str] | None:
         """Return the newest release's version and its source address."""
@@ -274,9 +281,16 @@ class Updater:
 
         shutil.rmtree(backup)
         name = ".".join(str(part) for part in version)
+        wanted = self.site_packages / f"mirabel_voice-{name}.dist-info"
         marker = self._dist_info()
-        if marker is not None:
-            marker.rename(self.site_packages / f"mirabel_voice-{name}.dist-info")
+        # Stale markers from an install-over-install go first, so the
+        # rename below never lands on a folder that already exists,
+        # which Windows refuses.
+        for stale in self.site_packages.glob("mirabel_voice-*.dist-info"):
+            if stale != marker and stale != wanted:
+                shutil.rmtree(stale)
+        if marker is not None and marker != wanted and not wanted.exists():
+            marker.rename(wanted)
         log.info("Updated to %s. The next start runs it.", name)
         return name
 
