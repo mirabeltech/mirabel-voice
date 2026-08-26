@@ -12,38 +12,44 @@ The install puts the app in `%LOCALAPPDATA%\Programs\Mirabel Voice` and starts i
 
 ## Cutting a release
 
-1. Change `version` in `pyproject.toml`. It is the only place the version lives.
-2. Commit that on `main`.
-3. Tag it and push the tag:
+The normal release is three steps, and the third one is the rollout:
 
-```powershell
-git tag v0.2.0
-git push origin v0.2.0
-```
+1. **Bump the version.** Change `version` in `pyproject.toml` — the only place the version lives — and commit it on `main`.
 
-GitHub Actions then runs the tests and publishes release notes. It attaches no file, on purpose: the download carries the relay's address and this repository is public. The tag must match the version in `pyproject.toml`, or the build stops and says so.
+2. **Tag it and push the tag.** GitHub Actions runs the tests, checks the tag against `pyproject.toml`, and publishes the release notes. It attaches no file, on purpose: the download carries the relay's address and this repository is public.
 
-Publishing the release is also the rollout. An installed machine that pastes the README's install line pulls the newest release's source from this repository and swaps it into its bundle — no zip, no shared drive. From v0.5.0 the app does the same on its own: it checks the newest release once a day and applies it, restarting between dictations, so the whole team is current within a day of the tag. Both paths prove the new code still imports before keeping it, so a release that changes the bundle itself (a Python bump, a new library, Tkinter) makes the machine put the old code back and send its person to the shared drive. Only those releases need the zip rebuilt and re-uploaded.
+   ```powershell
+   git tag v0.6.0
+   git push origin main v0.6.0
+   ```
 
-Treat the tag as the deploy button: the newest published release is what every machine installs, on its own, within a day. A bad release is recalled by tagging a good one with a higher number, not by deleting anything — machines only ever move forward.
+3. **Endorse it.** Nothing rolls out until this runs:
 
-The relay can pin what the fleet installs, which moves that authority from "can publish a GitHub release" to "can deploy the relay":
+   ```powershell
+   python scripts\deploy_relay.py --endorse v0.6.0
+   ```
 
-```powershell
-python scripts\deploy_relay.py --endorse v0.6.0
-```
+That is the whole job. Every installed machine checks the relay once a day, sees the endorsed version, downloads that tag from GitHub, verifies it against the endorsed hash, swaps it in, proves the new code still imports, and restarts between dictations. The team is current within a day and nobody installs anything. The impatient right-click the icon and choose **Check for updates**, and the pasted install line lands on the endorsed release too.
 
-That fetches the tag from GitHub, hashes the package contents the same way the app will (the contents, not the zip — GitHub does not promise byte-identical archives forever), and deploys the pair. From then on the app updates only to that version, verifies the download against that hash, and GitHub is just the delivery. Later deploys carry the endorsement forward until the next `--endorse`; recall is `--endorse` of the older good version. Mind the switch in ritual: once the first endorsement is set, endorsing **is** the rollout — tag the release, then endorse it, or machines stay where they are. A machine that gets no answer from the relay (development mode, or an endorsement never set) falls back to following the newest published release, which is how every machine behaved before endorsement existed.
+Tag and endorse are a pair. Machines follow the endorsement, not the release list, so a tag without an endorsement reaches nobody. A bad release is recalled with `--endorse` of the previous good version; deleting things achieves nothing, because machines only ever move to what is endorsed.
 
-Every push to `main` builds the installer with a deliberately useless relay address, so a broken build is found on the day it breaks. That artifact is a compile check and is not something to hand anybody.
+Why the endorsement exists: it moves the authority to update the fleet from "can publish a GitHub release" to "can deploy the relay". The hash covers the package contents, computed the same way the app computes it (the contents, not the zip — GitHub does not promise byte-identical archives forever), so GitHub is just the delivery. Later deploys carry the endorsement forward until the next `--endorse`. A machine that gets no answer from the relay — development mode, or a relay never endorsed — falls back to following the newest published release.
 
-The download people actually install is built on your machine, with the real address:
+### The rare release that changes the bundle
 
-```powershell
-powershell -ExecutionPolicy Bypass -File packaging\build_bundle.ps1 -RelayUrl https://<the relay address>
-```
+A release that touches the runtime itself — a Python version bump, a new binary library, Tkinter — cannot travel as source. Machines refuse it safely: the proof step fails, they keep the old version, and the icon's tooltip sends their person to the shared drive. For those releases, add two steps:
 
-`packaging\build.ps1` makes the packaged program instead, and needs [Inno Setup](https://jrsoftware.org/isdl.php) 6.3 or newer. See **Build the download** below for which to use.
+4. **Rebuild the zip.** `relay.json` in the repository root supplies the address and the Google client:
+
+   ```powershell
+   powershell -ExecutionPolicy Bypass -File packaging\build_bundle.ps1
+   ```
+
+5. **Upload it over the existing shared-drive file** with **Manage versions**, and rename the file to the new version — a rename keeps the link the README carries.
+
+People then paste the install line once; the newer zip outranks their install and does the full reinstall, keeping their settings.
+
+Every push to `main` also builds the installer with a deliberately useless relay address, so a broken build is found on the day it breaks. That artifact is a compile check and is not something to hand anybody. `packaging\build.ps1` makes the packaged .exe pair instead and needs [Inno Setup](https://jrsoftware.org/isdl.php) 6.3 or newer; prefer the bundle. See **Build the download** below.
 
 ## When Windows blocks it
 
