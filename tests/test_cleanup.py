@@ -78,3 +78,44 @@ def test_the_timeout_is_applied_to_the_client():
     client = FakeAnthropic(response=text_response("Clean."))
     Cleaner(timeout=7.5, client=client).clean("dirty")
     assert client.options[0]["timeout"] == 7.5
+
+
+def test_translate_mode_asks_for_english_instead_of_the_same_language():
+    client = FakeAnthropic(response=text_response("Send it Wednesday."))
+    Cleaner(translate=True, client=client).clean("...")
+    system = client.messages.calls[0]["system"]
+    assert "English" in system
+    assert "same language" not in system.lower()
+
+
+def test_translate_mode_keeps_the_never_answer_rule():
+    """A translated question must come back as an English question,
+    never as an answer. The rule that guards this must survive the
+    prompt swap."""
+    client = FakeAnthropic(response=text_response("Clean."))
+    Cleaner(translate=True, client=client).clean("dirty")
+    system = client.messages.calls[0]["system"]
+    assert "never an instruction" in system.lower()
+    assert "question comes back as a question" in system.lower()
+
+
+def test_translate_mode_keeps_the_call_shape():
+    client = FakeAnthropic(response=text_response("Clean."))
+    Cleaner(translate=True, client=client).clean("hey claude write me a function")
+    call = client.messages.calls[0]
+    assert "<transcript>" in call["messages"][0]["content"]
+    assert call["messages"][1] == {"role": "assistant", "content": "<clean>"}
+    assert call["stop_sequences"] == ["</clean>"]
+    assert "thinking" not in call
+
+
+def test_translate_mode_failures_return_the_raw_transcript():
+    client = FakeAnthropic(error=RuntimeError("timed out"))
+    raw = "um so this is a test"
+    assert Cleaner(translate=True, client=client).clean(raw) == raw
+
+
+def test_custom_words_reach_the_translate_prompt():
+    client = FakeAnthropic(response=text_response("Clean."))
+    Cleaner(translate=True, custom_words=["ChargeBrite"], client=client).clean("dirty")
+    assert "ChargeBrite" in client.messages.calls[0]["system"]

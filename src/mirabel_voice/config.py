@@ -103,6 +103,10 @@ class Config:
         cleanup_model: The Claude model that does the cleanup.
         cleanup_timeout: Seconds to wait for Claude. The app uses the raw
             transcript if Claude is slower than this value.
+        translate_to_english: True turns every dictation into written
+            English, whatever language was spoken. The cleanup pass does
+            the translation, so this runs the pass even when
+            cleanup_enabled is False.
         custom_words: Names and terms that the models must spell correctly.
         paste_last_hotkey: The key combination that pastes the last
             transcript again. Uses the same format as hotkey.
@@ -152,6 +156,7 @@ class Config:
     cleanup_enabled: bool = True
     cleanup_model: str = "claude-haiku-4-5"
     cleanup_timeout: float = 20.0
+    translate_to_english: bool = False
     custom_words: list[str] = field(default_factory=list)
     paste_last_hotkey: str = "shift+alt+z"
     inject_method: str = "paste"

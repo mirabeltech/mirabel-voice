@@ -66,9 +66,14 @@ def make_app(
     cleaned="Hello world.",
     injector=None,
     cleanup_enabled=True,
+    translate=False,
     transcribe_error=None,
 ):
-    config = Config(play_sounds=False, cleanup_enabled=cleanup_enabled)
+    config = Config(
+        play_sounds=False,
+        cleanup_enabled=cleanup_enabled,
+        translate_to_english=translate,
+    )
     openai_client = FakeOpenAI(text=transcript, error=transcribe_error)
     anthropic_client = FakeAnthropic(response=text_response(cleaned))
     app = VoiceApp(
@@ -107,6 +112,28 @@ def test_cleanup_off_pastes_the_raw_transcript():
     app = make_app(injector=injector, cleanup_enabled=False)
     run_cycle(app)
     assert injector.sent == ["um hello world"]
+
+
+def test_translate_on_runs_the_cleanup_even_when_tidying_is_off():
+    # Translation lives in the cleanup pass. A person who turned the
+    # tidying off must not find the translate switch silently dead.
+    injector = CapturingInjector()
+    app = make_app(injector=injector, cleanup_enabled=False, translate=True)
+    run_cycle(app)
+    assert injector.sent == ["Hello world."]
+
+
+def test_the_translate_setting_reaches_the_cleaner():
+    # No cleaner is injected here, so the app builds its own - the
+    # client stays unbuilt, and no network is touched.
+    config = Config(play_sounds=False, translate_to_english=True)
+    app = VoiceApp(
+        config=config,
+        recorder=FakeRecorder(loud_recording()),
+        transcriber=Transcriber(client=FakeOpenAI()),
+        injector=CapturingInjector(),
+    )
+    assert app.cleaner.translate is True
 
 
 def test_a_transcription_failure_reports_an_error_and_pastes_nothing():

@@ -87,6 +87,7 @@ class VoiceApp:
             model=config.cleanup_model,
             timeout=config.cleanup_timeout,
             custom_words=words,
+            translate=config.translate_to_english,
             relay_url=config.relay_url,
             relay_token=credential,
         )
@@ -125,6 +126,15 @@ class VoiceApp:
         from .signin import GoogleSignin
 
         return GoogleSignin(config.google_client_id, config.google_client_secret)
+
+    def _cleanup_runs(self) -> bool:
+        """Return True when the dictation goes through the cleanup pass.
+
+        Translation lives in that pass, so the translate switch keeps it
+        running even when the tidying is turned off. Otherwise the switch
+        would be silently dead for anyone who turned the tidying off.
+        """
+        return self.config.cleanup_enabled or self.config.translate_to_english
 
     def set_language(self, code: str | None) -> None:
         """Switch the dictation language, for this dictation and the next start.
@@ -243,7 +253,7 @@ class VoiceApp:
         costs more than the cleanup call itself. Speaking gives us free
         time to pay that cost.
         """
-        if not self.config.cleanup_enabled:
+        if not self._cleanup_runs():
             return
 
         def ping() -> None:
@@ -347,7 +357,7 @@ class VoiceApp:
             self._set_state(STATE_IDLE, "No words were heard.")
             return
 
-        if self.config.cleanup_enabled:
+        if self._cleanup_runs():
             text = self.cleaner.clean(text)
         cleaned = time.monotonic()
 
