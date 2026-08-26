@@ -365,6 +365,25 @@ def test_switching_language_needs_no_restart(monkeypatch, tmp_path):
     assert Config.load().language == "hi"  # and the next start agrees
 
 
+def test_switching_translate_needs_no_restart(monkeypatch, tmp_path):
+    """The tray switch must reach the very next dictation."""
+    app = language_app(monkeypatch, tmp_path)
+    app.set_translate(True)
+    assert app.cleaner.translate is True
+    assert Config.load().translate_to_english is True  # the next start agrees
+    app.set_translate(False)
+    assert app.cleaner.translate is False
+    assert Config.load().translate_to_english is False
+
+
+def test_switching_translate_tells_the_tray(monkeypatch, tmp_path):
+    app = language_app(monkeypatch, tmp_path)
+    told = []
+    app._on_state = lambda state, detail: told.append(detail)
+    app.set_translate(True)
+    assert any("Translate to English: on" in detail for detail in told)
+
+
 def test_detect_automatically_is_a_real_choice(monkeypatch, tmp_path):
     app = language_app(monkeypatch, tmp_path)
     app.set_language(None)

@@ -150,6 +150,20 @@ class VoiceApp:
         log.info("The dictation language is now %s.", chosen)
         self._set_state(self.state, f"Language: {chosen}.")
 
+    def set_translate(self, on: bool) -> None:
+        """Switch the translation to English, for the very next dictation.
+
+        The cleaner reads its flag per call, so the switch needs no
+        restart. None of this touches the Language setting: that one
+        stays a hint to the transcriber, and composes with this.
+        """
+        self.config.translate_to_english = on
+        self.cleaner.translate = on
+        self.config.save()
+        state = "on" if on else "off"
+        log.info("Translate to English is now %s.", state)
+        self._set_state(self.state, f"Translate to English: {state}.")
+
     def _set_state(self, state: str, detail: str = "") -> None:
         """Record the new state and tell the tray icon and the panel."""
         self.state = state

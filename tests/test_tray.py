@@ -21,16 +21,22 @@ class FakeApp:
             relay_url=None,
             relay_token=None,
             cleanup_enabled=True,
+            translate_to_english=False,
             hotkey="insert",
         )
         self.signin = None
         self.state = "idle"
         self.last_text = ""
         self.chosen = []
+        self.translated = []
 
     def set_language(self, code):
         self.chosen.append(code)
         self.config.language = code
+
+    def set_translate(self, on):
+        self.translated.append(on)
+        self.config.translate_to_english = on
 
 
 def test_clicking_a_language_entry_reaches_set_language():
@@ -57,3 +63,20 @@ def test_detect_automatically_passes_none():
     item = tray._language_item("Detect automatically", None)
     item(None)
     assert tray.app.chosen == [None]
+
+
+def test_clicking_translate_reaches_set_translate():
+    tray = Tray(app=FakeApp())
+    item = tray._translate_item()
+    item(None)
+    assert tray.app.translated == [True]
+    item(None)
+    assert tray.app.translated == [True, False]
+
+
+def test_the_translate_entry_shows_its_state():
+    tray = Tray(app=FakeApp())
+    item = tray._translate_item()
+    assert not item.checked
+    item(None)
+    assert item.checked

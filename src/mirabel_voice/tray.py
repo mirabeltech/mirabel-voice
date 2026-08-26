@@ -136,6 +136,7 @@ class Tray:
                     self._language_item("Detect automatically", None),
                 ),
             ),
+            self._translate_item(),
             pystray.MenuItem(
                 "Check for updates",
                 self._check_updates,
@@ -164,6 +165,21 @@ class Tray:
             choose,
             checked=lambda _, code=code: self.app.config.language == code,
             radio=True,
+        )
+
+    def _translate_item(self):  # noqa: ANN202
+        """The checkable entry that turns translation to English on or off."""
+        import pystray
+
+        # A closure for the same reason as the language items: pystray
+        # calls the action as action(icon, item).
+        def toggle(icon, item):  # noqa: ANN001, ARG001
+            self.app.set_translate(not self.app.config.translate_to_english)
+
+        return pystray.MenuItem(
+            "Translate to English",
+            toggle,
+            checked=lambda _: self.app.config.translate_to_english,
         )
 
     def _sign_in(self) -> None:
