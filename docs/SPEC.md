@@ -70,7 +70,7 @@ Developers still use `git clone` + `setup.ps1` (creates venv, installs, prompts 
 
 ## Cost
 
-A minute of speech costs about $0.0058: $0.003 transcription (`gpt-4o-mini-transcribe`) plus $0.0028 Haiku cleanup. Heavy use (~60 min speech/day, 22 days) is about **$7.66/user/month**. Wispr Flow Pro is $15/user/month for comparison. Full table in ADMIN.md.
+A minute of speech costs about $0.0088: $0.006 transcription (`gpt-4o-transcribe`) plus $0.0028 Haiku cleanup. Heavy use (~60 min speech/day, 22 days) is about **$11.62/user/month**. Wispr Flow Pro is $15/user/month for comparison. Full table in ADMIN.md.
 
 (A live-streaming transcription path existed through v0.5.x, shipped off, and was retired: it cost about three times the batch price per minute and added a second code path through the pipeline.)
 

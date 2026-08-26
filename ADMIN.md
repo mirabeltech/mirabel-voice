@@ -228,13 +228,13 @@ Two things watch the spend now. The AWS budget alarm mails the shared mailbox at
 
 The table below is the estimate the pilot started with. Once a month of real use is in the log, the report is the better number.
 
-A minute of speech costs about **$0.0058**: $0.003 for the transcription (`gpt-4o-mini-transcribe`) and $0.0028 for the Claude cleanup. Over 22 working days that gives:
+A minute of speech costs about **$0.0088**: $0.006 for the transcription (`gpt-4o-transcribe`) and $0.0028 for the Claude cleanup. Over 22 working days that gives:
 
 | Speech per day | Cost per person per month |
 |---|---|
-| 10 minutes | $1.28 |
-| 30 minutes | $3.83 |
-| 60 minutes | $7.66 |
+| 10 minutes | $1.94 |
+| 30 minutes | $5.81 |
+| 60 minutes | $11.62 |
 
 To cut the cost further, right-click the icon near the clock and turn off **Clean up with Claude**. That saves $0.0028 a minute, which is about half of what the app costs with the live view off.
 

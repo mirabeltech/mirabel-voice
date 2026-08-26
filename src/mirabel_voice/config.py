@@ -151,7 +151,7 @@ class Config:
     input_device: str | int | None = None
     min_seconds: float = 0.4
     max_seconds: float = 300.0
-    transcribe_model: str = "gpt-4o-mini-transcribe"
+    transcribe_model: str = "gpt-4o-transcribe"
     language: str | None = "en"
     cleanup_enabled: bool = True
     cleanup_model: str = "claude-haiku-4-5"

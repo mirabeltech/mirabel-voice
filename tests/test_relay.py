@@ -249,7 +249,7 @@ def wav_audio(seconds=2.0):
     return b"RIFF" + (len(body) + data_size).to_bytes(4, "little") + body
 
 
-def multipart(audio, filename="speech.ogg", model="gpt-4o-mini-transcribe"):
+def multipart(audio, filename="speech.ogg", model="gpt-4o-transcribe"):
     """Build the multipart body the OpenAI SDK would send."""
     b = BOUNDARY.encode()
     parts = []
@@ -328,7 +328,7 @@ def test_the_usage_line_carries_audio_seconds_from_an_opus_upload(caplog):
     lines = [r.getMessage() for r in caplog.records if r.getMessage().startswith("usage ")]
     line = json.loads(lines[0].removeprefix("usage "))
     assert line["route"] == "transcribe"
-    assert line["model"] == "gpt-4o-mini-transcribe"
+    assert line["model"] == "gpt-4o-transcribe"
     assert line["audio_seconds"] == 2.0
     assert line["token"] == "tommy"
 

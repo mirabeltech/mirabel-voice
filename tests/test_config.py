@@ -11,6 +11,10 @@ def test_load_writes_defaults_when_no_file_exists(tmp_path):
     assert config.mode == "toggle"
     assert config.cleanup_enabled is True
     assert config.cleanup_model == "claude-haiku-4-5"
+    # The full tier, not mini: recognition accuracy on Telugu and the
+    # other non-English languages is the quality floor for translation.
+    assert config.transcribe_model == "gpt-4o-transcribe"
+    assert config.translate_to_english is False
     assert config.paste_last_hotkey == "shift+alt+z"
 
 
