@@ -18,6 +18,21 @@ def test_load_writes_defaults_when_no_file_exists(tmp_path):
     assert config.paste_last_hotkey == "shift+alt+z"
 
 
+def test_the_retired_transcribe_default_is_upgraded_on_load(tmp_path):
+    # save() writes every field, so every pre-0.6.0 settings file names
+    # gpt-4o-mini-transcribe without the person ever choosing it. The
+    # model bump must reach those installs too.
+    target = tmp_path / "config.json"
+    Config(transcribe_model="gpt-4o-mini-transcribe").save(target)
+    assert Config.load(target).transcribe_model == "gpt-4o-transcribe"
+
+
+def test_a_deliberate_transcribe_choice_is_kept(tmp_path):
+    target = tmp_path / "config.json"
+    Config(transcribe_model="whisper-1").save(target)
+    assert Config.load(target).transcribe_model == "whisper-1"
+
+
 def test_a_settings_file_from_the_streaming_era_still_loads(tmp_path):
     # The streaming path is retired. A settings file that still carries
     # its keys - even switched on - must load cleanly and be ignored.

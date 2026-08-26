@@ -178,6 +178,12 @@ class Config:
             cfg.save(target)
             return cfg
         raw = json.loads(target.read_text(encoding="utf-8-sig"))
+        # save() writes every field, so a settings file always names the
+        # transcribe model - a retired default in the file means "the
+        # default", not a person's choice. Any other stored value is a
+        # choice and is kept.
+        if raw.get("transcribe_model") == "gpt-4o-mini-transcribe":
+            del raw["transcribe_model"]
         known = {f.name for f in fields(cls)}
         return cls(**{k: v for k, v in raw.items() if k in known})
 

@@ -1,6 +1,6 @@
 [project]
 name = "mirabel-voice"
-version = "0.6.1"
+version = "0.6.2"
 description = "Push-to-talk dictation for Windows. Hold a key, speak, and the text appears in any program."
 requires-python = ">=3.10"
 dependencies = [
