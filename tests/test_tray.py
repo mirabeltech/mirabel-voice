@@ -80,3 +80,23 @@ def test_the_translate_entry_shows_its_state():
     assert not item.checked
     item(None)
     assert item.checked
+
+
+def test_translate_on_shows_the_cleanup_as_running_and_locked():
+    # Translation lives in the cleanup pass, so with translate on the
+    # pass always runs. The cleanup entry must say so, not show an
+    # unchecked box whose click would change nothing.
+    app = FakeApp()
+    app.config.cleanup_enabled = False
+    app.config.translate_to_english = True
+    item = Tray(app=app)._cleanup_item()
+    assert item.checked
+    assert not item.enabled
+
+
+def test_translate_off_gives_the_cleanup_entry_back():
+    app = FakeApp()
+    app.config.cleanup_enabled = False
+    item = Tray(app=app)._cleanup_item()
+    assert not item.checked
+    assert item.enabled

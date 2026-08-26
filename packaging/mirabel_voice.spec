@@ -41,10 +41,8 @@ hiddenimports = collect_submodules("mirabel_voice") + [
     "pystray._win32",
     "pynput.keyboard._win32",
     "pynput.mouse._win32",
-    # The OpenAI live transcription path opens a websocket.
+    # The Opus encoder for the transcription upload.
     "soundfile",
-    "websockets",
-    "websockets.asyncio.client",
 ]
 
 a = Analysis(

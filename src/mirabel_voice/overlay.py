@@ -110,6 +110,7 @@ class Overlay:
         self._blob = None
         self.hwnd = 0
         self._started = threading.Event()
+        self._ok = False
         # Everything below is read and written on the overlay thread only.
         self._status = ""
         self._state = STATE_IDLE
@@ -128,7 +129,11 @@ class Overlay:
         )
         self._thread.start()
         self._started.wait(timeout=5.0)
-        return self._started.is_set()
+        # _run sets _started even when it fails, so that this wait never
+        # hangs. _ok says whether the window really came up; without it a
+        # crashed panel thread would report success and every status
+        # update would queue into a dead window forever.
+        return self._started.is_set() and self._ok
 
     def status(self, state: str, detail: str = "") -> None:
         """Show what the app is doing now."""
@@ -182,7 +187,7 @@ class Overlay:
             self._label = tk.Label(
                 self._row,
                 text="",
-                font=FONT,
+                font=STATUS_FONT,
                 bg=BACKGROUND,
                 fg=FOREGROUND,
                 justify="left",
@@ -194,6 +199,7 @@ class Overlay:
             self._root.update_idletasks()
             self._make_unfocusable()
             self._shape()
+            self._ok = True
             self._started.set()
             self._root.after(POLL_MS, self._drain)
             self._root.mainloop()

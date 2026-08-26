@@ -124,11 +124,7 @@ class Tray:
                 self._sign_in,
                 visible=lambda _: self.app.signin is not None,
             ),
-            pystray.MenuItem(
-                "Clean up with Claude",
-                self._toggle_cleanup,
-                checked=lambda _: self.app.config.cleanup_enabled,
-            ),
+            self._cleanup_item(),
             pystray.MenuItem(
                 "Language",
                 pystray.Menu(
@@ -165,6 +161,23 @@ class Tray:
             choose,
             checked=lambda _, code=code: self.app.config.language == code,
             radio=True,
+        )
+
+    def _cleanup_item(self):  # noqa: ANN202
+        """The checkable entry that turns the Claude cleanup on or off.
+
+        Translation lives in the cleanup pass, so while translate is on
+        the pass always runs: the checkmark shows that, and the entry
+        greys out rather than pretend a click could change it.
+        """
+        import pystray
+
+        return pystray.MenuItem(
+            "Clean up with Claude",
+            self._toggle_cleanup,
+            checked=lambda _: self.app.config.cleanup_enabled
+            or self.app.config.translate_to_english,
+            enabled=lambda _: not self.app.config.translate_to_english,
         )
 
     def _translate_item(self):  # noqa: ANN202

@@ -267,3 +267,16 @@ def test_the_dot_fades_towards_the_background_and_back():
     assert panel.blend(full, panel.BACKGROUND, 1.0) == full
     assert panel.blend(full, panel.BACKGROUND, 0.0) == panel.BACKGROUND
     assert panel.blend(full, panel.BACKGROUND, 0.5) not in (full, panel.BACKGROUND)
+
+
+def test_the_panel_thread_really_starts():
+    # Every other test here stubs the Tk thread, and a NameError inside
+    # the real one once shipped unseen: start() reported success while
+    # the window was dead. This test runs the real thread once.
+    import pytest
+
+    pytest.importorskip("tkinter")
+    overlay = panel.Overlay()
+    started = overlay.start()
+    overlay.stop()
+    assert started is True

@@ -139,9 +139,9 @@ class VoiceApp:
     def set_language(self, code: str | None) -> None:
         """Switch the dictation language, for this dictation and the next start.
 
-        The transcriber reads its language per call and the live socket
-        reads the settings per recording, so the switch needs no restart.
-        None means the model works out each dictation's language itself.
+        The transcriber reads its language per call, so the switch needs
+        no restart. None means the model works out each dictation's
+        language itself.
         """
         self.config.language = code
         self.transcriber.language = code
@@ -372,6 +372,10 @@ class VoiceApp:
             return
 
         if self._cleanup_runs():
+            # The settings are the one source of truth for the mode. The
+            # cleaner re-reads them per dictation, so a writer that only
+            # touches the settings still takes effect without a restart.
+            self.cleaner.translate = self.config.translate_to_english
             text = self.cleaner.clean(text)
         cleaned = time.monotonic()
 

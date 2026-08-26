@@ -86,7 +86,7 @@ That zip holds Python's own embeddable build with the app installed into it. It 
 
 `packaging\build.ps1` still makes the older pair, `MirabelVoiceSetup-x.y.z.exe` and `MirabelVoice-x.y.z.zip`, which hold a packaged program instead. They are smaller and they install the same way, but a machine with Smart App Control on cannot run either. Prefer the Python bundle until the program is signed.
 
-The bundle carries Tkinter, which the status panel and the live view both need and which neither the embeddable build nor the NuGet package ships. `build_bundle.ps1` takes it from the full Python that made the `.venv`, checks that each file is signed, and stops if it is not. That is why the build needs a python.org install of the same version on the machine, not only the `.venv`.
+The bundle carries Tkinter, which the status panel needs and which neither the embeddable build nor the NuGet package ships. `build_bundle.ps1` takes it from the full Python that made the `.venv`, checks that each file is signed, and stops if it is not. That is why the build needs a python.org install of the same version on the machine, not only the `.venv`.
 
 You only rebuild when the app changes. The same zip serves everybody, because the token is the only per-person part and it is typed at install time.
 
@@ -236,6 +236,6 @@ A minute of speech costs about **$0.0088**: $0.006 for the transcription (`gpt-4
 | 30 minutes | $5.81 |
 | 60 minutes | $11.62 |
 
-To cut the cost further, right-click the icon near the clock and turn off **Clean up with Claude**. That saves $0.0028 a minute, which is about half of what the app costs with the live view off.
+To cut the cost further, right-click the icon near the clock and turn off **Clean up with Claude**. That saves $0.0028 a minute, about a third of the total. (It has no effect for someone using **Translate to English** — translation happens in that same cleanup pass, so the pass keeps running.)
 
 For comparison, Wispr Flow Pro costs $15 a person a month, or $12 billed annually.

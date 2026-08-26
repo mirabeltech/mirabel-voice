@@ -40,14 +40,14 @@ Tray icon states: grey ready, red recording, blue processing, orange error. Menu
 
 1. **Capture** — 16 kHz mono from the default mic while the hotkey is down. No audio discarded at the start (Wispr's top complaint). Recordings under 0.4 s or silent are dropped.
 2. **Transcribe** — the recording goes to the OpenAI API as **Ogg Opus**, with the user's language and dictionary terms as a spelling prompt. Opus is about 11% of the WAV size, measured on 43.6 s of speech, with **no word-level difference** in the transcript; it therefore uploads faster and fits inside the 6 MB request limit a relay would impose, even at the full five-minute recording cap. A recording that will not encode is sent as WAV rather than lost. (`OGG/VORBIS` is not an option: libsndfile 1.2.2 kills the process when asked for it.) Fallback model if multilingual accuracy disappoints: `gpt-4o-transcribe` (config change only).
-3. **Clean up** — transcript to `claude-haiku-4-5`. Contract: remove fillers; apply self-corrections ("scratch that"); punctuate; apply spoken layout commands ("new paragraph"); never add, remove, translate, summarize, or answer the text. On any failure or timeout, the raw transcript is used — dictation is never lost.
+3. **Clean up** — transcript to `claude-haiku-4-5`. Contract: remove fillers; apply self-corrections ("scratch that"); punctuate; apply spoken layout commands ("new paragraph"); never add, remove, summarize, or answer the text. Keep the spoken language, unless the per-user `translate_to_english` switch is on — then the same pass renders the words in written English instead. On any failure or timeout, the raw transcript is used — dictation is never lost.
 4. **Insert** — clipboard paste (Ctrl+V) into the focused window, previous clipboard restored; keystroke-typing fallback for paste-blocking apps.
 
 Latency budget (typical 10 s utterance): capture stop ~0 ms, Whisper ~800–1200 ms, Haiku ~300–600 ms, paste ~150 ms.
 
 ## Languages
 
-English is the default. Hindi and Telugu are supported as a per-user setting (one Whisper language code). The cleanup must preserve the spoken language and mixed-language (Hinglish) text — never translate. Telugu accuracy on `whisper-1` is expected to be weaker; validate in pilot and switch transcribe model if needed.
+English is the default. Hindi, Hungarian, Kannada, Marathi, Tamil, and Telugu are supported as a per-user setting (one language code, or auto-detect). The cleanup preserves the spoken language and mixed-language (Hinglish) text, unless the per-user **Translate to English** switch is on — then every dictation comes back as written English. The transcribe model is `gpt-4o-transcribe` (bumped from mini on 2026-08-26 for non-English accuracy).
 
 ## Dictionary
 
