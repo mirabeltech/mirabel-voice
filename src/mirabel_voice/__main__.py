@@ -48,16 +48,26 @@ _instance_mutex = None
 def already_running(name: str = "Local\\MirabelVoiceSingleInstance") -> bool:
     """Return True when another Mirabel Voice process holds the app mutex.
 
-    The mutex handle stays open for the life of this process, so the next
-    launch sees it. A second running copy would paste every dictation twice.
+    When this process is the first, the handle stays open for its life,
+    so the next launch sees it. A second running copy would paste every
+    dictation twice.
+
+    When another process holds the mutex, the handle closes again at
+    once. A kept handle would keep the mutex alive after the holder
+    exits, and the relaunch after an update - which polls this function
+    while the old copy leaves - would wait on its own handle forever.
     """
     global _instance_mutex  # noqa: PLW0603 - the handle must outlive this call
     try:
         import ctypes
 
         kernel32 = ctypes.windll.kernel32
-        _instance_mutex = kernel32.CreateMutexW(None, False, name)
-        return kernel32.GetLastError() == 183  # ERROR_ALREADY_EXISTS
+        handle = kernel32.CreateMutexW(None, False, name)
+        if kernel32.GetLastError() == 183:  # ERROR_ALREADY_EXISTS
+            kernel32.CloseHandle(handle)
+            return True
+        _instance_mutex = handle
+        return False
     except Exception:  # noqa: BLE001 - never block startup over the guard
         return False
 
