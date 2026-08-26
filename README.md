@@ -22,10 +22,6 @@ Then:
 3. **Sign in when your browser opens.** Use your Mirabel work account, the same one as your email. That is the whole setup: no token to paste, no API keys to enter, nothing new to keep. (An older download asks for a token instead; if yours does, ask Tommy for one.)
 4. **Pick your language**: right-click the microphone icon near the clock (click the **^** arrow if it is hidden), choose **Language**, and pick English, Hindi, Hungarian, Kannada, Marathi, Tamil, or Telugu — or **Detect automatically** if you mix languages when you speak. English is the default, so skip this step if that is you.
 
-A microphone icon appears near your clock, and Mirabel Voice starts with Windows from then on. The whole thing takes about two minutes.
-
-One thing Windows does that we cannot stop: it tucks new icons behind the **^** arrow near the clock — click the arrow and the microphone is there. To keep it always in view: right-click an empty spot on the taskbar, choose **Taskbar settings**, open **Other system tray icons**, and switch on the row with the round grey microphone (the row may be named after Python, which is what the app runs on). Worth the minute — the icon's colour is how you know the app is listening.
-
 ![The grey microphone icon behind the ^ arrow near the clock](https://raw.githubusercontent.com/mirabeltech/mirabel-voice/main/docs/images/tray-icon.png)
 
 Updates take care of themselves: once a day the app checks for the newest release, swaps it in, and restarts between dictations. In a hurry, right-click the icon near your clock and choose **Check for updates** — or paste the same line again; all three do the same careful thing, and your settings stay as they are. (The rare release that changes the app's foundations is the exception: the app keeps the old version, and the icon's tooltip sends you back to the shared drive for a fresh zip.) To keep a version, set `"auto_update": false` in `config.json`.
