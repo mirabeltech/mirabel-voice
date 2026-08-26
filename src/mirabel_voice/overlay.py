@@ -1,9 +1,7 @@
 """The small window that shows what the app is doing.
 
-The window has two jobs. It shows a short status line for the whole
-dictation cycle, so that a wait never looks like a failure. It also shows
-your words while you speak, when live streaming is on. The words win when
-both want the window, because the words are the more useful thing.
+The window shows a short status line for the whole dictation cycle, so
+that a wait never looks like a failure.
 
 The window has no border, sits above other windows, never takes the
 keyboard focus, and passes clicks through to whatever is underneath. It
@@ -11,8 +9,8 @@ must not take the focus: the text has to go to the program you are
 typing in, not to us.
 
 Tkinter needs one thread that owns the window and does all the work on it.
-This module keeps that thread private. The app calls update, status, and
-hide from any thread.
+This module keeps that thread private. The app calls status and hide from
+any thread.
 """
 
 from __future__ import annotations
@@ -32,9 +30,9 @@ from .tray import COLOURS
 
 log = logging.getLogger(__name__)
 
-# The live words get a fixed width and wrap. The status pill sizes itself
-# to its text, between these two, so that "Listening" and "Writing your
-# text" come out the same width and the pill does not jump between them.
+# The status pill sizes itself to its text, between these two, so that
+# "Listening" and "Writing your text" come out the same width and the
+# pill does not jump between them.
 WIDTH = 460
 STATUS_WIDTH = 250
 PAD_X = 18
@@ -43,7 +41,6 @@ BOTTOM_GAP = 90
 DOT_SIZE = 9
 DOT_GAP = 10
 
-FONT = ("Segoe UI", 12)
 STATUS_FONT = ("Segoe UI", 11)
 BACKGROUND = "#171B22"
 FOREGROUND = "#E9EDF2"
@@ -101,7 +98,7 @@ def status_line(state: str, detail: str) -> tuple[str, int]:
 
 
 class Overlay:
-    """Show a status line, or the live words, near the bottom of the screen."""
+    """Show a status line near the bottom of the screen."""
 
     def __init__(self) -> None:
         self._commands: queue.Queue = queue.Queue()
@@ -114,7 +111,6 @@ class Overlay:
         self.hwnd = 0
         self._started = threading.Event()
         # Everything below is read and written on the overlay thread only.
-        self._words = ""
         self._status = ""
         self._state = STATE_IDLE
         self._token = 0
@@ -134,17 +130,12 @@ class Overlay:
         self._started.wait(timeout=5.0)
         return self._started.is_set()
 
-    def update(self, text: str) -> None:
-        """Show the live words, or drop them when the text is empty."""
-        self._commands.put(("text", text))
-
     def status(self, state: str, detail: str = "") -> None:
         """Show what the app is doing now."""
         self._commands.put(("status", (state, detail)))
 
     def hide(self) -> None:
         """Take the window off the screen."""
-        self._commands.put(("text", ""))
         self._commands.put(("status", (STATE_IDLE, "")))
 
     def stop(self) -> None:
@@ -225,11 +216,7 @@ class Overlay:
                     self._root.quit()
                     self._root.destroy()
                     return
-                if action == "status":
-                    self._apply_status(*value)
-                else:
-                    self._words = value
-                    self._render()
+                self._apply_status(*value)
         except queue.Empty:
             pass
         except Exception:  # noqa: BLE001
@@ -264,7 +251,7 @@ class Overlay:
 
     def _pulse(self, token: int) -> None:
         """Fade the dot down and back while the app is busy."""
-        if token != self._token or self._words or not self._status:
+        if token != self._token or not self._status:
             return
         self._phase = (self._phase + 1) % PULSE_STEPS
         # A triangle: down for half the steps, back up for the other half.
@@ -281,37 +268,25 @@ class Overlay:
         self._dot.itemconfigure(self._blob, fill=blend(full, BACKGROUND, amount))
 
     def _render(self) -> None:
-        """Put the words on screen, or the status, or nothing."""
-        if self._words:
-            self._draw(self._words, None)
-        elif self._status:
+        """Put the status on screen, or nothing."""
+        if self._status:
             self._draw(self._status, self._state)
         else:
             self._hide_window()
 
-    def _draw(self, text: str, state: str | None) -> None:
+    def _draw(self, text: str, state: str) -> None:
         """Lay the row out, size the window to it, and show it.
 
-        A state of None means these are the live words, which get the full
-        width and no dot. A state means this is a status line, which gets
-        a coloured dot and only the width it needs.
+        The status line gets a coloured dot and only the width it needs.
         """
-        if state is None:
-            self._dot.pack_forget()
-            self._label.configure(
-                text=text, font=FONT, wraplength=WIDTH - 2 * PAD_X
-            )
-            fixed = WIDTH
-        else:
-            self._tint(1.0)
-            self._dot.pack(side="left", padx=(0, DOT_GAP), before=self._label)
-            self._label.configure(
-                text=text, font=STATUS_FONT, wraplength=WIDTH - 2 * PAD_X - DOT_SIZE
-            )
-            fixed = 0
+        self._tint(1.0)
+        self._dot.pack(side="left", padx=(0, DOT_GAP), before=self._label)
+        self._label.configure(
+            text=text, font=STATUS_FONT, wraplength=WIDTH - 2 * PAD_X - DOT_SIZE
+        )
         self._root.update_idletasks()
 
-        width = fixed or min(
+        width = min(
             max(self._row.winfo_reqwidth() + 2 * PAD_X, STATUS_WIDTH), WIDTH
         )
         height = self._row.winfo_reqheight() + 2 * PAD_Y

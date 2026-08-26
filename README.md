@@ -154,7 +154,6 @@ The same setting lives in `config.json` as `"language"`: `"en"`, `"hi"`, `"hu"`,
 - **No icon near your clock.** It is hiding behind the **^** arrow. Click the arrow and it is there; the Taskbar settings step under Install keeps it in view for good.
 - **Your text landed in the wrong window.** Press **Shift+Alt+Z** in the right one.
 - **Your key does nothing.** It may be one your laptop keeps for itself. Run the key picker above and choose another.
-- **Words appear in a small box instead of your text box.** Your key has Ctrl, Alt, Shift, or Windows in it. Pick a plain key.
 - Still stuck? Message Tommy.
 
 ## Removing it

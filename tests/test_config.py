@@ -12,12 +12,28 @@ def test_load_writes_defaults_when_no_file_exists(tmp_path):
     assert config.cleanup_enabled is True
     assert config.cleanup_model == "claude-haiku-4-5"
     assert config.paste_last_hotkey == "shift+alt+z"
-    # Insert has no modifier in it, so the words can type themselves
-    # straight into the text box.
-    assert config.live_insert is True
-    # The live view costs about six times more per minute, so it ships off.
-    # live_insert and show_overlay do nothing until someone turns it on.
-    assert config.streaming_enabled is False
+
+
+def test_a_settings_file_from_the_streaming_era_still_loads(tmp_path):
+    # The streaming path is retired. A settings file that still carries
+    # its keys - even switched on - must load cleanly and be ignored.
+    target = tmp_path / "config.json"
+    target.write_text(
+        json.dumps(
+            {
+                "hotkey": "insert",
+                "streaming_enabled": True,
+                "streaming_model": "gpt-live-transcribe",
+                "show_overlay": True,
+                "live_insert": True,
+            }
+        ),
+        encoding="utf-8",
+    )
+    config = Config.load(target)
+    assert config.hotkey == "insert"
+    assert not hasattr(config, "streaming_enabled")
+    assert not hasattr(config, "live_insert")
 
 
 def test_save_and_load_round_trip(tmp_path):

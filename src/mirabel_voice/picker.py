@@ -4,10 +4,7 @@ The person presses the key they want and the choice is saved. This lives
 in the package, not in scripts, because the installed app has no scripts
 folder next to it.
 
-Use a key that does nothing else on the computer. Keys with Ctrl, Alt,
-Shift, or Windows in them work for dictation, but they cannot type the
-words into the text box as the person speaks, because Windows refuses
-typed characters while such a key is held.
+Use a key that does nothing else on the computer.
 """
 
 from __future__ import annotations
@@ -15,11 +12,6 @@ from __future__ import annotations
 import json
 
 from .config import Config, config_path
-
-MODIFIERS = {
-    "ctrl", "ctrl_l", "ctrl_r", "alt", "alt_l", "alt_r", "alt_gr",
-    "shift", "shift_l", "shift_r", "cmd", "cmd_l", "cmd_r",
-}
 
 SUGGESTIONS = """Keys that are usually free:
   scroll_lock    pause     insert     f13 to f24
@@ -41,23 +33,17 @@ def name_of(key) -> str | None:  # noqa: ANN001
     return None
 
 
-def save_choice(key: str) -> tuple[str | None, bool]:
-    """Store the key in the settings file.
-
-    Returns the key that was in use before, and whether the words can now
-    type straight into the text box.
-    """
+def save_choice(key: str) -> str | None:
+    """Store the key in the settings file. Return the key it replaces."""
     target = config_path()
     if not target.exists():
         # A fresh install may not have written the file yet.
         Config().save(target)
     settings = json.loads(target.read_text(encoding="utf-8-sig"))
     previous = settings.get("hotkey")
-    live = key not in MODIFIERS
     settings["hotkey"] = key
-    settings["live_insert"] = live
     target.write_text(json.dumps(settings, indent=2), encoding="utf-8")
-    return previous, live
+    return previous
 
 
 def pick_hotkey() -> int:
@@ -90,16 +76,7 @@ def pick_hotkey() -> int:
 
     key = chosen[0]
     print(f"\nYou pressed: {key}")
-    if key in MODIFIERS:
-        print(
-            "\nThat is a modifier key. Dictation will work, but the words "
-            "cannot appear in your text box as you speak. They will show in "
-            "the small preview window instead."
-        )
-
-    previous, live = save_choice(key)
+    previous = save_choice(key)
     print(f"\nSaved. Your dictation key is now: {key}   (was {previous})")
     print("Restart Mirabel Voice, then press that key and speak.")
-    if live:
-        print("The words will type straight into your text box.")
     return 0

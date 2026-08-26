@@ -68,11 +68,7 @@ def make_app(
     cleanup_enabled=True,
     transcribe_error=None,
 ):
-    # live_insert off: these tests are about the paste path, and a real
-    # LiveTyper would type into whatever window is focused right now.
-    config = Config(
-        play_sounds=False, cleanup_enabled=cleanup_enabled, live_insert=False
-    )
+    config = Config(play_sounds=False, cleanup_enabled=cleanup_enabled)
     openai_client = FakeOpenAI(text=transcript, error=transcribe_error)
     anthropic_client = FakeAnthropic(response=text_response(cleaned))
     app = VoiceApp(
@@ -282,181 +278,6 @@ def test_a_failing_action_does_not_stop_the_dispatcher():
     assert ran == ["after"]
 
 
-class FakeStream:
-    """Stands in for the live transcription socket."""
-
-    def __init__(self, transcript="um hello world", start_ok=True, final_ok=True):
-        self.transcript = transcript
-        self.start_ok = start_ok
-        self.final_ok = final_ok
-        self.chunks = []
-        self.started = False
-        self.cancelled = False
-        self.on_delta = None
-
-    def start(self):
-        self.started = self.start_ok
-        return self.start_ok
-
-    def send(self, chunk):
-        self.chunks.append(chunk)
-        if self.on_delta is not None:
-            self.on_delta("word ")
-
-    def finish(self, timeout=10.0):
-        return self.transcript if self.final_ok else None
-
-    def cancel(self):
-        self.cancelled = True
-
-
-def make_streaming_app(stream, injector=None, transcript="um hello world"):
-    config = Config(
-        play_sounds=False, streaming_enabled=True, live_insert=False
-    )
-    openai_client = FakeOpenAI(text=transcript)
-    anthropic_client = FakeAnthropic(response=text_response("Hello world."))
-    app = VoiceApp(
-        config=config,
-        recorder=FakeRecorder(loud_recording()),
-        transcriber=Transcriber(client=openai_client),
-        cleaner=Cleaner(client=anthropic_client),
-        injector=injector or CapturingInjector(),
-        stream=stream,
-    )
-    app._focus = lambda: 111  # see make_app
-    return app
-
-
-def test_streaming_transcript_is_cleaned_and_pasted():
-    stream = FakeStream(transcript="um hello world")
-    injector = CapturingInjector()
-    app = make_streaming_app(stream, injector)
-    run_cycle(app)
-    assert stream.started is True
-    assert injector.sent == ["Hello world."]
-
-
-def test_a_stream_that_cannot_connect_falls_back_to_upload():
-    stream = FakeStream(start_ok=False)
-    injector = CapturingInjector()
-    app = make_streaming_app(stream, injector)
-    run_cycle(app)
-    assert injector.sent == ["Hello world."]  # REST path still delivered
-
-
-def test_a_stream_that_fails_mid_utterance_falls_back_to_upload():
-    stream = FakeStream(final_ok=False)
-    injector = CapturingInjector()
-    app = make_streaming_app(stream, injector)
-    run_cycle(app)
-    assert injector.sent == ["Hello world."]
-
-
-def test_cancel_closes_the_stream_and_sends_nothing():
-    stream = FakeStream()
-    injector = CapturingInjector()
-    app = make_streaming_app(stream, injector)
-    app.start_recording()
-    app.cancel_recording()
-    assert stream.cancelled is True
-    assert injector.sent == []
-
-
-def test_live_words_reach_the_overlay():
-    seen = []
-    stream = FakeStream()
-    app = make_streaming_app(stream)
-    app.on_partial = seen.append
-    app.start_recording()
-    stream.send(b"\x00\x00")
-    assert seen == ["word "]
-
-
-class RecordingTyper:
-    """Captures what live typing would have done."""
-
-    def __init__(self):
-        self.typed = ""
-        self.shown = []
-        self.replaced = None
-        self.cleared = False
-        self.reopened = 0
-
-    def reopen(self):
-        self.reopened += 1
-        self.typed = ""
-
-    def show(self, text):
-        self.shown.append(text)
-        self.typed = text
-
-    def clear(self):
-        self.cleared = True
-        self.typed = ""
-
-    def replace_with(self, text):
-        self.replaced = text
-        self.typed = ""
-
-
-def make_live_app(stream, typer, focus=(111, 111)):
-    config = Config(
-        play_sounds=False, streaming_enabled=True, live_insert=True
-    )
-    app = VoiceApp(
-        config=config,
-        recorder=FakeRecorder(loud_recording()),
-        transcriber=Transcriber(client=FakeOpenAI(text="um hello world")),
-        cleaner=Cleaner(client=FakeAnthropic(response=text_response("Hello world."))),
-        injector=CapturingInjector(),
-        stream=stream,
-    )
-    app.typer = typer
-    # Unit tests must not depend on what is physically held on the machine
-    # running them.
-    app._modifiers_held = lambda: False
-    handles = list(focus)
-    app._focus = lambda: handles.pop(0) if handles else focus[-1]
-    return app
-
-
-def test_live_words_are_typed_and_then_corrected():
-    typer = RecordingTyper()
-    stream = FakeStream()
-    app = make_live_app(stream, typer)
-    app.start_recording()
-    stream.send(b"\x00\x00")
-    assert typer.shown == ["word "]
-    app.stop_recording()
-    app._worker.join(timeout=5)
-    assert typer.replaced == "Hello world."
-
-
-def test_a_changed_window_leaves_the_spoken_words_alone():
-    typer = RecordingTyper()
-    stream = FakeStream()
-    # Focus starts on one window and moves to another before the release.
-    app = make_live_app(stream, typer, focus=(111, 222))
-    app.start_recording()
-    stream.send(b"\x00\x00")
-    app.stop_recording()
-    app._worker.join(timeout=5)
-    assert typer.replaced is None  # nothing was deleted in the wrong window
-    assert app.injector.sent == []  # and nothing was pasted twice
-    assert app.state == STATE_ERROR
-
-
-def test_cancel_removes_the_live_words():
-    typer = RecordingTyper()
-    stream = FakeStream()
-    app = make_live_app(stream, typer)
-    app.start_recording()
-    stream.send(b"\x00\x00")
-    app.cancel_recording()
-    assert typer.cleared is True
-
-
 def test_cancel_discards_the_recording():
     app = make_app()
     app.start_recording()
@@ -465,28 +286,41 @@ def test_cancel_discards_the_recording():
     assert app.recorder.cancelled is True
 
 
-def test_live_typing_stays_off_when_streaming_is_off():
-    # The words that LiveTyper types come from the streaming partials.
-    # With streaming off there are none, so the app must not build a
-    # typer that would type into whatever window is focused.
-    config = Config(
-        play_sounds=False, streaming_enabled=False, live_insert=True
+def test_a_settings_file_from_the_streaming_era_still_dictates(tmp_path):
+    # The streaming path is retired. An install whose settings file still
+    # carries its keys - even switched on - must dictate normally through
+    # the batch path.
+    import json
+
+    target = tmp_path / "config.json"
+    target.write_text(
+        json.dumps(
+            {
+                "play_sounds": False,
+                "streaming_enabled": True,
+                "streaming_model": "gpt-live-transcribe",
+                "show_overlay": True,
+                "live_insert": True,
+            }
+        ),
+        encoding="utf-8",
     )
+    injector = CapturingInjector()
     app = VoiceApp(
-        config=config,
+        config=Config.load(target),
         recorder=FakeRecorder(loud_recording()),
-        transcriber=Transcriber(client=FakeOpenAI(text="hello")),
-        cleaner=Cleaner(client=FakeAnthropic(response=text_response("Hello."))),
-        injector=CapturingInjector(),
+        transcriber=Transcriber(client=FakeOpenAI(text="um hello world")),
+        cleaner=Cleaner(client=FakeAnthropic(response=text_response("Hello world."))),
+        injector=injector,
     )
-    assert app.streaming is False
-    assert app.live_insert is False
-    assert app.typer is None
+    app._focus = lambda: 111
+    run_cycle(app)
+    assert injector.sent == ["Hello world."]
 
 
 def language_app(monkeypatch, tmp_path):
     monkeypatch.setenv("MIRABEL_VOICE_HOME", str(tmp_path))
-    config = Config(play_sounds=False, live_insert=False)
+    config = Config(play_sounds=False)
     return VoiceApp(
         config=config,
         recorder=FakeRecorder(loud_recording()),

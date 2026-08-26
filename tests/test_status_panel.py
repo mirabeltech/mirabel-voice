@@ -62,7 +62,7 @@ class CapturingInjector:
 
 def make_app(recording=None, transcript="um hello", cleaned="Hello.", injector=None,
              transcribe_error=None):
-    config = Config(play_sounds=False, live_insert=False)
+    config = Config(play_sounds=False)
     app = VoiceApp(
         config=config,
         recorder=FakeRecorder(recording or loud_recording()),
@@ -204,20 +204,9 @@ def make_overlay():
     return overlay
 
 
-def test_live_words_take_the_window_from_the_status():
-    # Both want one window. The words are worth more than "Listening".
+def test_a_busy_state_draws_its_line():
     overlay = make_overlay()
     overlay._apply_status(STATE_RECORDING, "")
-    assert overlay.drawn[-1] == ("Listening", STATE_RECORDING)
-
-    overlay._words = "hello there"
-    overlay._render()
-    assert overlay.drawn[-1] == ("hello there", None)
-
-    # The words stop, and the status comes back rather than the window
-    # going blank mid-dictation.
-    overlay._words = ""
-    overlay._render()
     assert overlay.drawn[-1] == ("Listening", STATE_RECORDING)
 
 

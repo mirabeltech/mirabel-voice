@@ -139,12 +139,10 @@ class Recorder:
         sample_rate: int = 16000,
         device: str | int | None = None,
         max_seconds: float = 300.0,
-        on_chunk=None,  # noqa: ANN001 - called with raw PCM16 bytes, if set
     ) -> None:
         self.sample_rate = sample_rate
         self.device = device
         self.max_seconds = max_seconds
-        self.on_chunk = on_chunk
         self._chunks: list[np.ndarray] = []
         self._stream = None
         self._lock = threading.Lock()
@@ -156,21 +154,12 @@ class Recorder:
         return self._stream is not None
 
     def _callback(self, indata, frames, time_info, status) -> None:  # noqa: ANN001
-        """Store each block of audio that the sound device delivers.
-
-        The whole recording is always kept, even while streaming, because
-        the upload path needs it if the socket fails.
-        """
+        """Store each block of audio that the sound device delivers."""
         block = indata.copy().reshape(-1)
         with self._lock:
             if self._collected_frames() >= self._max_frames:
                 return
             self._chunks.append(block)
-        if self.on_chunk is not None:
-            try:
-                self.on_chunk(block.astype("<i2").tobytes())
-            except Exception:  # noqa: BLE001 - a live listener must not stop recording
-                pass
 
     def _collected_frames(self) -> int:
         """Return the number of frames captured so far."""

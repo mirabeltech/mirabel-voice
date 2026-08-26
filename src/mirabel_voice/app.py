@@ -25,15 +25,7 @@ from .cleanup import Cleaner
 from .config import LANGUAGES, Config
 from .dictionary import all_words
 from .hotkey import HotkeyListener, UnknownHotkeyError
-from .inject import (
-    LiveTyper,
-    TextInjector,
-    foreground_window,
-    modifiers_held,
-)
-from .streaming import SAMPLE_RATE as STREAM_RATE
-from .streaming import StreamingSession
-from .streaming import available as streaming_available
+from .inject import TextInjector, foreground_window
 from .transcribe import TranscriptionError, Transcriber
 
 log = logging.getLogger(__name__)
@@ -70,7 +62,6 @@ class VoiceApp:
         cleaner: Cleaner | None = None,
         injector: TextInjector | None = None,
         on_state: Callable[[str, str], None] | None = None,
-        stream=None,  # noqa: ANN001 - a StreamingSession, or None to build one
         signin=None,  # noqa: ANN001 - a GoogleSignin, or None to build from config
     ) -> None:
         self.config = config
@@ -79,14 +70,8 @@ class VoiceApp:
         # settings as the escape hatch, used again the moment the
         # Google fields are removed.
         credential = self.signin.credential if self.signin else config.relay_token
-        self._stream = stream
-        self.streaming = config.streaming_enabled and (
-            stream is not None or streaming_available()
-        )
-        # The live socket accepts one sample rate only.
-        rate = STREAM_RATE if self.streaming else config.sample_rate
         self.recorder = recorder or Recorder(
-            sample_rate=rate,
+            sample_rate=config.sample_rate,
             device=config.input_device,
             max_seconds=config.max_seconds,
         )
@@ -110,18 +95,13 @@ class VoiceApp:
             restore_clipboard=config.restore_clipboard,
         )
         self._on_state = on_state
-        self.on_partial: Callable[[str], None] | None = None
         # The status panel listens here. The tray owns _on_state, so the
         # two displays stay independent of each other.
         self.on_status: Callable[[str, str], None] | None = None
-        self.live_insert = config.live_insert and self.streaming
-        self.typer = LiveTyper(self.injector) if self.live_insert else None
         self._focus = foreground_window
-        self._modifiers_held = modifiers_held
         self._focus_at_start = 0
         self.state = STATE_IDLE
         self.last_text = ""
-        self._session = None
         self._listener: HotkeyListener | None = None
         self._worker: threading.Thread | None = None
         self._paste_thread: threading.Thread | None = None
@@ -240,15 +220,9 @@ class VoiceApp:
         if self._worker is not None and self._worker.is_alive():
             log.info("The previous transcript is still in progress.")
             return False
-        # The microphone opens first and the socket connects beside it.
-        # Nothing may delay the recording: the first word matters most.
-        self._session = None
-        self.recorder.on_chunk = None
-        # Remember the window we type into. If it changes, we must not
-        # delete anything: those characters belong to somebody else now.
+        # Remember the window we paste into. If it changes, we must not
+        # deliver there: that window belongs to somebody else now.
         self._focus_at_start = self._focus()
-        if self.typer is not None:
-            self.typer.reopen()
         try:
             self.recorder.start()
         except Exception as error:  # noqa: BLE001
@@ -256,7 +230,6 @@ class VoiceApp:
             self._set_state(STATE_ERROR, f"Microphone error: {error}")
             self._beep_refused()
             return False
-        self._open_stream()
         self._warm_cleanup()
         self._warm_transcriber()
         self._set_state(STATE_RECORDING)
@@ -305,86 +278,6 @@ class VoiceApp:
             target=ping, name="mirabel-voice-warm-transcribe", daemon=True
         ).start()
 
-    def _open_stream(self) -> None:
-        """Begin the live socket and feed it the microphone, if enabled.
-
-        Audio captured before the socket is ready is held and sent on
-        connect, so no speech is lost to connection time.
-        """
-        if not self.streaming:
-            return
-        session = self._stream or StreamingSession(
-            model=self.config.streaming_model,
-            keywords=self.transcriber.custom_words,
-            language=self.config.language,
-        )
-        session.on_delta = self._show_partial
-        try:
-            if not session.start():
-                return
-        except Exception:  # noqa: BLE001 - the upload path is the safety net
-            log.warning("The live socket did not start.", exc_info=True)
-            return
-        self._session = session
-        self.recorder.on_chunk = session.send
-
-    def _close_stream(self) -> None:
-        """Drop the live socket without asking for a transcript."""
-        self.recorder.on_chunk = None
-        session, self._session = self._session, None
-        if session is not None:
-            session.cancel()
-        self._erase_live_words()
-        if self.on_partial is not None:
-            self._show_partial("")
-
-    def _erase_live_words(self) -> None:
-        """Take back the words the app typed, if it may still do so."""
-        if self.typer is None or not self.typer.typed:
-            return
-        if self._focus() != self._focus_at_start:
-            self.typer.typed = ""  # another window owns them now
-            return
-        try:
-            self.typer.clear()
-        except Exception:  # noqa: BLE001
-            log.debug("The live words were not removed.", exc_info=True)
-
-    def _show_partial(self, text: str) -> None:
-        """Show the words heard so far, in the field or in the overlay.
-
-        Typing into the field only works while no modifier key is held.
-        With a hotkey such as Ctrl+Win that means it works in hands-free
-        mode, after a double-tap, and not while the keys are held down.
-        The overlay covers the rest, so words are always visible.
-        """
-        if self._can_type_live(text):
-            try:
-                self.typer.show(text)
-                self._notify_overlay("")
-                return
-            except Exception:  # noqa: BLE001 - typing must not break dictation
-                log.debug("A live keystroke failed.", exc_info=True)
-        self._notify_overlay(text)
-
-    def _can_type_live(self, text: str) -> bool:
-        """Return True when the words may go straight into the field."""
-        return bool(
-            text
-            and self.typer is not None
-            and not self._modifiers_held()
-            and self._focus() == self._focus_at_start
-        )
-
-    def _notify_overlay(self, text: str) -> None:
-        """Send the words to the small preview window, if there is one."""
-        if self.on_partial is None:
-            return
-        try:
-            self.on_partial(text)
-        except Exception:  # noqa: BLE001 - the overlay must not break dictation
-            log.debug("A live word update failed.", exc_info=True)
-
     def stop_recording(self) -> None:
         """Close the microphone and process the audio in a worker thread."""
         if self.state != STATE_RECORDING:
@@ -393,27 +286,19 @@ class VoiceApp:
             self._beep_refused()
             return
         recording = self.recorder.stop()
-        self.recorder.on_chunk = None
         self._beep(660, 60)
-        session, self._session = self._session, None
 
         if recording.duration < self.config.min_seconds:
-            if session is not None:
-                session.cancel()
-            self._show_partial("")
             self._set_state(STATE_IDLE, "That was too short.")
             return
         if recording.peak < SILENCE_PEAK:
-            if session is not None:
-                session.cancel()
-            self._show_partial("")
             self._set_state(STATE_IDLE, "The microphone captured no sound.")
             return
 
         self._set_state(STATE_WORKING)
         self._worker = threading.Thread(
             target=self._process,
-            args=(recording, session),
+            args=(recording,),
             name="mirabel-voice-worker",
             daemon=True,
         )
@@ -445,33 +330,17 @@ class VoiceApp:
         if self.state != STATE_RECORDING:
             return
         self.recorder.cancel()
-        self._close_stream()
         self._set_state(STATE_IDLE, "Cancelled.")
 
-    def _process(self, recording, session=None) -> None:  # noqa: ANN001
-        """Transcribe, clean, and inject one recording.
-
-        The live socket usually has the words already. The upload path
-        runs whenever it does not, so no dictation depends on the socket.
-        """
+    def _process(self, recording) -> None:  # noqa: ANN001
+        """Transcribe, clean, and inject one recording."""
         started = time.monotonic()
-        text = ""
-        if session is not None:
-            try:
-                text = session.finish() or ""
-            except Exception:  # noqa: BLE001 - fall back to the upload
-                log.warning("The live transcript failed.", exc_info=True)
-            if not text:
-                log.info("No live transcript. Uploading the audio instead.")
-        self._show_partial("")
-
-        if not text:
-            try:
-                text = self.transcriber.transcribe(recording)
-            except TranscriptionError as error:
-                log.error("Transcription failed: %s", error)
-                self._set_state(STATE_ERROR, f"Transcription failed: {error}")
-                return
+        try:
+            text = self.transcriber.transcribe(recording)
+        except TranscriptionError as error:
+            log.error("Transcription failed: %s", error)
+            self._set_state(STATE_ERROR, f"Transcription failed: {error}")
+            return
         transcribed = time.monotonic()
 
         if not text:
@@ -509,37 +378,20 @@ class VoiceApp:
     def _deliver(self, text: str) -> None:
         """Put the finished text where the user was typing.
 
-        When the app typed words live, it swaps its own words for the
-        clean ones. If the focus moved to another window, it changes
-        nothing at all: the spoken words stay where they landed, and we
-        never delete characters in a window we did not write to.
-
-        The paste path gets the same protection. The paste runs seconds
-        after the hotkey, so the user may have moved to another window by
-        then. A paste into that window puts the text in the wrong place.
+        The paste runs seconds after the hotkey, so the user may have
+        moved to another window by then. A paste into that window puts
+        the text in the wrong place, so the paste is held back instead.
         """
-        if self.typer is None:
-            if self._paste_focus_moved():
-                log.warning("The window changed. The text was not pasted.")
-                self._set_state(
-                    STATE_ERROR,
-                    "You changed window, so the text was not inserted. "
-                    "Press the paste-last hotkey to insert it here.",
-                )
-                self._beep_refused()
-                raise _FocusMoved
-            self.injector.send(text)
-            return
-        if self._focus() != self._focus_at_start:
-            log.warning("The window changed. Leaving the spoken words as they are.")
-            self.typer.typed = ""
+        if self._paste_focus_moved():
+            log.warning("The window changed. The text was not pasted.")
             self._set_state(
                 STATE_ERROR,
-                "You changed window, so the words were left as spoken. "
-                "Press the paste-last hotkey for the clean version.",
+                "You changed window, so the text was not inserted. "
+                "Press the paste-last hotkey to insert it here.",
             )
+            self._beep_refused()
             raise _FocusMoved
-        self.typer.replace_with(text)
+        self.injector.send(text)
 
     def _paste_focus_moved(self) -> bool:
         """Return True when another window clearly took the focus.
@@ -576,27 +428,10 @@ class VoiceApp:
             except UnknownHotkeyError as error:
                 log.warning("The paste-last hotkey is not valid: %s", error)
         self._listener.start()
-        if self.live_insert and self._hotkey_has_modifier():
-            log.info(
-                "Live typing needs a hotkey with no modifier in it, such as "
-                "f9. With %s the words appear in the preview window instead, "
-                "and the finished text arrives when you let go.",
-                self.config.hotkey,
-            )
         self._warm_connections()
         log.info(
             "Ready. Hotkey: %s (%s mode).", self.config.hotkey, self.config.mode
         )
-
-    def _hotkey_has_modifier(self) -> bool:
-        """Return True when the hotkey uses Ctrl, Alt, Shift, or Windows."""
-        parts = {p.strip() for p in self.config.hotkey.lower().split("+")}
-        modifiers = {
-            "ctrl", "ctrl_l", "ctrl_r", "alt", "alt_l", "alt_r", "alt_gr",
-            "shift", "shift_l", "shift_r", "cmd", "cmd_l", "cmd_r",
-            "win", "windows", "super",
-        }
-        return bool(parts & modifiers)
 
     def _warm_connections(self) -> None:
         """Open the network connections before the first dictation.

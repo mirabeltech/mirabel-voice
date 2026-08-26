@@ -18,33 +18,16 @@ sys.path.insert(0, str(PACKAGING))
 import prepare  # noqa: E402
 
 
-def test_a_plain_key_turns_live_typing_on(tmp_path, monkeypatch):
+def test_the_picker_saves_the_chosen_key(tmp_path, monkeypatch):
     target = tmp_path / "config.json"
     monkeypatch.setattr(picker, "config_path", lambda: target)
 
-    previous, live = picker.save_choice("scroll_lock")
+    previous = picker.save_choice("scroll_lock")
 
-    assert live is True
     assert previous == "insert"  # the default the file was written with
     from mirabel_voice.config import Config
 
-    saved = Config.load(target)
-    assert saved.hotkey == "scroll_lock"
-    assert saved.live_insert is True
-
-
-def test_a_modifier_key_turns_live_typing_off(tmp_path, monkeypatch):
-    # Windows refuses typed characters while a modifier is held, so the
-    # picker must never leave live typing on for such a key.
-    target = tmp_path / "config.json"
-    monkeypatch.setattr(picker, "config_path", lambda: target)
-
-    _, live = picker.save_choice("ctrl_r")
-
-    assert live is False
-    from mirabel_voice.config import Config
-
-    assert Config.load(target).live_insert is False
+    assert Config.load(target).hotkey == "scroll_lock"
 
 
 def test_the_installed_app_runs_the_picker_from_its_console_twin(tmp_path, monkeypatch):

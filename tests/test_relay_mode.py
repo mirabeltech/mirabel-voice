@@ -97,7 +97,6 @@ def relay_app(**clients):
         relay_url=RELAY,
         relay_token=TOKEN,
         play_sounds=False,
-        live_insert=False,
     )
     app = VoiceApp(
         config=config,
@@ -116,7 +115,7 @@ def test_the_app_hands_the_relay_settings_to_both_clients():
 
 
 def test_direct_mode_is_unchanged_when_no_relay_is_set():
-    config = Config(play_sounds=False, live_insert=False)
+    config = Config(play_sounds=False)
     app = VoiceApp(
         config=config,
         recorder=FakeRecorder(loud_recording()),
@@ -300,7 +299,6 @@ def test_the_app_prefers_the_sign_in_over_a_stored_token():
         google_client_id="12345-mirabel.apps",
         google_client_secret="GOCSPX-x",
         play_sounds=False,
-        live_insert=False,
     )
     app = VoiceApp(
         config=config,
