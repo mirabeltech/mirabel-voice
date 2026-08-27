@@ -125,6 +125,13 @@ Say "  Installing the app and its libraries (a minute or two)..."
 & $py -m pip install --quiet --disable-pip-version-check --target $sitePackages $root
 if ($LASTEXITCODE -ne 0) { Say "  pip failed." "Red"; exit 1 }
 
+# The app icon rides inside the python folder, so the installer can put
+# it on the shortcuts. prepare.py draws it fresh from the source, so the
+# icon in the zip always matches the code it ships with.
+& $py (Join-Path $here "prepare.py") | Out-Null
+if ($LASTEXITCODE -ne 0) { Say "  prepare.py failed." "Red"; exit 1 }
+Copy-Item (Join-Path $here "MirabelVoice.ico") $pythonDir
+
 # --- 3. The installer ------------------------------------------------------
 $installer = Get-Content (Join-Path $here "Install.ps1") -Raw
 $installer = $installer.Replace("__RELAY_URL__", $RelayUrl)

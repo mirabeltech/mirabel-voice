@@ -123,6 +123,10 @@ function New-Launcher($path) {
     $s.Arguments = ($launchArgs -join " ")
     $s.WorkingDirectory = $target
     $s.Description = "Mirabel Voice"
+    # The bundle ships the app icon beside pythonw; without this the
+    # shortcuts wear the plain Python icon.
+    $icon = Join-Path $target "python\MirabelVoice.ico"
+    if (Test-Path $icon) { $s.IconLocation = "$icon,0" }
     $s.Save()
 }
 New-Launcher (Join-Path ([Environment]::GetFolderPath("Desktop")) "Mirabel Voice.lnk")
