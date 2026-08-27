@@ -379,3 +379,19 @@ def test_stopping_the_app_clears_a_pending_suspend(monkeypatch, tmp_path):
     )
     app.set_hotkey("f13")
     assert made == []  # saved the key, started nothing
+
+
+# --- the footer version (v0.7.1) --------------------------------------------
+
+
+def test_the_version_comes_from_the_newest_marker_name(tmp_path):
+    # The updater renames the dist-info folder on every source update
+    # and never rewrites the METADATA inside - so the folder name is
+    # the running version and the file is the originally installed one.
+    (tmp_path / "mirabel_voice-0.5.1.dist-info").mkdir()
+    (tmp_path / "mirabel_voice-0.7.1.dist-info").mkdir()
+    assert card.version_from_markers(tmp_path) == "v0.7.1"
+
+
+def test_no_markers_answer_nothing(tmp_path):
+    assert card.version_from_markers(tmp_path) == ""

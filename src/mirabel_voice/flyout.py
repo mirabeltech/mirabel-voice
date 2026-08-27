@@ -40,8 +40,40 @@ CAPTURE_PROMPT = "Press a key…"
 CHANGE_KEY = "Change key…"
 
 
+def version_from_markers(site) -> str:  # noqa: ANN001 - a Path
+    """The version by the newest dist-info folder name, or nothing.
+
+    The updater records each source update by RENAMING the dist-info
+    folder; the METADATA file inside still says whatever pip wrote at
+    the original install. importlib reads that file, so it answers
+    with the version pip installed, not the one running. The folder
+    name is the truth.
+    """
+    try:
+        from .updater import parse_version
+
+        markers = list(site.glob("mirabel_voice-*.dist-info"))
+        versions = [parse_version(marker.name) for marker in markers]
+        versions = [v for v in versions if v]
+        if versions:
+            return "v" + ".".join(str(part) for part in max(versions))
+    except Exception:  # noqa: BLE001 - a strange layout answers nothing
+        pass
+    return ""
+
+
 def app_version() -> str:
-    """The installed version, or nothing when it cannot be known."""
+    """The running version, or nothing when it cannot be known."""
+    try:
+        from pathlib import Path
+
+        marked = version_from_markers(Path(__file__).resolve().parent.parent)
+        if marked:
+            return marked
+    except Exception:  # noqa: BLE001
+        pass
+    # A source checkout has no marker beside the package; pip's own
+    # record is right there, because nothing renames it.
     try:
         from importlib.metadata import version
 
@@ -298,6 +330,17 @@ class Flyout:
             foreground=pal.foreground,
             arrowcolor=pal.hint,
             bordercolor=pal.border,
+        )
+        # A readonly combobox takes its colours from the state map, not
+        # the base style - without this the theme's default grey wins
+        # and the boxes look like a different decade than the card.
+        style.map(
+            "Mirabel.TCombobox",
+            fieldbackground=[("readonly", pal.background)],
+            background=[("readonly", pal.background)],
+            foreground=[("readonly", pal.foreground)],
+            selectbackground=[("readonly", pal.background)],
+            selectforeground=[("readonly", pal.foreground)],
         )
         top.option_add("*TCombobox*Listbox.background", pal.background)
         top.option_add("*TCombobox*Listbox.foreground", pal.foreground)
