@@ -1,11 +1,16 @@
 """The system tray icon.
 
-The icon colour shows the state:
+The glyph is a monochrome microphone that follows the taskbar theme,
+the way the system network and volume icons do. The state sits in a
+small colour badge in its corner:
 
-* grey - ready
+* no badge - ready
 * red - the microphone is open
 * blue - the transcript is in progress
 * orange - the last cycle failed
+
+The badge changes; the glyph never does. Whole-icon colour swaps read
+as a different app, and a mid-grey disc reads as a dimmed one.
 """
 
 from __future__ import annotations
@@ -22,22 +27,21 @@ from .app import (
     STATE_ERROR,
     STATE_IDLE,
     STATE_RECORDING,
+    STATE_STARTING,
     STATE_WORKING,
     VoiceApp,
 )
 from .config import config_dir, config_path
+from .palette import STATE_COLOURS, system_uses_light_theme
 
 log = logging.getLogger(__name__)
 
-COLOURS = {
-    STATE_IDLE: (110, 110, 118),
-    STATE_RECORDING: (220, 60, 60),
-    STATE_WORKING: (60, 130, 220),
-    STATE_ERROR: (230, 150, 40),
-}
+# The one set of state colours, shared with the status panel's dot.
+COLOURS = STATE_COLOURS
 
 LABELS = {
     STATE_IDLE: "Ready",
+    STATE_STARTING: "Starting",
     STATE_RECORDING: "Recording",
     STATE_WORKING: "Writing",
     STATE_ERROR: "Error",
@@ -45,20 +49,139 @@ LABELS = {
 
 ICON_SIZE = 64
 
+# Every shape below is a ratio of the canvas, so the same drawing works
+# at any size the caller asks for.
+SUPERSAMPLE = 4  # draw big, shrink with Lanczos: crisp edges at 16 px
 
-def make_icon_image(state: str):  # noqa: ANN201 - returns a PIL image
-    """Draw a round icon in the colour of the state."""
+# The states that earn a badge. Ready is the absence of one.
+BADGED = (STATE_RECORDING, STATE_WORKING, STATE_ERROR)
+
+# The Mirabel brand disc of the app icon: --color-ocean-600.
+OCEAN_RGB = (2, 132, 199)
+
+
+def _draw_microphone(draw, size: int, colour, stroke: float) -> None:  # noqa: ANN001
+    """Draw the capsule, cradle, and stand at ratios of the canvas."""
+    width = max(round(size * stroke), 1)
+    draw.rounded_rectangle(
+        (size * 0.375, size * 0.094, size * 0.625, size * 0.563),
+        radius=size * 0.125,
+        fill=colour,
+    )
+    draw.arc(
+        (size * 0.219, size * 0.188, size * 0.781, size * 0.75),
+        start=0,
+        end=180,
+        fill=colour,
+        width=width,
+    )
+    draw.line(
+        (size * 0.5, size * 0.75, size * 0.5, size * 0.906),
+        fill=colour,
+        width=width,
+    )
+
+
+# There are only eight possible tray images (four badge looks, two
+# taskbar themes). Drawing one costs a supersampled render, and pystray
+# re-serializes every assigned image through a temp file - so each look
+# is drawn once and reused, and update() skips identical assignments.
+_ICON_CACHE: dict = {}
+
+
+def make_icon_image(state: str, light_taskbar: bool | None = None):  # noqa: ANN201
+    """Return the tray icon: a theme-aware mic, plus the state's badge.
+
+    The taskbar follows the SYSTEM theme, so the glyph is near-black on
+    a light taskbar and white on a dark one. The badge ring matches the
+    taskbar colour, so the badge separates from the glyph at 16 px.
+    Identical (badge, theme) pairs return the same cached image object.
+    """
+    if light_taskbar is None:
+        light_taskbar = system_uses_light_theme()
+    badge = state if state in BADGED else STATE_IDLE
+    key = (badge, light_taskbar)
+    cached = _ICON_CACHE.get(key)
+    if cached is None:
+        cached = _ICON_CACHE[key] = _draw_icon(badge, light_taskbar)
+    return cached
+
+
+def _draw_icon(state: str, light_taskbar: bool):  # noqa: ANN201
+    """Draw one tray image. make_icon_image caches the results."""
     from PIL import Image, ImageDraw
 
-    image = Image.new("RGBA", (ICON_SIZE, ICON_SIZE), (0, 0, 0, 0))
+    glyph = (27, 27, 27, 255) if light_taskbar else (255, 255, 255, 255)
+    ring = (243, 243, 243, 255) if light_taskbar else (32, 32, 32, 255)
+
+    size = ICON_SIZE * SUPERSAMPLE
+    image = Image.new("RGBA", (size, size), (0, 0, 0, 0))
     draw = ImageDraw.Draw(image)
-    colour = COLOURS.get(state, COLOURS[STATE_IDLE])
-    draw.ellipse((6, 6, ICON_SIZE - 6, ICON_SIZE - 6), fill=colour + (255,))
-    # A small microphone shape in white.
-    draw.rounded_rectangle((27, 17, 37, 36), radius=5, fill=(255, 255, 255, 255))
-    draw.arc((21, 28, 43, 46), start=0, end=180, fill=(255, 255, 255, 255), width=4)
-    draw.line((32, 44, 32, 50), fill=(255, 255, 255, 255), width=4)
-    return image
+    _draw_microphone(draw, size, glyph, stroke=0.094)
+    if state in BADGED:
+        colour = COLOURS.get(state, COLOURS[STATE_ERROR]) + (255,)
+        centre, radius = size * 0.781, size * 0.2
+        edge = max(round(size * 0.031), 1)
+        draw.ellipse(
+            (
+                centre - radius - edge,
+                centre - radius - edge,
+                centre + radius + edge,
+                centre + radius + edge,
+            ),
+            fill=ring,
+        )
+        draw.ellipse(
+            (centre - radius, centre - radius, centre + radius, centre + radius),
+            fill=colour,
+        )
+    return image.resize((ICON_SIZE, ICON_SIZE), Image.LANCZOS)
+
+
+def make_app_icon(size: int):  # noqa: ANN201 - returns a PIL image
+    """Draw the app icon: the ocean disc with the Mirabel M in the mic.
+
+    The M is knocked out of the capsule at 48 px and up; the small
+    sizes drop it for a clean mic. Per-size detail in one .ico is
+    standard practice - the small entries must stay legible.
+    """
+    from PIL import Image, ImageDraw
+
+    canvas = size * SUPERSAMPLE
+    image = Image.new("RGBA", (canvas, canvas), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(image)
+    disc = OCEAN_RGB + (255,)
+    white = (255, 255, 255, 255)
+    draw.ellipse((canvas * 0.063, canvas * 0.063, canvas * 0.938, canvas * 0.938), fill=disc)
+    stroke = max(round(canvas * 0.07), 1)
+    draw.rounded_rectangle(
+        (canvas * 0.391, canvas * 0.203, canvas * 0.609, canvas * 0.563),
+        radius=canvas * 0.109,
+        fill=white,
+    )
+    if size >= 48:
+        m_width = max(round(canvas * 0.038), 1)
+        points = [
+            (canvas * 0.438, canvas * 0.469),
+            (canvas * 0.438, canvas * 0.352),
+            (canvas * 0.5, canvas * 0.414),
+            (canvas * 0.563, canvas * 0.352),
+            (canvas * 0.563, canvas * 0.469),
+        ]
+        draw.line(points, fill=disc, width=m_width, joint="curve")
+    draw.arc(
+        (canvas * 0.297, canvas * 0.297, canvas * 0.703, canvas * 0.703),
+        start=0,
+        end=180,
+        fill=white,
+        width=stroke,
+    )
+    draw.line(
+        (canvas * 0.5, canvas * 0.703, canvas * 0.5, canvas * 0.797),
+        fill=white,
+        width=stroke,
+    )
+    return image.resize((size, size), Image.LANCZOS)
 
 
 def _picker_command() -> list[str] | None:
@@ -85,12 +208,14 @@ def _picker_command() -> list[str] | None:
 class Tray:
     """Show the app in the Windows notification area."""
 
-    def __init__(self, app: VoiceApp) -> None:
+    def __init__(self, app: VoiceApp, flyout=None) -> None:  # noqa: ANN001
         from .updater import Updater, endorsement_for
 
         self.app = app
+        self.flyout = flyout
         self.icon = None
         self.detail = ""
+        self._last_image = None
         # None outside the installed bundle, and the menu item hides.
         self.updater = Updater.discover(
             endorsement=endorsement_for(app.config, app.signin)
@@ -98,24 +223,72 @@ class Tray:
         app._on_state = self.update  # noqa: SLF001 - the tray owns the display
 
     def _title(self) -> str:
-        """Return the text of the icon tooltip."""
+        """Return the text of the icon tooltip.
+
+        Windows caps a tray tooltip at 128 characters and cuts the rest
+        mid-word. The longest error details go past that, so the cut
+        happens here, with an ellipsis, instead of wherever it lands.
+        """
         label = LABELS.get(self.app.state, "Ready")
         hotkey = self.app.config.hotkey
         line = f"Mirabel Voice - {label} (hold {hotkey})"
-        return f"{line}\n{self.detail}" if self.detail else line
+        title = f"{line}\n{self.detail}" if self.detail else line
+        if len(title) > 127:
+            title = title[:126] + "…"
+        return title
 
     def update(self, state: str, detail: str = "") -> None:
-        """Change the icon colour and the tooltip."""
+        """Change the badge and the tooltip.
+
+        The image is re-picked on every state change, and the pick reads
+        the taskbar theme each time - so a theme switch lands on the
+        next state change without any listener of its own. The icon is
+        only re-assigned when the image really changed: assignment makes
+        pystray re-serialize the icon through a temp file, and this runs
+        synchronously in the press-to-microphone gap.
+        """
         self.detail = detail
         if self.icon is None:
             return
-        self.icon.icon = make_icon_image(state)
+        image = make_icon_image(state)
+        if image is not self._last_image:
+            self.icon.icon = image
+            self._last_image = image
         self.icon.title = self._title()
 
     def _menu(self):  # noqa: ANN202
-        """Build the right-click menu."""
+        """Build the right-click menu.
+
+        With a flyout, the menu holds only what the flyout does not:
+        identity and status, the way in, maintenance, and the exit
+        Windows requires of every tray app. Everyday controls live in
+        the flyout alone - nothing appears in both. Without a flyout
+        (no Tkinter), the old full menu stays, so nothing is lost.
+        """
         import pystray
 
+        if self.flyout is not None:
+            return pystray.Menu(
+                pystray.MenuItem(
+                    lambda _: self._title().replace("\n", " - "),
+                    None,
+                    enabled=False,
+                ),
+                pystray.Menu.SEPARATOR,
+                # The default item also runs on a left-click of the icon.
+                pystray.MenuItem(
+                    "Open controls", self._open_controls, default=True
+                ),
+                pystray.Menu.SEPARATOR,
+                pystray.MenuItem(
+                    "Check for updates",
+                    self._check_updates,
+                    visible=lambda _: self.updater is not None,
+                ),
+                pystray.MenuItem("Open the settings folder", self._open_config),
+                pystray.Menu.SEPARATOR,
+                pystray.MenuItem("Quit", self._quit),
+            )
         return pystray.Menu(
             pystray.MenuItem(lambda _: self._title().replace("\n", " - "), None, enabled=False),
             pystray.Menu.SEPARATOR,
@@ -242,16 +415,14 @@ class Tray:
             target=run, name="mirabel-voice-signin", daemon=True
         ).start()
 
+    def _open_controls(self) -> None:
+        """Open the flyout. The left-click default and the menu row."""
+        if self.flyout is not None:
+            self.flyout.show()
+
     def _copy_last(self) -> None:
         """Put the last dictated text on the clipboard."""
-        if not self.app.last_text:
-            return
-        try:
-            import pyperclip
-
-            pyperclip.copy(self.app.last_text)
-        except Exception:  # noqa: BLE001
-            log.exception("The clipboard did not accept the text.")
+        self.app.copy_last()
 
     def _pick_hotkey(self) -> None:
         """Open the key picker in its own console window.
@@ -328,9 +499,10 @@ class Tray:
         """Show the icon and block until the user quits."""
         import pystray
 
+        self._last_image = make_icon_image(self.app.state)
         self.icon = pystray.Icon(
             "mirabel_voice",
-            icon=make_icon_image(self.app.state),
+            icon=self._last_image,
             title=self._title(),
             menu=self._menu(),
         )

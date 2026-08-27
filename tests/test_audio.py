@@ -2,6 +2,7 @@ import io
 import wave
 
 import numpy as np
+import pytest
 
 from mirabel_voice.audio import Recording, check_encoder
 
@@ -102,3 +103,186 @@ def test_the_encoder_check_reports_a_broken_codec(monkeypatch):
     ok, message = check_encoder()
     assert ok is False
     assert "nine times more" in message
+
+
+def test_the_level_is_zero_until_a_recording_runs():
+    from mirabel_voice.audio import Recorder
+
+    recorder = Recorder()
+    assert recorder.level == 0.0
+    # The callback stores the loudness of each block; the property
+    # reports it only while the stream is open.
+    recorder._stream = object()
+    recorder._callback(np.array([[8000], [-16000]], dtype=np.int16), 2, None, None)
+    assert 0.4 < recorder.level < 0.6
+    recorder._stream = None
+    assert recorder.level == 0.0
+
+
+# --- the open runs on a worker with a deadline (#57) ------------------------
+
+
+class FakeSounddevice:
+    """A sounddevice whose InputStream behaves as the test dictates."""
+
+    def __init__(self, block=None, fail=None):
+        import threading
+
+        self.block = block or threading.Event()
+        self.block.set()  # answer at once unless a test clears it
+        self.fail = fail
+        self.streams = []
+        outer = self
+
+        class InputStream:
+            def __init__(self, **kwargs):
+                self.kwargs = kwargs
+                self.started = False
+                self.stopped = False
+                self.closed = False
+                outer.streams.append(self)
+
+            def start(self):
+                outer.block.wait()
+                if outer.fail is not None:
+                    raise outer.fail
+                self.started = True
+
+            def stop(self):
+                self.stopped = True
+
+            def close(self):
+                self.closed = True
+
+        self.InputStream = InputStream
+
+
+def recorder_with(monkeypatch, fake):
+    import sys
+
+    from mirabel_voice.audio import Recorder
+
+    monkeypatch.setitem(sys.modules, "sounddevice", fake)
+    return Recorder()
+
+
+def test_a_normal_open_still_records(monkeypatch):
+    fake = FakeSounddevice()
+    recorder = recorder_with(monkeypatch, fake)
+    recorder.start(timeout=2.0)
+    assert recorder.is_recording
+    recorder.cancel()
+    assert not recorder.is_recording
+    assert fake.streams[0].closed
+
+
+def test_a_wedged_open_times_out_and_leaves_the_recorder_idle(monkeypatch):
+    import time
+
+    from mirabel_voice.audio import MicrophoneTimeout
+
+    fake = FakeSounddevice()
+    fake.block.clear()  # the driver never answers
+    recorder = recorder_with(monkeypatch, fake)
+
+    began = time.monotonic()
+    with pytest.raises(MicrophoneTimeout):
+        recorder.start(timeout=0.2)
+    assert time.monotonic() - began < 2.0  # the caller came back
+    assert not recorder.is_recording
+
+    # A second press while the device is still wedged is refused at
+    # once, without stacking another worker onto the dead device.
+    began = time.monotonic()
+    with pytest.raises(MicrophoneTimeout):
+        recorder.start(timeout=5.0)
+    assert time.monotonic() - began < 1.0
+    fake.block.set()  # let the wedged worker finish, for teardown
+
+
+def test_a_late_stream_is_closed_not_kept(monkeypatch):
+    from mirabel_voice.audio import MicrophoneTimeout
+
+    fake = FakeSounddevice()
+    fake.block.clear()
+    recorder = recorder_with(monkeypatch, fake)
+    with pytest.raises(MicrophoneTimeout):
+        recorder.start(timeout=0.1)
+
+    # The driver finally answers, long after the cycle gave up.
+    fake.block.set()
+    recorder._open_thread.join(timeout=5.0)
+    assert fake.streams[0].closed
+    assert not recorder.is_recording
+
+    # And the recorder is healthy again: a fresh open works.
+    recorder.start(timeout=2.0)
+    assert recorder.is_recording
+    assert fake.streams[1].started
+    recorder.cancel()
+
+
+def test_a_failing_open_raises_its_error(monkeypatch):
+    fake = FakeSounddevice(fail=RuntimeError("device refused"))
+    recorder = recorder_with(monkeypatch, fake)
+    with pytest.raises(RuntimeError, match="device refused"):
+        recorder.start(timeout=2.0)
+    assert not recorder.is_recording
+
+    # The failure is not sticky: a later open on a repaired device works.
+    fake.fail = None
+    recorder.start(timeout=2.0)
+    assert recorder.is_recording
+    recorder.cancel()
+
+
+def test_a_cancel_during_the_open_discards_the_stream(monkeypatch):
+    import threading
+    import time
+
+    from mirabel_voice.audio import MicrophoneCancelled
+
+    fake = FakeSounddevice()
+    fake.block.clear()
+    recorder = recorder_with(monkeypatch, fake)
+
+    outcome = []
+
+    def open_it():
+        try:
+            recorder.start(timeout=5.0)
+            outcome.append("started")
+        except Exception as error:  # noqa: BLE001 - the outcome IS the test
+            outcome.append(error)
+
+    opener = threading.Thread(target=open_it)
+    opener.start()
+    # Wait until the open is really in flight - a cancel that lands
+    # before it would belong to the previous cycle, not this one.
+    deadline = time.monotonic() + 5.0
+    while not fake.streams and time.monotonic() < deadline:
+        time.sleep(0.01)
+    # The user cancels while the device is still answering.
+    recorder.cancel()
+    fake.block.set()
+    opener.join(timeout=5.0)
+    assert not recorder.is_recording
+    assert fake.streams[0].closed
+    # The caller must hear "cancelled", not a silent success that the
+    # app would announce as "Listening" with no microphone open.
+    assert outcome and isinstance(outcome[0], MicrophoneCancelled)
+
+
+def test_a_stop_that_errors_still_returns_the_audio(monkeypatch):
+    fake = FakeSounddevice()
+    recorder = recorder_with(monkeypatch, fake)
+    recorder.start(timeout=2.0)
+
+    def explode():
+        raise RuntimeError("the driver went away")
+
+    fake.streams[0].stop = explode
+    recorder._chunks = [np.array([1, 2, 3], dtype=np.int16)]
+    recording = recorder.stop()  # must not raise
+    assert list(recording.samples) == [1, 2, 3]
+    assert not recorder.is_recording

@@ -20,7 +20,7 @@ import threading
 import time
 from typing import Callable
 
-from .audio import Recorder
+from .audio import MicrophoneCancelled, MicrophoneTimeout, Recorder
 from .cleanup import Cleaner
 from .config import LANGUAGES, Config
 from .dictionary import all_words
@@ -35,6 +35,7 @@ log = logging.getLogger(__name__)
 PASTE_LAST_DELAY_SECONDS = 0.4
 
 STATE_IDLE = "idle"
+STATE_STARTING = "starting"
 STATE_RECORDING = "recording"
 STATE_WORKING = "working"
 STATE_ERROR = "error"
@@ -104,6 +105,7 @@ class VoiceApp:
         self.state = STATE_IDLE
         self.last_text = ""
         self._listener: HotkeyListener | None = None
+        self._hotkeys_suspended = False
         self._worker: threading.Thread | None = None
         self._paste_thread: threading.Thread | None = None
         # Hotkey presses arrive on the keyboard hook thread. Work that
@@ -176,6 +178,60 @@ class VoiceApp:
         state = "on" if on else "off"
         log.info("Translate to English is now %s.", state)
         self._set_state(self.state, f"Translate to English: {state}.")
+
+    def set_hotkey(self, key: str) -> None:
+        """Swap the dictation key, for the very next press.
+
+        The listener parses its key at start, so the swap rebuilds it.
+        A key the listener refuses leaves the old one in place.
+
+        Raises:
+            UnknownHotkeyError: The key name is not one pynput knows.
+        """
+        from .hotkey import parse_hotkey
+
+        parse_hotkey(key)  # refuse a bad name before anything changes
+        self.config.hotkey = key
+        self.config.save()
+        if self._listener is not None or self._hotkeys_suspended:
+            self._stop_listener()
+            self._start_listener()
+            self._hotkeys_suspended = False
+        log.info("The dictation key is now %s.", key)
+        self._set_state(self.state, f"Dictation key: {key}.")
+
+    def suspend_hotkeys(self) -> None:
+        """Stop watching the keyboard, so another listener can have it.
+
+        The flyout's key capture uses this: with the app still
+        listening, pressing the current key mid-capture would start a
+        dictation.
+        """
+        if self._listener is not None:
+            self._stop_listener()
+            self._hotkeys_suspended = True
+
+    def resume_hotkeys(self) -> None:
+        """Start watching the keyboard again after a suspend."""
+        if self._hotkeys_suspended:
+            self._start_listener()
+            self._hotkeys_suspended = False
+
+    def copy_last(self) -> bool:
+        """Put the last dictated text on the clipboard.
+
+        Returns whether there was anything to copy.
+        """
+        if not self.last_text:
+            return False
+        try:
+            import pyperclip
+
+            pyperclip.copy(self.last_text)
+        except Exception:  # noqa: BLE001
+            log.exception("The clipboard did not accept the text.")
+            return False
+        return True
 
     def _set_state(self, state: str, detail: str = "") -> None:
         """Record the new state and tell the tray icon and the panel."""
@@ -260,8 +316,27 @@ class VoiceApp:
         # Remember the window we paste into. If it changes, we must not
         # deliver there: that window belongs to somebody else now.
         self._focus_at_start = self._focus()
+        # "Starting" until the microphone is really open. The user starts
+        # to speak the moment anything says "Listening", so that word must
+        # never appear before the capture is live.
+        self._set_state(STATE_STARTING)
         try:
             self.recorder.start()
+        except MicrophoneCancelled:
+            # Somebody ended the cycle while the device was opening -
+            # the app quitting, or a cancel. Whoever did it already set
+            # the state; saying "Listening" now would be a lie.
+            log.info("The recording was cancelled while the microphone opened.")
+            return False
+        except MicrophoneTimeout as error:
+            # The device is wedged, not refusing: say so, and come
+            # straight back so the next press still works.
+            log.warning("The microphone did not answer: %s", error)
+            hint = getattr(error, "hint", "")
+            detail = f"{error}\n{hint}" if hint else str(error)
+            self._set_state(STATE_ERROR, detail)
+            self._beep_refused()
+            return False
         except Exception as error:  # noqa: BLE001
             log.exception("The microphone did not open.")
             self._set_state(STATE_ERROR, f"Microphone error: {error}")
@@ -363,8 +438,12 @@ class VoiceApp:
         self._paste_thread.start()
 
     def cancel_recording(self) -> None:
-        """Throw away the current recording."""
-        if self.state != STATE_RECORDING:
+        """Throw away the current recording.
+
+        Starting counts too: a cancel that lands while the microphone
+        is still opening must not leave the cycle stuck.
+        """
+        if self.state not in (STATE_STARTING, STATE_RECORDING):
             return
         self.recorder.cancel()
         self._set_state(STATE_IDLE, "Cancelled.")
@@ -425,9 +504,12 @@ class VoiceApp:
         """
         if self._paste_focus_moved():
             log.warning("The window changed. The text was not pasted.")
+            # Two lines: what happened, then what to do about it. The
+            # panel shows the second line smaller and dimmer; the tray
+            # tooltip carries both.
             self._set_state(
                 STATE_ERROR,
-                "You changed window, so the text was not inserted. "
+                "The text was not inserted - you changed window.\n"
                 "Press the paste-last hotkey to insert it here.",
             )
             self._beep_refused()
@@ -446,15 +528,11 @@ class VoiceApp:
             return False
         return current != self._focus_at_start
 
-    def start(self) -> None:
-        """Begin to listen for the hotkey."""
-        self._dispatch_thread = threading.Thread(
-            target=self._dispatch, name="mirabel-voice-actions", daemon=True
-        )
-        self._dispatch_thread.start()
+    def _make_listener(self) -> HotkeyListener:
+        """Build the keyboard listener from the settings of the moment."""
         # The listener calls these on the keyboard hook thread. Each one
         # must return at once, so the real work goes through the queue.
-        self._listener = HotkeyListener(
+        listener = HotkeyListener(
             hotkey=self.config.hotkey,
             mode=self.config.mode,
             on_start=self._request_start,
@@ -465,10 +543,29 @@ class VoiceApp:
         spec = self.config.paste_last_hotkey
         if spec:
             try:
-                self._listener.add_binding(spec, self.paste_last)
+                listener.add_binding(spec, self.paste_last)
             except UnknownHotkeyError as error:
                 log.warning("The paste-last hotkey is not valid: %s", error)
+        return listener
+
+    def _start_listener(self) -> None:
+        """Build and start the keyboard listener."""
+        self._listener = self._make_listener()
         self._listener.start()
+
+    def _stop_listener(self) -> None:
+        """Stop and drop the keyboard listener."""
+        if self._listener is not None:
+            self._listener.stop()
+            self._listener = None
+
+    def start(self) -> None:
+        """Begin to listen for the hotkey."""
+        self._dispatch_thread = threading.Thread(
+            target=self._dispatch, name="mirabel-voice-actions", daemon=True
+        )
+        self._dispatch_thread.start()
+        self._start_listener()
         self._warm_connections()
         log.info(
             "Ready. Hotkey: %s (%s mode).", self.config.hotkey, self.config.mode
@@ -506,6 +603,10 @@ class VoiceApp:
 
     def stop(self) -> None:
         """Stop the hotkey listener and close the microphone."""
+        # A suspend must not survive the stop: a key capture that ends
+        # after the quit would otherwise restart the keyboard hook on a
+        # dead app.
+        self._hotkeys_suspended = False
         if self._listener is not None:
             self._listener.stop()
             self._listener = None
@@ -515,8 +616,11 @@ class VoiceApp:
             self._actions.put(None)
             self._dispatch_thread.join(timeout=3.0)
             self._dispatch_thread = None
-        if self.recorder.is_recording:
-            self.recorder.cancel()
+        # Always cancel, not only while recording: an open still in
+        # flight has no stream yet, and without the cancel's generation
+        # bump the worker would install a live microphone on a stopped
+        # app when the slow device finally answers.
+        self.recorder.cancel()
 
     def join(self) -> None:
         """Block until the listener stops."""

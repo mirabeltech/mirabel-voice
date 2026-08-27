@@ -169,6 +169,11 @@ def _show_box(message: str, icon: int) -> None:
 
 def main(argv: list[str] | None = None) -> int:
     """Start the app. Return the process exit code."""
+    # Before any window exists: without this, Windows bitmap-stretches
+    # the panel on every scaled display and the text comes out soft.
+    from .winui import enable_dpi_awareness
+
+    enable_dpi_awareness()
     parser = argparse.ArgumentParser(
         prog="mirabel-voice",
         description="Hold a key, speak, and the text appears in any program.",
@@ -351,8 +356,9 @@ def main(argv: list[str] | None = None) -> int:
         except Exception as error:  # noqa: BLE001 - explain, do not crash
             message = (
                 f"The Google sign-in did not complete: {error}\n\n"
-                "Start Mirabel Voice again to retry, or right-click the "
-                "icon near the clock and choose Sign in with Google."
+                "Start Mirabel Voice again to retry, or click the "
+                "microphone icon near the clock and choose Sign in "
+                "with Google."
             )
             print(message, file=sys.stderr)
             if not args.no_tray:
@@ -378,19 +384,31 @@ def main(argv: list[str] | None = None) -> int:
 
     from .tray import Tray
 
-    overlay = None
-    if config.show_status:
-        from .overlay import Overlay
-
-        overlay = Overlay()
-        if overlay.start():
-            app.on_status = overlay.status
-        else:
-            overlay = None
-
-    tray = Tray(app)
-    _start_update_watch(app, tray)
+    # The hotkey listener first: dictation must not wait the ~150 ms
+    # the Tkinter thread takes to come up.
     app.start()
+
+    # The overlay thread is the app's one Tkinter thread. The controls
+    # flyout needs it even when the status panel is turned off, so it
+    # starts whenever Tkinter exists; show_status only decides whether
+    # the panel listens to the pipeline.
+    from .overlay import Overlay
+
+    overlay = Overlay()
+    flyout = None
+    if overlay.start():
+        if config.show_status:
+            app.on_status = overlay.status
+            # The panel's level bars read the microphone through this.
+            overlay.level_source = lambda: app.recorder.level
+        from .flyout import Flyout
+
+        flyout = Flyout(overlay, app)
+    else:
+        overlay = None
+
+    tray = Tray(app, flyout=flyout)
+    _start_update_watch(app, tray)
     try:
         tray.run()
     finally:
