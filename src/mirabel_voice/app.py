@@ -105,6 +105,7 @@ class VoiceApp:
         self.state = STATE_IDLE
         self.last_text = ""
         self._listener: HotkeyListener | None = None
+        self._hotkeys_suspended = False
         self._worker: threading.Thread | None = None
         self._paste_thread: threading.Thread | None = None
         # Hotkey presses arrive on the keyboard hook thread. Work that
@@ -177,6 +178,60 @@ class VoiceApp:
         state = "on" if on else "off"
         log.info("Translate to English is now %s.", state)
         self._set_state(self.state, f"Translate to English: {state}.")
+
+    def set_hotkey(self, key: str) -> None:
+        """Swap the dictation key, for the very next press.
+
+        The listener parses its key at start, so the swap rebuilds it.
+        A key the listener refuses leaves the old one in place.
+
+        Raises:
+            UnknownHotkeyError: The key name is not one pynput knows.
+        """
+        from .hotkey import parse_hotkey
+
+        parse_hotkey(key)  # refuse a bad name before anything changes
+        self.config.hotkey = key
+        self.config.save()
+        if self._listener is not None or self._hotkeys_suspended:
+            self._stop_listener()
+            self._start_listener()
+            self._hotkeys_suspended = False
+        log.info("The dictation key is now %s.", key)
+        self._set_state(self.state, f"Dictation key: {key}.")
+
+    def suspend_hotkeys(self) -> None:
+        """Stop watching the keyboard, so another listener can have it.
+
+        The flyout's key capture uses this: with the app still
+        listening, pressing the current key mid-capture would start a
+        dictation.
+        """
+        if self._listener is not None:
+            self._stop_listener()
+            self._hotkeys_suspended = True
+
+    def resume_hotkeys(self) -> None:
+        """Start watching the keyboard again after a suspend."""
+        if self._hotkeys_suspended:
+            self._start_listener()
+            self._hotkeys_suspended = False
+
+    def copy_last(self) -> bool:
+        """Put the last dictated text on the clipboard.
+
+        Returns whether there was anything to copy.
+        """
+        if not self.last_text:
+            return False
+        try:
+            import pyperclip
+
+            pyperclip.copy(self.last_text)
+        except Exception:  # noqa: BLE001
+            log.exception("The clipboard did not accept the text.")
+            return False
+        return True
 
     def _set_state(self, state: str, detail: str = "") -> None:
         """Record the new state and tell the tray icon and the panel."""
@@ -454,15 +509,11 @@ class VoiceApp:
             return False
         return current != self._focus_at_start
 
-    def start(self) -> None:
-        """Begin to listen for the hotkey."""
-        self._dispatch_thread = threading.Thread(
-            target=self._dispatch, name="mirabel-voice-actions", daemon=True
-        )
-        self._dispatch_thread.start()
+    def _make_listener(self) -> HotkeyListener:
+        """Build the keyboard listener from the settings of the moment."""
         # The listener calls these on the keyboard hook thread. Each one
         # must return at once, so the real work goes through the queue.
-        self._listener = HotkeyListener(
+        listener = HotkeyListener(
             hotkey=self.config.hotkey,
             mode=self.config.mode,
             on_start=self._request_start,
@@ -473,10 +524,29 @@ class VoiceApp:
         spec = self.config.paste_last_hotkey
         if spec:
             try:
-                self._listener.add_binding(spec, self.paste_last)
+                listener.add_binding(spec, self.paste_last)
             except UnknownHotkeyError as error:
                 log.warning("The paste-last hotkey is not valid: %s", error)
+        return listener
+
+    def _start_listener(self) -> None:
+        """Build and start the keyboard listener."""
+        self._listener = self._make_listener()
         self._listener.start()
+
+    def _stop_listener(self) -> None:
+        """Stop and drop the keyboard listener."""
+        if self._listener is not None:
+            self._listener.stop()
+            self._listener = None
+
+    def start(self) -> None:
+        """Begin to listen for the hotkey."""
+        self._dispatch_thread = threading.Thread(
+            target=self._dispatch, name="mirabel-voice-actions", daemon=True
+        )
+        self._dispatch_thread.start()
+        self._start_listener()
         self._warm_connections()
         log.info(
             "Ready. Hotkey: %s (%s mode).", self.config.hotkey, self.config.mode

@@ -190,10 +190,11 @@ def _picker_command() -> list[str] | None:
 class Tray:
     """Show the app in the Windows notification area."""
 
-    def __init__(self, app: VoiceApp) -> None:
+    def __init__(self, app: VoiceApp, flyout=None) -> None:  # noqa: ANN001
         from .updater import Updater, endorsement_for
 
         self.app = app
+        self.flyout = flyout
         self.icon = None
         self.detail = ""
         # None outside the installed bundle, and the menu item hides.
@@ -231,9 +232,38 @@ class Tray:
         self.icon.title = self._title()
 
     def _menu(self):  # noqa: ANN202
-        """Build the right-click menu."""
+        """Build the right-click menu.
+
+        With a flyout, the menu holds only what the flyout does not:
+        identity and status, the way in, maintenance, and the exit
+        Windows requires of every tray app. Everyday controls live in
+        the flyout alone - nothing appears in both. Without a flyout
+        (no Tkinter), the old full menu stays, so nothing is lost.
+        """
         import pystray
 
+        if self.flyout is not None:
+            return pystray.Menu(
+                pystray.MenuItem(
+                    lambda _: self._title().replace("\n", " - "),
+                    None,
+                    enabled=False,
+                ),
+                pystray.Menu.SEPARATOR,
+                # The default item also runs on a left-click of the icon.
+                pystray.MenuItem(
+                    "Open controls", self._open_controls, default=True
+                ),
+                pystray.Menu.SEPARATOR,
+                pystray.MenuItem(
+                    "Check for updates",
+                    self._check_updates,
+                    visible=lambda _: self.updater is not None,
+                ),
+                pystray.MenuItem("Open the settings folder", self._open_config),
+                pystray.Menu.SEPARATOR,
+                pystray.MenuItem("Quit", self._quit),
+            )
         return pystray.Menu(
             pystray.MenuItem(lambda _: self._title().replace("\n", " - "), None, enabled=False),
             pystray.Menu.SEPARATOR,
@@ -360,16 +390,14 @@ class Tray:
             target=run, name="mirabel-voice-signin", daemon=True
         ).start()
 
+    def _open_controls(self) -> None:
+        """Open the flyout. The left-click default and the menu row."""
+        if self.flyout is not None:
+            self.flyout.show()
+
     def _copy_last(self) -> None:
         """Put the last dictated text on the clipboard."""
-        if not self.app.last_text:
-            return
-        try:
-            import pyperclip
-
-            pyperclip.copy(self.app.last_text)
-        except Exception:  # noqa: BLE001
-            log.exception("The clipboard did not accept the text.")
+        self.app.copy_last()
 
     def _pick_hotkey(self) -> None:
         """Open the key picker in its own console window.

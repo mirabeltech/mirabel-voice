@@ -356,8 +356,9 @@ def main(argv: list[str] | None = None) -> int:
         except Exception as error:  # noqa: BLE001 - explain, do not crash
             message = (
                 f"The Google sign-in did not complete: {error}\n\n"
-                "Start Mirabel Voice again to retry, or right-click the "
-                "icon near the clock and choose Sign in with Google."
+                "Start Mirabel Voice again to retry, or click the "
+                "microphone icon near the clock and choose Sign in "
+                "with Google."
             )
             print(message, file=sys.stderr)
             if not args.no_tray:
@@ -383,19 +384,26 @@ def main(argv: list[str] | None = None) -> int:
 
     from .tray import Tray
 
-    overlay = None
-    if config.show_status:
-        from .overlay import Overlay
+    # The overlay thread is the app's one Tkinter thread. The controls
+    # flyout needs it even when the status panel is turned off, so it
+    # starts whenever Tkinter exists; show_status only decides whether
+    # the panel listens to the pipeline.
+    from .overlay import Overlay
 
-        overlay = Overlay()
-        if overlay.start():
+    overlay = Overlay()
+    flyout = None
+    if overlay.start():
+        if config.show_status:
             app.on_status = overlay.status
             # The panel's level bars read the microphone through this.
             overlay.level_source = lambda: app.recorder.level
-        else:
-            overlay = None
+        from .flyout import Flyout
 
-    tray = Tray(app)
+        flyout = Flyout(overlay, app)
+    else:
+        overlay = None
+
+    tray = Tray(app, flyout=flyout)
     _start_update_watch(app, tray)
     app.start()
     try:
