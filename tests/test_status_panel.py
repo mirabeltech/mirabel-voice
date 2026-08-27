@@ -359,3 +359,37 @@ def test_the_panel_thread_really_starts():
     started = overlay.start()
     overlay.stop()
     assert started is True
+
+
+def test_the_panel_really_appears_on_screen():
+    # v0.7.0 captured the window handle before Tk realized the window:
+    # wm_frame handed back the inner client window, every ShowWindow
+    # aimed at it, and the pill never appeared - while start() still
+    # reported success. This test demands the real top level, visibly
+    # on screen, once a state arrives.
+    import sys
+    import time
+
+    import pytest
+
+    pytest.importorskip("tkinter")
+    if sys.platform != "win32":
+        pytest.skip("the window handle only exists on Windows")
+    import ctypes
+
+    user32 = ctypes.windll.user32
+    overlay = panel.Overlay()
+    assert overlay.start() is True
+    try:
+        GA_ROOT = 2
+        assert overlay.hwnd
+        assert user32.GetAncestor(overlay.hwnd, GA_ROOT) == overlay.hwnd
+        overlay.status(panel.STATE_RECORDING)
+        deadline = time.monotonic() + 3.0
+        while time.monotonic() < deadline:
+            if user32.IsWindowVisible(overlay.hwnd):
+                break
+            time.sleep(0.05)
+        assert user32.IsWindowVisible(overlay.hwnd)
+    finally:
+        overlay.stop()

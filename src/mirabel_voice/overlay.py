@@ -575,13 +575,21 @@ class Overlay:
         try:
             import ctypes
 
-            # wm_frame gives the real top level window. winfo_id gives an
-            # inner one, and a style set there has no effect.
+            # wm_frame gives the real top level window - but only once
+            # that window exists. Before the first update Tk hands back
+            # the inner client window instead, and a style set there has
+            # no effect: the pill then lives inside a wrapper that never
+            # shows. Realize the window first.
+            self._root.update_idletasks()
             try:
                 self.hwnd = int(self._root.wm_frame(), 16)
             except Exception:  # noqa: BLE001
                 self.hwnd = int(self._root.winfo_id())
             user32 = ctypes.windll.user32
+            GA_ROOT = 2
+            top = user32.GetAncestor(self.hwnd, GA_ROOT)
+            if top and top != self.hwnd:
+                self.hwnd = top
             GWL_EXSTYLE = -20
             WS_EX_TRANSPARENT = 0x00000020
             WS_EX_TOOLWINDOW = 0x00000080
