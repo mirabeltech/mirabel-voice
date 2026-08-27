@@ -360,6 +360,60 @@ def test_an_unreadable_recording_still_transcribes(caplog):
     assert line["audio_seconds"] is None
 
 
+def test_the_usage_line_carries_the_transcription_tokens(caplog):
+    """A json reply from gpt-4o-transcribe names its token counts.
+    They are the real price of a dictation, so the line must keep
+    them - and never the transcript that travels beside them."""
+    reply_body = json.dumps({
+        "text": "the spoken words",
+        "usage": {
+            "type": "tokens",
+            "input_tokens": 132,
+            "input_token_details": {"audio_tokens": 120, "text_tokens": 12},
+            "output_tokens": 27,
+        },
+    }).encode()
+    relay, _ = make_relay(FakeForward(body=reply_body))
+    with caplog.at_level(logging.INFO):
+        relay.handle(transcribe_request(audio=ogg_audio(seconds=2.0)))
+    lines = [r.getMessage() for r in caplog.records if r.getMessage().startswith("usage ")]
+    line = json.loads(lines[0].removeprefix("usage "))
+    assert line["input_tokens"] == 132
+    assert line["output_tokens"] == 27
+    assert line["audio_tokens"] == 120
+    assert line["text_tokens"] == 12
+    assert line["audio_seconds"] == 2.0
+    assert "the spoken words" not in lines[0]
+
+
+def test_a_text_reply_leaves_the_usage_line_as_before(caplog):
+    """whisper-1 and the plain text shape carry no token counts. The
+    line then holds audio_seconds alone, exactly as it always did."""
+    relay, _ = make_relay(FakeForward(body=b"just the words"))
+    with caplog.at_level(logging.INFO):
+        relay.handle(transcribe_request(audio=ogg_audio(seconds=2.0)))
+    lines = [r.getMessage() for r in caplog.records if r.getMessage().startswith("usage ")]
+    line = json.loads(lines[0].removeprefix("usage "))
+    assert line["audio_seconds"] == 2.0
+    assert "input_tokens" not in line
+
+
+def test_a_duration_usage_block_is_not_mistaken_for_tokens(caplog):
+    """whisper-1's json shape reports duration, not tokens. Reading its
+    seconds as token counts would corrupt the cost report."""
+    reply_body = json.dumps({
+        "text": "words",
+        "usage": {"type": "duration", "seconds": 2.0},
+    }).encode()
+    relay, _ = make_relay(FakeForward(body=reply_body))
+    with caplog.at_level(logging.INFO):
+        relay.handle(transcribe_request(audio=ogg_audio(seconds=2.0)))
+    lines = [r.getMessage() for r in caplog.records if r.getMessage().startswith("usage ")]
+    line = json.loads(lines[0].removeprefix("usage "))
+    assert "input_tokens" not in line
+    assert line["audio_seconds"] == 2.0
+
+
 def test_no_transcribe_log_ever_contains_audio_bytes(caplog):
     audio = ogg_audio()
     relay, _ = make_relay(FakeForward(body=b"the spoken words"))

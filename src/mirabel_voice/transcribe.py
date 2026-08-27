@@ -103,10 +103,13 @@ class Transcriber:
         Raises:
             TranscriptionError: The API call failed.
         """
+        # The json shape, not text: it carries the usage block, which
+        # the relay reads into its log so the cost report can price by
+        # tokens. The text comes out of the same reply either way.
         request = {
             "model": self.model,
             "file": recording.for_upload(),
-            "response_format": "text",
+            "response_format": "json",
         }
         if self.language:
             request["language"] = self.language

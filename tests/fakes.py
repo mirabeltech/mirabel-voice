@@ -15,7 +15,10 @@ class FakeTranscriptionsAPI:
         self.calls.append(kwargs)
         if self.error is not None:
             raise self.error
-        return self.text
+        # The json reply shape: an object with a .text, as the SDK
+        # parses it. The transcriber also accepts a bare string, which
+        # is what the text shape returned before v0.6.4.
+        return SimpleNamespace(text=self.text)
 
 
 class FakeOpenAI:

@@ -70,3 +70,23 @@ def test_an_api_failure_raises_a_transcription_error():
     client = FakeOpenAI(error=RuntimeError("network is down"))
     with pytest.raises(TranscriptionError, match="network is down"):
         Transcriber(client=client).transcribe(a_recording())
+
+
+def test_the_reply_shape_is_json_so_the_relay_can_read_usage():
+    """The json reply carries the usage block. The relay prices
+    dictations from it, so the text shape must never come back."""
+    client = FakeOpenAI()
+    Transcriber(client=client).transcribe(a_recording())
+    assert client.transcriptions.calls[0]["response_format"] == "json"
+
+
+def test_a_plain_string_reply_still_works():
+    """The relay or a provider may answer with the bare text shape.
+    The transcriber must accept both, so no reply is ever dropped."""
+
+    class BareTextAPI(FakeOpenAI):
+        def __init__(self):
+            super().__init__()
+            self.transcriptions.create = lambda **kwargs: "  plain text  "
+
+    assert Transcriber(client=BareTextAPI()).transcribe(a_recording()) == "plain text"

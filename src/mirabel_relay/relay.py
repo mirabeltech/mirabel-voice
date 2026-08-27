@@ -204,6 +204,7 @@ class Relay:
             auth=("authorization", "Bearer " + self.openai_key),
             request=request,
             model=model,
+            usage_from_reply=_transcribe_usage,
             extra_usage={
                 "audio_seconds": round(seconds, 1) if seconds else None
             },
@@ -341,6 +342,30 @@ def _token_usage(body: bytes) -> dict | None:
         return {
             "input_tokens": usage.get("input_tokens"),
             "output_tokens": usage.get("output_tokens"),
+        }
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _transcribe_usage(body: bytes) -> dict | None:
+    """Read the token counts from an OpenAI transcription reply.
+
+    The counts arrive when the app asks for the json reply shape.
+    A plain text reply, or a model that reports duration instead of
+    tokens, gives None, and the usage line then holds audio_seconds
+    alone. The reply's transcript text is never touched: only the
+    numbers leave here.
+    """
+    try:
+        usage = json.loads(body).get("usage") or {}
+        if usage.get("type") != "tokens":
+            return None
+        details = usage.get("input_token_details") or {}
+        return {
+            "input_tokens": usage.get("input_tokens"),
+            "output_tokens": usage.get("output_tokens"),
+            "audio_tokens": details.get("audio_tokens"),
+            "text_tokens": details.get("text_tokens"),
         }
     except Exception:  # noqa: BLE001
         return None
