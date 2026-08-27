@@ -35,6 +35,7 @@ log = logging.getLogger(__name__)
 PASTE_LAST_DELAY_SECONDS = 0.4
 
 STATE_IDLE = "idle"
+STATE_STARTING = "starting"
 STATE_RECORDING = "recording"
 STATE_WORKING = "working"
 STATE_ERROR = "error"
@@ -260,6 +261,10 @@ class VoiceApp:
         # Remember the window we paste into. If it changes, we must not
         # deliver there: that window belongs to somebody else now.
         self._focus_at_start = self._focus()
+        # "Starting" until the microphone is really open. The user starts
+        # to speak the moment anything says "Listening", so that word must
+        # never appear before the capture is live.
+        self._set_state(STATE_STARTING)
         try:
             self.recorder.start()
         except Exception as error:  # noqa: BLE001
@@ -425,9 +430,12 @@ class VoiceApp:
         """
         if self._paste_focus_moved():
             log.warning("The window changed. The text was not pasted.")
+            # Two lines: what happened, then what to do about it. The
+            # panel shows the second line smaller and dimmer; the tray
+            # tooltip carries both.
             self._set_state(
                 STATE_ERROR,
-                "You changed window, so the text was not inserted. "
+                "The text was not inserted - you changed window.\n"
                 "Press the paste-last hotkey to insert it here.",
             )
             self._beep_refused()

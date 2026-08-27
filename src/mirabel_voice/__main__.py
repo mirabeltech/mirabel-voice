@@ -169,6 +169,11 @@ def _show_box(message: str, icon: int) -> None:
 
 def main(argv: list[str] | None = None) -> int:
     """Start the app. Return the process exit code."""
+    # Before any window exists: without this, Windows bitmap-stretches
+    # the panel on every scaled display and the text comes out soft.
+    from .winui import enable_dpi_awareness
+
+    enable_dpi_awareness()
     parser = argparse.ArgumentParser(
         prog="mirabel-voice",
         description="Hold a key, speak, and the text appears in any program.",
@@ -385,6 +390,8 @@ def main(argv: list[str] | None = None) -> int:
         overlay = Overlay()
         if overlay.start():
             app.on_status = overlay.status
+            # The panel's level bars read the microphone through this.
+            overlay.level_source = lambda: app.recorder.level
         else:
             overlay = None
 

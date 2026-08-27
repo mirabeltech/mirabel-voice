@@ -147,15 +147,28 @@ class Recorder:
         self._stream = None
         self._lock = threading.Lock()
         self._max_frames = int(max_seconds * sample_rate)
+        self._level = 0.0
 
     @property
     def is_recording(self) -> bool:
         """Return True while the microphone is open."""
         return self._stream is not None
 
+    @property
+    def level(self) -> float:
+        """How loud the last captured block was, between 0.0 and 1.0.
+
+        The status panel draws this as moving bars. A level that stays
+        at zero while recording tells the user the wrong microphone is
+        selected - faster than any message could.
+        """
+        return self._level if self._stream is not None else 0.0
+
     def _callback(self, indata, frames, time_info, status) -> None:  # noqa: ANN001
         """Store each block of audio that the sound device delivers."""
         block = indata.copy().reshape(-1)
+        if len(block):
+            self._level = float(np.max(np.abs(block))) / 32768.0
         with self._lock:
             if self._collected_frames() >= self._max_frames:
                 return
@@ -173,6 +186,7 @@ class Recorder:
 
         with self._lock:
             self._chunks = []
+        self._level = 0.0
         self._stream = sd.InputStream(
             samplerate=self.sample_rate,
             channels=CHANNELS,

@@ -9,11 +9,13 @@ import numpy as np
 
 from fakes import FakeAnthropic, FakeOpenAI, text_response
 from mirabel_voice import overlay as panel
+from mirabel_voice import palette
 from mirabel_voice.app import (
     INSERTED_PREFIX,
     STATE_ERROR,
     STATE_IDLE,
     STATE_RECORDING,
+    STATE_STARTING,
     STATE_WORKING,
     VoiceApp,
 )
@@ -96,9 +98,30 @@ def test_the_panel_follows_the_whole_cycle():
 
     run_cycle(app)
 
-    assert seen[0] == STATE_RECORDING
+    assert seen[0] == STATE_STARTING
+    assert seen[1] == STATE_RECORDING
     assert STATE_WORKING in seen
     assert seen[-1] == STATE_IDLE
+
+
+def test_listening_appears_only_after_the_microphone_opened():
+    # The user starts to speak the moment "Listening" appears, so the
+    # word must never come before the capture is live.
+    order = []
+    app = make_app()
+    real_start = app.recorder.start
+
+    def slow_start():
+        order.append("mic-opens")
+        real_start()
+
+    app.recorder.start = slow_start
+    app.on_status = lambda state, detail: order.append(state)
+
+    app.start_recording()
+
+    assert order.index("mic-opens") < order.index(STATE_RECORDING)
+    assert order.index(STATE_STARTING) < order.index("mic-opens")
 
 
 def test_the_panel_ships_on():
@@ -146,11 +169,28 @@ def test_listening_and_writing_stay_until_the_state_changes():
     assert panel.status_line(STATE_WORKING, "") == ("Writing your text", 0)
 
 
-def test_a_delivered_dictation_shows_nothing():
-    # The text arriving in the box is the message. A panel saying so too
-    # would be one more thing on screen for no gain.
-    text, _ = panel.status_line(STATE_IDLE, f"{INSERTED_PREFIX}12 words.")
-    assert text == ""
+def test_starting_stays_until_the_microphone_answers():
+    text, milliseconds = panel.status_line(STATE_STARTING, "")
+    assert text == "Starting…"
+    assert milliseconds == 0
+
+
+def test_a_delivered_dictation_flashes_done_and_goes():
+    # One quiet word, briefly. The text on screen is the real answer,
+    # so the flash must be shorter than any note or error.
+    text, milliseconds = panel.status_line(STATE_IDLE, f"{INSERTED_PREFIX}12 words.")
+    assert text == "Done"
+    assert 0 < milliseconds < panel.NOTE_MS
+    assert panel.is_done(STATE_IDLE, text)
+
+
+def test_a_two_line_error_carries_its_hint_line():
+    # What happened on the first line, what to do on the second. The
+    # panel styles the second line smaller and dimmer.
+    detail = "The text was not inserted - you changed window.\nPress the paste-last hotkey to insert it here."
+    text, milliseconds = panel.status_line(STATE_ERROR, detail)
+    assert "\n" in text
+    assert milliseconds == panel.ERROR_MS
 
 
 def test_a_dictation_that_produced_nothing_says_why():
@@ -234,14 +274,14 @@ def test_a_newer_status_cancels_the_timer_of_the_older_one():
     assert overlay.drawn[-1] == ("Listening", STATE_RECORDING)
 
 
-def test_a_delivered_dictation_hides_the_panel():
+def test_a_delivered_dictation_flashes_done_then_hides():
     overlay = make_overlay()
     overlay._apply_status(STATE_WORKING, "")
     overlay._apply_status(STATE_IDLE, f"{INSERTED_PREFIX}9 words.")
-    assert overlay.drawn[-1] == (None, None)
+    assert overlay.drawn[-1] == ("Done", STATE_IDLE)
 
-    # The animation of the state before it was left with a timer in
-    # flight. It must find nothing to do rather than wake the panel up.
+    # The Done timer hides the panel; the stale animation timer of the
+    # working state must find nothing to do rather than wake it up.
     for _, timer in overlay._root.timers:
         timer()
     assert overlay.drawn[-1] == (None, None)
@@ -267,6 +307,45 @@ def test_the_dot_fades_towards_the_background_and_back():
     assert panel.blend(full, panel.BACKGROUND, 1.0) == full
     assert panel.blend(full, panel.BACKGROUND, 0.0) == panel.BACKGROUND
     assert panel.blend(full, panel.BACKGROUND, 0.5) not in (full, panel.BACKGROUND)
+
+
+# --- the theme -------------------------------------------------------------
+
+
+def test_the_panel_follows_the_apps_theme(monkeypatch):
+    monkeypatch.setattr(palette, "apps_use_light_theme", lambda: True)
+    assert palette.panel_palette() == palette.LIGHT
+    monkeypatch.setattr(palette, "apps_use_light_theme", lambda: False)
+    assert palette.panel_palette() == palette.DARK
+
+
+def test_both_themes_carry_every_surface_colour():
+    for theme in (palette.DARK, palette.LIGHT):
+        for value in (
+            theme.background,
+            theme.foreground,
+            theme.border,
+            theme.hint,
+            theme.success,
+        ):
+            assert value.startswith("#") and len(value) == 7
+
+
+def test_the_light_theme_darkens_the_success_green():
+    # The dark theme's green fails the 3:1 contrast floor on a light
+    # surface, so the light theme must not reuse it.
+    assert palette.LIGHT.success != palette.DARK.success
+
+
+def test_a_new_status_rereads_the_theme(monkeypatch):
+    # A theme change must land on the very next message, not at the
+    # next restart.
+    overlay = make_overlay()
+    monkeypatch.setattr(
+        "mirabel_voice.overlay.panel_palette", lambda: palette.LIGHT
+    )
+    overlay._apply_status(STATE_RECORDING, "")
+    assert overlay._pal == palette.LIGHT
 
 
 def test_the_panel_thread_really_starts():

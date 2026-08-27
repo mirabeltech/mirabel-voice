@@ -102,3 +102,17 @@ def test_the_encoder_check_reports_a_broken_codec(monkeypatch):
     ok, message = check_encoder()
     assert ok is False
     assert "nine times more" in message
+
+
+def test_the_level_is_zero_until_a_recording_runs():
+    from mirabel_voice.audio import Recorder
+
+    recorder = Recorder()
+    assert recorder.level == 0.0
+    # The callback stores the loudness of each block; the property
+    # reports it only while the stream is open.
+    recorder._stream = object()
+    recorder._callback(np.array([[8000], [-16000]], dtype=np.int16), 2, None, None)
+    assert 0.4 < recorder.level < 0.6
+    recorder._stream = None
+    assert recorder.level == 0.0

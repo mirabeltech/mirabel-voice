@@ -22,22 +22,21 @@ from .app import (
     STATE_ERROR,
     STATE_IDLE,
     STATE_RECORDING,
+    STATE_STARTING,
     STATE_WORKING,
     VoiceApp,
 )
 from .config import config_dir, config_path
+from .palette import STATE_COLOURS
 
 log = logging.getLogger(__name__)
 
-COLOURS = {
-    STATE_IDLE: (110, 110, 118),
-    STATE_RECORDING: (220, 60, 60),
-    STATE_WORKING: (60, 130, 220),
-    STATE_ERROR: (230, 150, 40),
-}
+# The one set of state colours, shared with the status panel's dot.
+COLOURS = STATE_COLOURS
 
 LABELS = {
     STATE_IDLE: "Ready",
+    STATE_STARTING: "Starting",
     STATE_RECORDING: "Recording",
     STATE_WORKING: "Writing",
     STATE_ERROR: "Error",
