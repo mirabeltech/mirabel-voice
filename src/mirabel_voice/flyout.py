@@ -132,6 +132,7 @@ class Flyout:
         self._capture_listener = None
         self._built_pal = None
         self._shown_at = 0.0
+        self._tick_id = None
         # PortAudio's first enumeration costs hundreds of milliseconds.
         # Pay it here, in the background, so the first click on the tray
         # does not stall the Tk thread and the status pill with it.
@@ -215,6 +216,16 @@ class Flyout:
         self._built_pal = None
         self._hwnd = 0
         if top is not None:
+            # A pending after-callback outlives the widget: it belongs
+            # to the interpreter, not the card. Left alone it would fire
+            # against the next card and stack one more poll chain per
+            # rebuild.
+            if self._tick_id is not None:
+                try:
+                    top.after_cancel(self._tick_id)
+                except Exception:  # noqa: BLE001 - already gone
+                    pass
+                self._tick_id = None
             try:
                 top.destroy()
             except Exception:  # noqa: BLE001 - already dying
@@ -531,12 +542,13 @@ class Flyout:
 
     def _tick(self) -> None:
         """Keep the status row honest while the card is open."""
+        self._tick_id = None
         if self._top is None:
             return
         try:
             if self._top.state() != "withdrawn":
                 self._show_state()
-            self._top.after(400, self._tick)
+            self._tick_id = self._top.after(400, self._tick)
         except Exception:  # noqa: BLE001 - the window is mid-destruction
             pass
 
