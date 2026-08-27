@@ -21,9 +21,10 @@ SAMPLE_WIDTH_BYTES = 2  # 16-bit audio
 CHANNELS = 1
 
 # How long the microphone gets to answer the open call. A USB device
-# waking from suspend takes a second or two; a wedged driver never
-# answers, and dictation must not hang with it.
-OPEN_TIMEOUT_SECONDS = 4.0
+# waking from suspend takes a second or two, and a Bluetooth headset
+# renegotiating its hands-free link can take longer still; a wedged
+# driver never answers, and dictation must not hang with it.
+OPEN_TIMEOUT_SECONDS = 10.0
 
 
 class MicrophoneTimeout(RuntimeError):
