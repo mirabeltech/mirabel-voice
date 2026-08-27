@@ -1,11 +1,16 @@
 """The system tray icon.
 
-The icon colour shows the state:
+The glyph is a monochrome microphone that follows the taskbar theme,
+the way the system network and volume icons do. The state sits in a
+small colour badge in its corner:
 
-* grey - ready
+* no badge - ready
 * red - the microphone is open
 * blue - the transcript is in progress
 * orange - the last cycle failed
+
+The badge changes; the glyph never does. Whole-icon colour swaps read
+as a different app, and a mid-grey disc reads as a dimmed one.
 """
 
 from __future__ import annotations
@@ -27,7 +32,7 @@ from .app import (
     VoiceApp,
 )
 from .config import config_dir, config_path
-from .palette import STATE_COLOURS
+from .palette import STATE_COLOURS, system_uses_light_theme
 
 log = logging.getLogger(__name__)
 
@@ -44,20 +49,121 @@ LABELS = {
 
 ICON_SIZE = 64
 
+# Every shape below is a ratio of the canvas, so the same drawing works
+# at any size the caller asks for.
+SUPERSAMPLE = 4  # draw big, shrink with Lanczos: crisp edges at 16 px
 
-def make_icon_image(state: str):  # noqa: ANN201 - returns a PIL image
-    """Draw a round icon in the colour of the state."""
+# The states that earn a badge. Ready is the absence of one.
+BADGED = (STATE_RECORDING, STATE_WORKING, STATE_ERROR)
+
+# The Mirabel brand disc of the app icon: --color-ocean-600.
+OCEAN_RGB = (2, 132, 199)
+
+
+def _draw_microphone(draw, size: int, colour, stroke: float) -> None:  # noqa: ANN001
+    """Draw the capsule, cradle, and stand at ratios of the canvas."""
+    width = max(round(size * stroke), 1)
+    draw.rounded_rectangle(
+        (size * 0.375, size * 0.094, size * 0.625, size * 0.563),
+        radius=size * 0.125,
+        fill=colour,
+    )
+    draw.arc(
+        (size * 0.219, size * 0.188, size * 0.781, size * 0.75),
+        start=0,
+        end=180,
+        fill=colour,
+        width=width,
+    )
+    draw.line(
+        (size * 0.5, size * 0.75, size * 0.5, size * 0.906),
+        fill=colour,
+        width=width,
+    )
+
+
+def make_icon_image(state: str, light_taskbar: bool | None = None):  # noqa: ANN201
+    """Draw the tray icon: a theme-aware mic, plus the state's badge.
+
+    The taskbar follows the SYSTEM theme, so the glyph is near-black on
+    a light taskbar and white on a dark one. The badge ring matches the
+    taskbar colour, so the badge separates from the glyph at 16 px.
+    """
     from PIL import Image, ImageDraw
 
-    image = Image.new("RGBA", (ICON_SIZE, ICON_SIZE), (0, 0, 0, 0))
+    if light_taskbar is None:
+        light_taskbar = system_uses_light_theme()
+    glyph = (27, 27, 27, 255) if light_taskbar else (255, 255, 255, 255)
+    ring = (243, 243, 243, 255) if light_taskbar else (32, 32, 32, 255)
+
+    size = ICON_SIZE * SUPERSAMPLE
+    image = Image.new("RGBA", (size, size), (0, 0, 0, 0))
     draw = ImageDraw.Draw(image)
-    colour = COLOURS.get(state, COLOURS[STATE_IDLE])
-    draw.ellipse((6, 6, ICON_SIZE - 6, ICON_SIZE - 6), fill=colour + (255,))
-    # A small microphone shape in white.
-    draw.rounded_rectangle((27, 17, 37, 36), radius=5, fill=(255, 255, 255, 255))
-    draw.arc((21, 28, 43, 46), start=0, end=180, fill=(255, 255, 255, 255), width=4)
-    draw.line((32, 44, 32, 50), fill=(255, 255, 255, 255), width=4)
-    return image
+    _draw_microphone(draw, size, glyph, stroke=0.094)
+    if state in BADGED:
+        colour = COLOURS.get(state, COLOURS[STATE_ERROR]) + (255,)
+        centre, radius = size * 0.781, size * 0.2
+        edge = max(round(size * 0.031), 1)
+        draw.ellipse(
+            (
+                centre - radius - edge,
+                centre - radius - edge,
+                centre + radius + edge,
+                centre + radius + edge,
+            ),
+            fill=ring,
+        )
+        draw.ellipse(
+            (centre - radius, centre - radius, centre + radius, centre + radius),
+            fill=colour,
+        )
+    return image.resize((ICON_SIZE, ICON_SIZE), Image.LANCZOS)
+
+
+def make_app_icon(size: int):  # noqa: ANN201 - returns a PIL image
+    """Draw the app icon: the ocean disc with the Mirabel M in the mic.
+
+    The M is knocked out of the capsule at 48 px and up; the small
+    sizes drop it for a clean mic. Per-size detail in one .ico is
+    standard practice - the small entries must stay legible.
+    """
+    from PIL import Image, ImageDraw
+
+    canvas = size * SUPERSAMPLE
+    image = Image.new("RGBA", (canvas, canvas), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(image)
+    disc = OCEAN_RGB + (255,)
+    white = (255, 255, 255, 255)
+    draw.ellipse((canvas * 0.063, canvas * 0.063, canvas * 0.938, canvas * 0.938), fill=disc)
+    stroke = max(round(canvas * 0.07), 1)
+    draw.rounded_rectangle(
+        (canvas * 0.391, canvas * 0.203, canvas * 0.609, canvas * 0.563),
+        radius=canvas * 0.109,
+        fill=white,
+    )
+    if size >= 48:
+        m_width = max(round(canvas * 0.038), 1)
+        points = [
+            (canvas * 0.438, canvas * 0.469),
+            (canvas * 0.438, canvas * 0.352),
+            (canvas * 0.5, canvas * 0.414),
+            (canvas * 0.563, canvas * 0.352),
+            (canvas * 0.563, canvas * 0.469),
+        ]
+        draw.line(points, fill=disc, width=m_width, joint="curve")
+    draw.arc(
+        (canvas * 0.297, canvas * 0.297, canvas * 0.703, canvas * 0.703),
+        start=0,
+        end=180,
+        fill=white,
+        width=stroke,
+    )
+    draw.line(
+        (canvas * 0.5, canvas * 0.703, canvas * 0.5, canvas * 0.797),
+        fill=white,
+        width=stroke,
+    )
+    return image.resize((size, size), Image.LANCZOS)
 
 
 def _picker_command() -> list[str] | None:
@@ -97,14 +203,27 @@ class Tray:
         app._on_state = self.update  # noqa: SLF001 - the tray owns the display
 
     def _title(self) -> str:
-        """Return the text of the icon tooltip."""
+        """Return the text of the icon tooltip.
+
+        Windows caps a tray tooltip at 128 characters and cuts the rest
+        mid-word. The longest error details go past that, so the cut
+        happens here, with an ellipsis, instead of wherever it lands.
+        """
         label = LABELS.get(self.app.state, "Ready")
         hotkey = self.app.config.hotkey
         line = f"Mirabel Voice - {label} (hold {hotkey})"
-        return f"{line}\n{self.detail}" if self.detail else line
+        title = f"{line}\n{self.detail}" if self.detail else line
+        if len(title) > 127:
+            title = title[:126] + "…"
+        return title
 
     def update(self, state: str, detail: str = "") -> None:
-        """Change the icon colour and the tooltip."""
+        """Change the badge and the tooltip.
+
+        The icon is redrawn on every state change, and the drawing reads
+        the taskbar theme each time - so a theme switch lands on the
+        next state change without any listener of its own.
+        """
         self.detail = detail
         if self.icon is None:
             return

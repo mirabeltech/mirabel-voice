@@ -20,8 +20,7 @@ HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent
 sys.path.insert(0, str(ROOT / "src"))
 
-from mirabel_voice.app import STATE_IDLE  # noqa: E402
-from mirabel_voice.tray import make_icon_image  # noqa: E402
+from mirabel_voice.tray import make_app_icon  # noqa: E402
 
 
 def project_version() -> str:
@@ -37,8 +36,9 @@ def project_version() -> str:
 
 COMPANY = "Mirabel Technologies"
 PRODUCT = "Mirabel Voice"
-# Windows picks the size it needs from these.
-ICON_SIZES = [16, 24, 32, 48, 64, 128, 256]
+# Windows picks the size it needs from these. 20 covers the 125% tray
+# slot; 128 and 256 cover large Explorer views and high scaling.
+ICON_SIZES = [16, 20, 24, 32, 48, 64, 128, 256]
 
 VERSION_TEMPLATE = """VSVersionInfo(
   ffi=FixedFileInfo(
@@ -77,12 +77,28 @@ def version_parts(version: str) -> tuple[int, int, int, int]:
     return (numbers[0], numbers[1], numbers[2], 0)
 
 
+def write_icon(icon: Path) -> None:
+    """Write the .ico with a real image drawn at every size.
+
+    Each size is its own drawing, not a downscale of one master: the
+    48 px and larger entries carry the Mirabel M knocked out of the
+    mic, and the small entries drop it to stay legible. Handing PIL a
+    single image with a sizes list would throw that difference away.
+    """
+    images = [make_app_icon(size) for size in ICON_SIZES]
+    # The sizes list must be explicit: PIL's default list has no 20 px
+    # entry and silently drops a frame whose size it does not expect.
+    images[-1].save(
+        icon,
+        format="ICO",
+        append_images=images[:-1],
+        sizes=[(size, size) for size in ICON_SIZES],
+    )
+
+
 def main() -> int:
     """Write both files and return the process exit code."""
-    icon = HERE / "MirabelVoice.ico"
-    make_icon_image(STATE_IDLE).save(
-        icon, format="ICO", sizes=[(s, s) for s in ICON_SIZES]
-    )
+    write_icon(HERE / "MirabelVoice.ico")
 
     version = project_version()
     resource = HERE / "version_info.txt"
