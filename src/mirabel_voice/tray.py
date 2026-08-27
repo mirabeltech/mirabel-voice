@@ -124,15 +124,16 @@ class Tray:
                 self._sign_in,
                 visible=lambda _: self.app.signin is not None,
             ),
-            self._cleanup_item(),
             pystray.MenuItem(
                 "Language",
                 pystray.Menu(
                     *[self._language_item(label, code) for code, label in LANGUAGES],
                     self._language_item("Detect automatically", None),
+                    pystray.Menu.SEPARATOR,
+                    self._translate_item(),
                 ),
             ),
-            self._translate_item(),
+            self._microphone_menu(),
             pystray.MenuItem(
                 "Check for updates",
                 self._check_updates,
@@ -163,21 +164,46 @@ class Tray:
             radio=True,
         )
 
-    def _cleanup_item(self):  # noqa: ANN202
-        """The checkable entry that turns the Claude cleanup on or off.
+    def _microphone_menu(self):  # noqa: ANN202
+        """The submenu that picks the microphone.
 
-        Translation lives in the cleanup pass, so while translate is on
-        the pass always runs: the checkmark shows that, and the entry
-        greys out rather than pretend a click could change it.
+        The entries are built each time the menu refreshes, so a
+        microphone plugged in after the start still appears. Windows
+        reports every device once per audio API; WASAPI lists each
+        active device once, under its full name, so when WASAPI
+        entries exist only those are shown.
         """
         import pystray
 
+        def entries():
+            from .audio import list_input_devices
+
+            try:
+                devices = list_input_devices()
+            except Exception:  # noqa: BLE001 - a broken listing must not kill the menu
+                log.exception("The microphones could not be listed.")
+                devices = []
+            wasapi = [d for d in devices if d.get("hostapi") == "Windows WASAPI"]
+            yield self._microphone_item("System default", None)
+            for device in wasapi or devices:
+                yield self._microphone_item(device["name"], device["index"])
+
+        return pystray.MenuItem("Microphone", pystray.Menu(entries))
+
+    def _microphone_item(self, label: str, index):  # noqa: ANN001, ANN202
+        """One radio entry of the Microphone submenu."""
+        import pystray
+
+        # A closure for the same reason as the language items: pystray
+        # calls the action as action(icon, item).
+        def choose(icon, item):  # noqa: ANN001, ARG001
+            self.app.set_input_device(index)
+
         return pystray.MenuItem(
-            "Clean up with Claude",
-            self._toggle_cleanup,
-            checked=lambda _: self.app.config.cleanup_enabled
-            or self.app.config.translate_to_english,
-            enabled=lambda _: not self.app.config.translate_to_english,
+            label,
+            choose,
+            checked=lambda _, index=index: self.app.config.input_device == index,
+            radio=True,
         )
 
     def _translate_item(self):  # noqa: ANN202
@@ -215,11 +241,6 @@ class Tray:
         threading.Thread(
             target=run, name="mirabel-voice-signin", daemon=True
         ).start()
-
-    def _toggle_cleanup(self) -> None:
-        """Switch the Claude cleanup on or off and save the setting."""
-        self.app.config.cleanup_enabled = not self.app.config.cleanup_enabled
-        self.app.config.save()
 
     def _copy_last(self) -> None:
         """Put the last dictated text on the clipboard."""

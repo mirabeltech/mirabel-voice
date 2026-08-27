@@ -22,6 +22,7 @@ class FakeApp:
             relay_token=None,
             cleanup_enabled=True,
             translate_to_english=False,
+            input_device=None,
             hotkey="insert",
         )
         self.signin = None
@@ -29,6 +30,7 @@ class FakeApp:
         self.last_text = ""
         self.chosen = []
         self.translated = []
+        self.devices = []
 
     def set_language(self, code):
         self.chosen.append(code)
@@ -37,6 +39,10 @@ class FakeApp:
     def set_translate(self, on):
         self.translated.append(on)
         self.config.translate_to_english = on
+
+    def set_input_device(self, index):
+        self.devices.append(index)
+        self.config.input_device = index
 
 
 def test_clicking_a_language_entry_reaches_set_language():
@@ -82,21 +88,63 @@ def test_the_translate_entry_shows_its_state():
     assert item.checked
 
 
-def test_translate_on_shows_the_cleanup_as_running_and_locked():
-    # Translation lives in the cleanup pass, so with translate on the
-    # pass always runs. The cleanup entry must say so, not show an
-    # unchecked box whose click would change nothing.
-    app = FakeApp()
-    app.config.cleanup_enabled = False
-    app.config.translate_to_english = True
-    item = Tray(app=app)._cleanup_item()
-    assert item.checked
-    assert not item.enabled
+def test_the_cleanup_toggle_is_gone_and_translate_lives_under_language():
+    """v0.6.4 cut the cleanup toggle - with translate on it sat greyed
+    and looked unchecked - and moved translate into the Language menu,
+    where the two settings that shape the text sit together."""
+    menu = Tray(app=FakeApp())._menu()
+    top = [str(item.text) for item in menu.items]
+    assert "Clean up with Claude" not in top
+    assert "Translate to English" not in top
+    language = next(item for item in menu.items if str(item.text) == "Language")
+    inner = [str(item.text) for item in language.submenu.items]
+    assert "Translate to English" in inner
 
 
-def test_translate_off_gives_the_cleanup_entry_back():
-    app = FakeApp()
-    app.config.cleanup_enabled = False
-    item = Tray(app=app)._cleanup_item()
-    assert not item.checked
-    assert item.enabled
+def test_clicking_a_microphone_reaches_set_input_device():
+    tray = Tray(app=FakeApp())
+    item = tray._microphone_item("Blue Yeti", 5)
+    item(None)
+    assert tray.app.devices == [5]
+    assert tray.app.config.input_device == 5
+
+
+def test_system_default_passes_none():
+    tray = Tray(app=FakeApp())
+    item = tray._microphone_item("System default", None)
+    item(None)
+    assert tray.app.devices == [None]
+
+
+def test_the_chosen_microphone_shows_as_chosen():
+    tray = Tray(app=FakeApp())
+    yeti = tray._microphone_item("Blue Yeti", 5)
+    default = tray._microphone_item("System default", None)
+    yeti(None)
+    assert yeti.checked
+    assert not default.checked
+
+
+def test_the_microphone_menu_shows_each_device_once(monkeypatch):
+    """Windows lists a microphone once per audio API. The menu keeps
+    the WASAPI entries, which carry full names, and drops the rest."""
+    monkeypatch.setattr(
+        "mirabel_voice.audio.list_input_devices",
+        lambda: [
+            {"index": 1, "name": "Microphone (Blue Yeti", "channels": 2, "hostapi": "MME"},
+            {"index": 5, "name": "Microphone (Blue Yeti)", "channels": 2, "hostapi": "Windows WASAPI"},
+        ],
+    )
+    submenu = Tray(app=FakeApp())._microphone_menu().submenu
+    labels = [str(item.text) for item in submenu.items]
+    assert labels == ["System default", "Microphone (Blue Yeti)"]
+
+
+def test_a_broken_device_listing_still_offers_the_default(monkeypatch):
+    def boom():
+        raise RuntimeError("no sound device")
+
+    monkeypatch.setattr("mirabel_voice.audio.list_input_devices", boom)
+    submenu = Tray(app=FakeApp())._microphone_menu().submenu
+    labels = [str(item.text) for item in submenu.items]
+    assert labels == ["System default"]

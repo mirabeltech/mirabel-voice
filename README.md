@@ -83,7 +83,7 @@ A small panel appears near the bottom of your screen while this happens. It says
 
 When a dictation produces nothing, the panel says why instead of vanishing: too short, no sound, nothing heard.
 
-The icon near your clock shows the same thing in colour: **grey** ready, **red** listening, **blue** writing, **orange** something went wrong. Right-click it to pick your language, turn translation to English on, turn the tidying off, check for updates, copy the last text, change your dictation key, open the settings folder, or quit.
+The icon near your clock shows the same thing in colour: **grey** ready, **red** listening, **blue** writing, **orange** something went wrong. Right-click it to pick your language, turn translation to English on, pick your microphone, check for updates, copy the last text, change your dictation key, open the settings folder, or quit.
 
 To turn the panel off, set `"show_status": false` in `config.json` (right-click the icon, **Open the settings folder**).
 

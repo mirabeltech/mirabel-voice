@@ -34,7 +34,7 @@ Phase 1: Tommy, a few days. Phase 2: 3–5 coworkers. Success: pilots still use 
 | Cancel recording | `Esc` | Discards audio, nothing is sent |
 | Paste last transcript | `Shift+Alt+Z` | Safety net if a paste lands wrong |
 
-Tray icon states: grey ready, red recording, blue processing, orange error. Menu: cleanup on/off, copy last text, open settings folder, quit.
+Tray icon states: grey ready, red recording, blue processing, orange error. Menu: language (with translate to English), microphone, copy last text, open settings folder, quit. Cleanup on/off is a config-file setting since v0.6.4, not a menu item.
 
 ## Pipeline
 

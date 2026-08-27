@@ -365,6 +365,17 @@ def test_switching_language_needs_no_restart(monkeypatch, tmp_path):
     assert Config.load().language == "hi"  # and the next start agrees
 
 
+def test_switching_microphone_needs_no_restart(monkeypatch, tmp_path):
+    """The tray switch must reach the very next recording."""
+    app = language_app(monkeypatch, tmp_path)
+    app.set_input_device(5)
+    assert app.recorder.device == 5
+    assert Config.load().input_device == 5  # and the next start agrees
+    app.set_input_device(None)
+    assert app.recorder.device is None
+    assert Config.load().input_device is None
+
+
 def test_switching_translate_needs_no_restart(monkeypatch, tmp_path):
     """The tray switch must reach the very next dictation."""
     app = language_app(monkeypatch, tmp_path)

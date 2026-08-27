@@ -206,17 +206,25 @@ class Recorder:
 
 
 def list_input_devices() -> list[dict]:
-    """Return the microphones that Windows reports."""
+    """Return the microphones that Windows reports.
+
+    Windows reports each microphone once per audio API, so the same
+    device appears several times. The hostapi name says which listing
+    an entry belongs to; the tray uses it to show each device once.
+    """
     import sounddevice as sd
 
+    apis = [api.get("name", "") for api in sd.query_hostapis()]
     devices = []
     for index, info in enumerate(sd.query_devices()):
         if info.get("max_input_channels", 0) > 0:
+            api = info.get("hostapi", -1)
             devices.append(
                 {
                     "index": index,
                     "name": info.get("name", ""),
                     "channels": info["max_input_channels"],
+                    "hostapi": apis[api] if 0 <= api < len(apis) else "",
                 }
             )
     return devices

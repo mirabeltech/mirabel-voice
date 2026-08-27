@@ -150,6 +150,19 @@ class VoiceApp:
         log.info("The dictation language is now %s.", chosen)
         self._set_state(self.state, f"Language: {chosen}.")
 
+    def set_input_device(self, index: int | None) -> None:
+        """Switch the microphone, for the very next recording.
+
+        The recorder reads its device when the stream opens, so the
+        switch needs no restart. None means the system default.
+        """
+        self.config.input_device = index
+        self.recorder.device = index
+        self.config.save()
+        chosen = "the system default" if index is None else f"device {index}"
+        log.info("The microphone is now %s.", chosen)
+        self._set_state(self.state, "Microphone changed.")
+
     def set_translate(self, on: bool) -> None:
         """Switch the translation to English, for the very next dictation.
 

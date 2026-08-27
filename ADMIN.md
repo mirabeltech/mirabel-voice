@@ -238,6 +238,6 @@ A minute of speech costs about **$0.0088**: $0.006 for the transcription (`gpt-4
 | 30 minutes | $5.81 |
 | 60 minutes | $11.62 |
 
-To cut the cost further, right-click the icon near the clock and turn off **Clean up with Claude**. That saves $0.0028 a minute, about a third of the total. (It has no effect for someone using **Translate to English** — translation happens in that same cleanup pass, so the pass keeps running.)
+The Claude cleanup can be turned off by setting `cleanup_enabled` to `false` in `%APPDATA%\MirabelVoice\config.json`, which saves $0.0028 a minute, about a third of the total. It stopped being a tray item in v0.6.4: nobody in the pilot ever turned it off, and without the cleanup the app is a plain transcriber. (The setting has no effect for someone using **Translate to English** — translation happens in that same cleanup pass, so the pass keeps running.)
 
 For comparison, Wispr Flow Pro costs $15 a person a month, or $12 billed annually.
