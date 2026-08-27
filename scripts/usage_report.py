@@ -22,7 +22,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import deploy_relay
-from deploy_relay import DEFAULT_REGION, FUNCTION, Stop, say
+from deploy_relay import DEFAULT_REGION, FUNCTION, SMOKE_HOLDER, Stop, say
 
 LOG_GROUP = f"/aws/lambda/{FUNCTION}"
 PRICES = Path(__file__).resolve().parent.parent / "docs" / "pricing.json"
@@ -129,12 +129,17 @@ def report(people: dict, prices: dict, days: int) -> None:
     totals = {"dictations": 0, "minutes": 0.0, "transcribe_cost": 0.0, "cleanup_cost": 0.0}
     unpriced: set = set()
     refused = 0
+    smoke_cost = None
     for who in sorted(people):
         person = people[who]
         refused += person["refused"]
         unpriced |= {m for m in person["unpriced"] if m}
         if who == "-":
             # Refused calls have no holder and cost nothing.
+            continue
+        if who == SMOKE_HOLDER:
+            # The deploy's own test calls: real spend, but not a person.
+            smoke_cost = person["transcribe_cost"] + person["cleanup_cost"]
             continue
         cost = person["transcribe_cost"] + person["cleanup_cost"]
         say(
@@ -156,6 +161,8 @@ def report(people: dict, prices: dict, days: int) -> None:
     say()
     if totals["dictations"]:
         say(f"That is ${grand / totals['dictations']:.4f} a dictation.")
+    if smoke_cost is not None:
+        say(f"Deploy smoke tests spent ${smoke_cost:.4f} on top; the table leaves them out.")
     failed = sum(p["failed"] for p in people.values())
     if failed:
         say(f"{failed} request(s) came back as an error.")

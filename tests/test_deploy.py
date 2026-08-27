@@ -102,6 +102,23 @@ def test_every_token_is_long_enough_to_be_unguessable():
     assert setup_relay.TOKEN_LENGTH >= 24
 
 
+def test_the_smoke_test_reuses_its_own_token():
+    tokens = {"token-aaa": "tommy", "token-bbb": deploy_relay.SMOKE_HOLDER}
+    token, changed = deploy_relay.smoke_token_from(tokens)
+    assert token == "token-bbb"
+    assert changed is None
+
+
+def test_the_smoke_test_never_borrows_a_persons_token():
+    """A deploy's test calls must not be charged to a person in the
+    usage report, so a list without a smoke token grows one."""
+    token, changed = deploy_relay.smoke_token_from({"token-aaa": "tommy"})
+    assert token != "token-aaa"
+    assert changed["token-aaa"] == "tommy"
+    assert changed[token] == deploy_relay.SMOKE_HOLDER
+    assert len(token) >= 24
+
+
 SECRET_NAMES = {
     "MIRABEL_OPENAI_SECRET",
     "MIRABEL_ANTHROPIC_SECRET",

@@ -46,6 +46,10 @@ OPENAI_SECRET = "mirabel-voice/openai"
 ANTHROPIC_SECRET = "mirabel-voice/anthropic"
 TOKENS_SECRET = "mirabel-voice/tokens"
 
+# The smoke test's own holder name. Its calls must never land on a
+# person's token, or the usage report charges deploys to that person.
+SMOKE_HOLDER = "Smoke test"
+
 SOURCE = Path(__file__).resolve().parent.parent / "src" / "mirabel_relay"
 PACKAGED = ("__init__.py", "relay.py", "handler.py", "signin.py")
 
@@ -594,7 +598,7 @@ def smoke_test(session, url: str, expect_endorsement: bool = False) -> int:
     """Prove the deployed relay works, and measure how fast it answers."""
     say()
     say("Smoke test")
-    token = _a_real_token(session)
+    token = _smoke_token(session)
 
     refused, _ = _call(
         url, "/v1/messages", "not-a-token",
@@ -655,14 +659,31 @@ def smoke_test(session, url: str, expect_endorsement: bool = False) -> int:
     return 0 if ok else 1
 
 
-def _a_real_token(session) -> str:
-    """Borrow one token from the list, to prove the door opens."""
+def smoke_token_from(tokens: dict[str, str]) -> tuple[str, dict[str, str] | None]:
+    """Return the smoke test's token, minting one when the list lacks it.
+
+    The second value is the new token list to write back, or None when
+    the list already held one. The smoke test used to borrow the first
+    person's token, which charged every deploy's test calls to that
+    person in the usage report.
+    """
+    import secrets
+
+    for token, holder in tokens.items():
+        if holder == SMOKE_HOLDER:
+            return token, None
+    minted = secrets.token_urlsafe(24)
+    return minted, {**tokens, minted: SMOKE_HOLDER}
+
+
+def _smoke_token(session) -> str:
+    """Fetch the smoke test's token, creating it on first use."""
     from botocore.exceptions import ClientError
 
-    secrets = session.client("secretsmanager")
+    client = session.client("secretsmanager")
     try:
         held = _attempt(
-            "reading the token list", secrets.get_secret_value, SecretId=TOKENS_SECRET
+            "reading the token list", client.get_secret_value, SecretId=TOKENS_SECRET
         )
     except ClientError as failure:
         if failure.response["Error"]["Code"] == "ResourceNotFoundException":
@@ -671,8 +692,16 @@ def _a_real_token(session) -> str:
                 "token to test with.\nRun:  python scripts/setup_relay.py"
             ) from failure
         raise
-    tokens = json.loads(held["SecretString"])
-    return next(iter(tokens))
+    token, changed = smoke_token_from(json.loads(held["SecretString"]))
+    if changed is not None:
+        _attempt(
+            "adding the smoke-test token",
+            client.put_secret_value,
+            SecretId=TOKENS_SECRET,
+            SecretString=json.dumps(changed, indent=2, sort_keys=True),
+        )
+        say(f"  A token for '{SMOKE_HOLDER}' was added to the list.")
+    return token
 
 
 if __name__ == "__main__":

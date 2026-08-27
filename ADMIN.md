@@ -199,6 +199,8 @@ It reads the relay's own usage lines out of CloudWatch and adds them up per pers
 
 The rates live in `docs/pricing.json`. They are rates, not measurements, so check them against the provider pricing pages before you quote a number to anybody. A model with no price listed is reported at the bottom rather than counted as free.
 
+The deploy's smoke test makes real calls, and those used to be charged to whichever person's token the script borrowed first — numbers before August 2026 carry that noise. The smoke test now holds its own token, named **Smoke test** in the token list (the first deploy after this change mints it). The report keeps its spend out of the per-person table and prints it as a footnote instead. If the wizard is ever used to remove that holder, the next deploy simply mints a new one.
+
 Refused requests appear as a count with no name attached, which is what a wrong or withdrawn token looks like from the relay's side. A few are normal, because the app's warm-up pings reach the relay before any dictation does. A run of them from nowhere is worth a look.
 
 ## Rotating a key on a machine that still holds keys
