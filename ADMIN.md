@@ -199,6 +199,8 @@ It reads the relay's own usage lines out of CloudWatch and adds them up per pers
 
 The rates live in `docs/pricing.json`. They are rates, not measurements, so check them against the provider pricing pages before you quote a number to anybody. A model with no price listed is reported at the bottom rather than counted as free.
 
+A dictation from a v0.6.4 machine carries its real token counts and is priced from them — audio in, prompt text in, transcript out, which is what OpenAI actually bills. An older line is priced by audio minutes alone, which misses the text tokens and understates it. The report's footer says how many of each went into the numbers; treat a mostly-minutes report as a floor, not a total. Before quoting a month to anybody, compare the report against the OpenAI dashboard's own billing page once — the audio token rate in pricing.json is derived from OpenAI's published per-minute estimate, and one invoice settles it.
+
 The deploy's smoke test makes real calls, and those used to be charged to whichever person's token the script borrowed first — numbers before August 2026 carry that noise. The smoke test now holds its own token, named **Smoke test** in the token list (the first deploy after this change mints it). The report keeps its spend out of the per-person table and prints it as a footnote instead. If the wizard is ever used to remove that holder, the next deploy simply mints a new one.
 
 Refused requests appear as a count with no name attached, which is what a wrong or withdrawn token looks like from the relay's side. A few are normal, because the app's warm-up pings reach the relay before any dictation does. A run of them from nowhere is worth a look.

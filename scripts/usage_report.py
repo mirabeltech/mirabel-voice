@@ -76,8 +76,16 @@ def read_usage(session, days: int) -> list[dict]:
 
 
 def summarize(lines: list[dict], prices: dict) -> dict:
-    """Add the lines up per person."""
+    """Add the lines up per person.
+
+    A transcribe line that carries token counts (v0.6.4 and later) is
+    priced from the token rates, which is what OpenAI actually bills:
+    audio in, prompt text in, transcript out. An older line without
+    counts is priced by audio minutes, which misses the text tokens
+    and understates the cost.
+    """
     per_minute = prices["transcribe_per_minute"]
+    per_token = prices.get("transcribe_per_million_tokens", {})
     per_million = prices["cleanup_per_million_tokens"]
     people: dict[str, dict] = {}
     for line in lines:
@@ -85,9 +93,10 @@ def summarize(lines: list[dict], prices: dict) -> dict:
         person = people.setdefault(
             who,
             {
-                "dictations": 0, "minutes": 0.0, "input_tokens": 0,
-                "output_tokens": 0, "refused": 0, "failed": 0,
-                "transcribe_cost": 0.0, "cleanup_cost": 0.0, "unpriced": set(),
+                "dictations": 0, "token_priced": 0, "minutes": 0.0,
+                "input_tokens": 0, "output_tokens": 0, "refused": 0,
+                "failed": 0, "transcribe_cost": 0.0, "cleanup_cost": 0.0,
+                "unpriced": set(),
             },
         )
         outcome = line.get("outcome")
@@ -101,11 +110,18 @@ def summarize(lines: list[dict], prices: dict) -> dict:
             person["dictations"] += 1
             minutes = (line.get("audio_seconds") or 0) / 60
             person["minutes"] += minutes
-            rate = per_minute.get(model)
-            if rate is None:
-                person["unpriced"].add(model)
+            token_rate = per_token.get(model)
+            if line.get("audio_tokens") is not None and token_rate is not None:
+                person["token_priced"] += 1
+                person["transcribe_cost"] += (
+                    (line.get("audio_tokens") or 0) / 1e6 * token_rate["audio"]
+                    + (line.get("text_tokens") or 0) / 1e6 * token_rate["text"]
+                    + (line.get("output_tokens") or 0) / 1e6 * token_rate["output"]
+                )
+            elif model in per_minute:
+                person["transcribe_cost"] += minutes * per_minute[model]
             else:
-                person["transcribe_cost"] += minutes * rate
+                person["unpriced"].add(model)
         elif line.get("route") == "cleanup":
             person["input_tokens"] += line.get("input_tokens") or 0
             person["output_tokens"] += line.get("output_tokens") or 0
@@ -126,7 +142,10 @@ def report(people: dict, prices: dict, days: int) -> None:
     say("=" * 78)
     say(f"{'Person':<24}{'Dictations':>11}{'Minutes':>9}{'Transcribe':>12}{'Cleanup':>10}{'Total':>10}")
     say("-" * 78)
-    totals = {"dictations": 0, "minutes": 0.0, "transcribe_cost": 0.0, "cleanup_cost": 0.0}
+    totals = {
+        "dictations": 0, "token_priced": 0, "minutes": 0.0,
+        "transcribe_cost": 0.0, "cleanup_cost": 0.0,
+    }
     unpriced: set = set()
     refused = 0
     smoke_cost = None
@@ -161,6 +180,11 @@ def report(people: dict, prices: dict, days: int) -> None:
     say()
     if totals["dictations"]:
         say(f"That is ${grand / totals['dictations']:.4f} a dictation.")
+        say(
+            f"{totals['token_priced']} of {totals['dictations']} dictations "
+            "carried token counts and are priced exactly; the rest are "
+            "priced by audio minutes, which understates them."
+        )
     if smoke_cost is not None:
         say(f"Deploy smoke tests spent ${smoke_cost:.4f} on top; the table leaves them out.")
     failed = sum(p["failed"] for p in people.values())

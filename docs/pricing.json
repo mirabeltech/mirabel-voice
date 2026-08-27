@@ -1,11 +1,15 @@
 {
-  "_comment": "What the relay's usage lines are priced at. Check these against the provider pricing pages before you trust a report; they are rates, not measurements. Anthropic: https://www.anthropic.com/pricing  OpenAI: https://openai.com/api/pricing",
-  "checked": "2026-08-26",
+  "_comment": "What the relay's usage lines are priced at. Check these against the provider pricing pages before you trust a report; they are rates, not measurements. A transcribe line from v0.6.4 or later carries token counts and is priced from transcribe_per_million_tokens; older lines are priced from transcribe_per_minute. The audio token rate is derived: OpenAI's table publishes text input, output, and an estimated per-minute cost, and that estimate equals the audio rate at their nominal 1000 audio tokens a minute ($6/M -> $0.006/min, $3/M -> $0.003/min). Anthropic: https://www.anthropic.com/pricing  OpenAI: https://openai.com/api/pricing",
+  "checked": "2026-08-27",
   "transcribe_per_minute": {
     "gpt-4o-transcribe": 0.006,
     "gpt-4o-mini-transcribe": 0.003,
     "gpt-live-transcribe": 0.017,
     "whisper-1": 0.006
+  },
+  "transcribe_per_million_tokens": {
+    "gpt-4o-transcribe": {"audio": 6.0, "text": 2.5, "output": 10.0},
+    "gpt-4o-mini-transcribe": {"audio": 3.0, "text": 1.25, "output": 5.0}
   },
   "cleanup_per_million_tokens": {
     "claude-haiku-4-5": {"input": 1.0, "output": 5.0}
