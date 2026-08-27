@@ -82,17 +82,35 @@ def _draw_microphone(draw, size: int, colour, stroke: float) -> None:  # noqa: A
     )
 
 
+# There are only eight possible tray images (four badge looks, two
+# taskbar themes). Drawing one costs a supersampled render, and pystray
+# re-serializes every assigned image through a temp file - so each look
+# is drawn once and reused, and update() skips identical assignments.
+_ICON_CACHE: dict = {}
+
+
 def make_icon_image(state: str, light_taskbar: bool | None = None):  # noqa: ANN201
-    """Draw the tray icon: a theme-aware mic, plus the state's badge.
+    """Return the tray icon: a theme-aware mic, plus the state's badge.
 
     The taskbar follows the SYSTEM theme, so the glyph is near-black on
     a light taskbar and white on a dark one. The badge ring matches the
     taskbar colour, so the badge separates from the glyph at 16 px.
+    Identical (badge, theme) pairs return the same cached image object.
     """
-    from PIL import Image, ImageDraw
-
     if light_taskbar is None:
         light_taskbar = system_uses_light_theme()
+    badge = state if state in BADGED else STATE_IDLE
+    key = (badge, light_taskbar)
+    cached = _ICON_CACHE.get(key)
+    if cached is None:
+        cached = _ICON_CACHE[key] = _draw_icon(badge, light_taskbar)
+    return cached
+
+
+def _draw_icon(state: str, light_taskbar: bool):  # noqa: ANN201
+    """Draw one tray image. make_icon_image caches the results."""
+    from PIL import Image, ImageDraw
+
     glyph = (27, 27, 27, 255) if light_taskbar else (255, 255, 255, 255)
     ring = (243, 243, 243, 255) if light_taskbar else (32, 32, 32, 255)
 
@@ -197,6 +215,7 @@ class Tray:
         self.flyout = flyout
         self.icon = None
         self.detail = ""
+        self._last_image = None
         # None outside the installed bundle, and the menu item hides.
         self.updater = Updater.discover(
             endorsement=endorsement_for(app.config, app.signin)
@@ -221,14 +240,20 @@ class Tray:
     def update(self, state: str, detail: str = "") -> None:
         """Change the badge and the tooltip.
 
-        The icon is redrawn on every state change, and the drawing reads
+        The image is re-picked on every state change, and the pick reads
         the taskbar theme each time - so a theme switch lands on the
-        next state change without any listener of its own.
+        next state change without any listener of its own. The icon is
+        only re-assigned when the image really changed: assignment makes
+        pystray re-serialize the icon through a temp file, and this runs
+        synchronously in the press-to-microphone gap.
         """
         self.detail = detail
         if self.icon is None:
             return
-        self.icon.icon = make_icon_image(state)
+        image = make_icon_image(state)
+        if image is not self._last_image:
+            self.icon.icon = image
+            self._last_image = image
         self.icon.title = self._title()
 
     def _menu(self):  # noqa: ANN202
@@ -474,9 +499,10 @@ class Tray:
         """Show the icon and block until the user quits."""
         import pystray
 
+        self._last_image = make_icon_image(self.app.state)
         self.icon = pystray.Icon(
             "mirabel_voice",
-            icon=make_icon_image(self.app.state),
+            icon=self._last_image,
             title=self._title(),
             menu=self._menu(),
         )

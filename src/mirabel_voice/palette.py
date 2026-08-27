@@ -81,7 +81,9 @@ def _light_theme_value(name: str) -> bool:
         with key:
             value, _ = winreg.QueryValueEx(key, name)
         return bool(value)
-    except OSError:
+    except (OSError, ImportError):
+        # ImportError covers a Python without winreg at all.
+        log.debug("The %s theme value could not be read.", name, exc_info=True)
         return True
 
 

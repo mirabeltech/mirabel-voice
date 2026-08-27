@@ -423,8 +423,12 @@ class VoiceApp:
         self._paste_thread.start()
 
     def cancel_recording(self) -> None:
-        """Throw away the current recording."""
-        if self.state != STATE_RECORDING:
+        """Throw away the current recording.
+
+        Starting counts too: a cancel that lands while the microphone
+        is still opening must not leave the cycle stuck.
+        """
+        if self.state not in (STATE_STARTING, STATE_RECORDING):
             return
         self.recorder.cancel()
         self._set_state(STATE_IDLE, "Cancelled.")
@@ -584,6 +588,10 @@ class VoiceApp:
 
     def stop(self) -> None:
         """Stop the hotkey listener and close the microphone."""
+        # A suspend must not survive the stop: a key capture that ends
+        # after the quit would otherwise restart the keyboard hook on a
+        # dead app.
+        self._hotkeys_suspended = False
         if self._listener is not None:
             self._listener.stop()
             self._listener = None

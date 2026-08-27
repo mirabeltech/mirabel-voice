@@ -384,6 +384,10 @@ def main(argv: list[str] | None = None) -> int:
 
     from .tray import Tray
 
+    # The hotkey listener first: dictation must not wait the ~150 ms
+    # the Tkinter thread takes to come up.
+    app.start()
+
     # The overlay thread is the app's one Tkinter thread. The controls
     # flyout needs it even when the status panel is turned off, so it
     # starts whenever Tkinter exists; show_status only decides whether
@@ -405,7 +409,6 @@ def main(argv: list[str] | None = None) -> int:
 
     tray = Tray(app, flyout=flyout)
     _start_update_watch(app, tray)
-    app.start()
     try:
         tray.run()
     finally:

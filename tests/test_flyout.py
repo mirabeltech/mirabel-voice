@@ -300,3 +300,82 @@ def test_the_card_really_builds_and_shows():
         flyout.hide()
     finally:
         overlay.stop()
+
+
+# --- the review repairs ------------------------------------------------------
+
+
+def test_capture_is_refused_while_a_recording_runs():
+    # The listener carries the only stop for a live recording; tearing
+    # it down mid-recording would strand the microphone open.
+    flyout = card.Flyout(FakeOverlay(), FakeApp())
+    flyout.app.state = "recording"
+    hints = []
+    flyout._widgets = {
+        "hint": SimpleNamespace(configure=lambda **kwargs: hints.append(kwargs)),
+    }
+    flyout._begin_capture()
+    assert not flyout._capturing
+    assert flyout.app.suspended == 0
+    assert hints  # the card said why
+
+
+def test_a_dead_card_still_gives_the_keyboard_back():
+    # The hotkeys must come back even when the widgets died while the
+    # capture waited - a KeyError here used to leave dictation dead.
+    flyout = card.Flyout(FakeOverlay(), FakeApp())
+    flyout._capturing = True
+    flyout._widgets = {}
+    flyout._end_capture(None)
+    assert flyout.app.resumed == 1
+
+
+def test_a_second_delivery_does_not_end_the_capture_twice():
+    flyout = capture_flyout()
+    flyout._end_capture(None)
+    flyout._end_capture("f13")  # a late duplicate delivery
+    assert flyout.app.resumed == 1
+    assert flyout.app.hotkeys == []
+
+
+def test_the_microphone_choices_keep_name_and_index_together():
+    # The same name often exists under several audio APIs with
+    # different indexes; resolving a bare name against the full list
+    # saved the wrong backend.
+    devices = [
+        {"index": 1, "name": "Krisp Microphone", "hostapi": "MME"},
+        {"index": 9, "name": "Krisp Microphone", "hostapi": "Windows DirectSound"},
+        {"index": 21, "name": "Krisp Microphone", "hostapi": "Windows WASAPI"},
+    ]
+    assert card.microphone_choices(devices) == [
+        (card.SYSTEM_DEFAULT, None),
+        ("Krisp Microphone", 21),
+    ]
+
+
+def test_stopping_the_app_clears_a_pending_suspend(monkeypatch, tmp_path):
+    # A key capture that ends after the quit must not restart the
+    # keyboard hook on a dead app.
+    from mirabel_voice.app import VoiceApp
+    from mirabel_voice.config import Config
+
+    monkeypatch.setenv("MIRABEL_VOICE_HOME", str(tmp_path))
+    app = VoiceApp.__new__(VoiceApp)
+    app.config = Config(play_sounds=False)
+    app.state = "idle"
+    app._on_state = None
+    app.on_status = None
+    app._listener = None
+    app._dispatch_thread = None
+    app._hotkeys_suspended = True
+    app.recorder = SimpleNamespace(is_recording=False, cancel=lambda: None)
+
+    app.stop()
+    assert app._hotkeys_suspended is False
+
+    made = []
+    app._make_listener = lambda: made.append(True) or SimpleNamespace(
+        start=lambda: None, stop=lambda: None
+    )
+    app.set_hotkey("f13")
+    assert made == []  # saved the key, started nothing

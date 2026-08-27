@@ -20,9 +20,9 @@ Then:
    It finds the zip you downloaded, unpacks it, and runs the installer inside. There is nothing to unblock, nothing to extract, and nothing to right-click. Pasted the line before downloading? It opens the shared drive for you and waits.
 
 3. **Sign in when your browser opens.** Use your Mirabel work account, the same one as your email. That is the whole setup: no token to paste, no API keys to enter, nothing new to keep. (An older download asks for a token instead; if yours does, ask Tommy for one.)
-4. **Pick your language**: right-click the microphone icon near the clock (click the **^** arrow if it is hidden), choose **Language**, and pick English, Hindi, Hungarian, Kannada, Marathi, Tamil, or Telugu — or **Detect automatically** if you mix languages when you speak. English is the default, so skip this step if that is you. Prefer to speak your language but write in English? Tick **Translate to English** in the same menu.
+4. **Pick your language**: click the microphone icon near the clock (click the **^** arrow if it is hidden) to open the controls, and pick English, Hindi, Hungarian, Kannada, Marathi, Tamil, or Telugu in the **Language** box — or **Detect automatically** if you mix languages when you speak. English is the default, so skip this step if that is you. Prefer to speak your language but write in English? Tick **Translate to English** on the same card.
 
-![The grey microphone icon behind the ^ arrow near the clock](https://raw.githubusercontent.com/mirabeltech/mirabel-voice/main/docs/images/tray-icon.png)
+![The microphone icon behind the ^ arrow near the clock](https://raw.githubusercontent.com/mirabeltech/mirabel-voice/main/docs/images/tray-icon.png)
 
 Updates take care of themselves: once a day the app checks for the newest release, swaps it in, and restarts between dictations. In a hurry, right-click the icon near your clock and choose **Check for updates** — or paste the same line again; all three do the same careful thing, and your settings stay as they are. (The rare release that changes the app's foundations is the exception: the app keeps the old version, and the icon's tooltip sends you back to the shared drive for a fresh zip.) To keep a version, set `"auto_update": false` in `config.json`.
 
@@ -83,7 +83,7 @@ A small panel appears near the bottom of your screen while this happens. It says
 
 When a dictation produces nothing, the panel says why instead of vanishing: too short, no sound, nothing heard.
 
-The icon near your clock shows the same thing in colour: **grey** ready, **red** listening, **blue** writing, **orange** something went wrong. Right-click it to pick your language, turn translation to English on, pick your microphone, check for updates, copy the last text, change your dictation key, open the settings folder, or quit.
+The icon near your clock shows the same thing with a small colour badge: no badge means ready, **red** listening, **blue** writing, **orange** something went wrong. **Click it** to open the controls — microphone, language, translation, copy the last text, and your dictation key all live there. Right-click it for the rest: check for updates, open the settings folder, or quit.
 
 To turn the panel off, set `"show_status": false` in `config.json` (right-click the icon, **Open the settings folder**).
 
@@ -113,9 +113,7 @@ To turn all sounds off, set `"play_sounds": false` in `config.json` (right-click
 
 ## Changing your key
 
-Insert is the default because it is free on most computers. If it clashes with something you use, pick another: right-click the icon near your clock and choose **Change my dictation key**.
-
-Press the key you want and it saves your choice. Restart Mirabel Voice afterwards.
+Insert is the default because it is free on most computers. If it clashes with something you use, pick another: click the icon near your clock, press **Change key…**, and press the key you want. It works from your very next dictation — no restart.
 
 Two things to know when you choose:
 
@@ -134,11 +132,11 @@ To add your own words, right-click the icon near your clock, choose **Open the s
 
 ## Dictating in another language
 
-Right-click the icon near your clock, choose **Language**, and pick Hindi, Hungarian, Kannada, Marathi, Tamil, Telugu, or English. The switch applies to your very next dictation — no restart. Your words come back in the language you spoke.
+Click the icon near your clock and pick Hindi, Hungarian, Kannada, Marathi, Tamil, Telugu, or English in the **Language** box. The switch applies to your very next dictation — no restart. Your words come back in the language you spoke.
 
 If you often mix languages in one sentence, pick **Detect automatically** and the app works out each dictation's language itself.
 
-**To speak one language and write another**, choose **Translate to English** in the same right-click menu. Speak Telugu — or anything else the app understands — and the text that lands in your text box is written English, tidied the same way as always: a question stays a question, and your own words stay yours. Click the entry again to turn it off. Like the language switch, it applies to your very next dictation, and it is your setting alone — nobody else's copy changes.
+**To speak one language and write another**, tick **Translate to English** on the same card. Speak Telugu — or anything else the app understands — and the text that lands in your text box is written English, tidied the same way as always: a question stays a question, and your own words stay yours. Untick it to turn it off. Like the language switch, it applies to your very next dictation, and it is your setting alone — nobody else's copy changes.
 
 Both settings live in `config.json`: `"language"` as `"en"`, `"hi"`, `"hu"`, `"kn"`, `"mr"`, `"ta"`, `"te"`, or `null` to detect, and `"translate_to_english"` as `true` or `false`.
 

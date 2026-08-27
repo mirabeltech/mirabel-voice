@@ -14,8 +14,10 @@ from __future__ import annotations
 
 import logging
 import threading
+import time
 
 from . import winui
+from .app import STATE_RECORDING, STATE_STARTING
 from .config import LANGUAGES
 from .palette import OCEAN, OCEAN_ON_DARK, apps_use_light_theme, panel_palette
 from .tray import LABELS
@@ -23,9 +25,14 @@ from .overlay import DOTS, Overlay
 
 log = logging.getLogger(__name__)
 
-WIDTH = 300
 PAD = 16
 MARGIN = 12  # from the corner of the work area
+
+# A key capture that nobody answers gives the keyboard back on its own.
+CAPTURE_TIMEOUT_S = 15.0
+# A show right after a focus-out is the same tray click that caused the
+# focus-out; the dismiss check must not eat it.
+JUST_SHOWN_S = 0.3
 
 AUTO_DETECT = "Detect automatically"
 SYSTEM_DEFAULT = "System default"
@@ -56,14 +63,24 @@ def language_code(name: str) -> str | None:
     return None
 
 
-def microphone_names(devices: list[dict]) -> list[str]:
-    """The microphone choices: the default, then each device once.
+def microphone_choices(devices: list[dict]) -> list[tuple[str, int | None]]:
+    """The microphone choices: (name, device index) pairs, default first.
 
     Windows lists a device once per audio API; the WASAPI entries carry
-    the full names, so when any exist only those are offered.
+    the full names, so when any exist only those are offered. The pairs
+    keep name and index together: the same name often exists under
+    several APIs with different indexes, so a name alone cannot be
+    resolved against the full device list.
     """
     wasapi = [d for d in devices if d.get("hostapi") == "Windows WASAPI"]
-    return [SYSTEM_DEFAULT] + [d["name"] for d in (wasapi or devices)]
+    return [(SYSTEM_DEFAULT, None)] + [
+        (d["name"], d["index"]) for d in (wasapi or devices)
+    ]
+
+
+def microphone_names(devices: list[dict]) -> list[str]:
+    """The microphone names, in the order the card offers them."""
+    return [name for name, _ in microphone_choices(devices)]
 
 
 class Flyout:
@@ -72,11 +89,32 @@ class Flyout:
     def __init__(self, overlay: Overlay, app) -> None:  # noqa: ANN001
         self.overlay = overlay
         self.app = app
-        # Everything below is touched on the overlay thread only.
+        # Everything below is touched on the overlay thread only,
+        # except _capture_listener, which the capture thread also sets.
         self._top = None
+        self._hwnd = 0
         self._widgets = {}
         self._devices: list[dict] = []
+        self._choices: list[tuple[str, int | None]] = []
         self._capturing = False
+        self._capture_listener = None
+        self._built_pal = None
+        self._shown_at = 0.0
+        # PortAudio's first enumeration costs hundreds of milliseconds.
+        # Pay it here, in the background, so the first click on the tray
+        # does not stall the Tk thread and the status pill with it.
+        threading.Thread(
+            target=self._warm_devices, name="mirabel-voice-devices", daemon=True
+        ).start()
+
+    @staticmethod
+    def _warm_devices() -> None:
+        try:
+            from .audio import list_input_devices
+
+            list_input_devices()
+        except Exception:  # noqa: BLE001 - warming up is best-effort
+            pass
 
     # ---- called from any thread ----
 
@@ -90,8 +128,33 @@ class Flyout:
 
     # ---- everything below runs on the overlay thread ----
 
+    def _px(self, value: int) -> int:
+        """Scale a design pixel the way the status pill does.
+
+        The card borrows the overlay's monitor scale: without this it
+        renders at two-thirds size on a 150% display, right beside a
+        correctly scaled pill.
+        """
+        return round(value * self.overlay._scale)  # noqa: SLF001
+
+    def _visible(self) -> bool:
+        try:
+            return self._top is not None and self._top.state() == "normal"
+        except Exception:  # noqa: BLE001 - a window mid-destruction
+            return False
+
     def _show(self) -> None:
         try:
+            if self._visible():
+                # A second tray click on an open card closes it, the
+                # way every taskbar flyout behaves.
+                if time.monotonic() - self._shown_at > JUST_SHOWN_S:
+                    self._hide()
+                return
+            if self._top is not None and panel_palette() != self._built_pal:
+                # The theme changed since the card was built. Its
+                # colours are baked into the widgets, so rebuild.
+                self._discard()
             if self._top is None:
                 self._build()
             self._refresh()
@@ -99,28 +162,46 @@ class Flyout:
             self._top.deiconify()
             self._top.lift()
             self._top.focus_force()
+            self._shown_at = time.monotonic()
         except Exception:  # noqa: BLE001 - the flyout must never kill the app
             log.warning("The controls flyout did not open.", exc_info=True)
+            # Throw the half-built window away, or every later click
+            # would reuse it and fail the same way forever.
+            self._discard()
 
     def _hide(self) -> None:
+        if self._capturing:
+            self._cancel_capture()
         if self._top is None:
             return
-        if self._capturing:
-            self._end_capture(None)
         self._top.withdraw()
+
+    def _discard(self) -> None:
+        """Destroy the card and every Tk reference to it, on this thread."""
+        top, self._top = self._top, None
+        self._widgets = {}
+        self._built_pal = None
+        self._hwnd = 0
+        if top is not None:
+            try:
+                top.destroy()
+            except Exception:  # noqa: BLE001 - already dying
+                pass
 
     def _build(self) -> None:
         import tkinter as tk
         from tkinter import ttk
 
         pal = panel_palette()
+        self._built_pal = pal
+        self._widgets = {}
         root = self.overlay._root  # noqa: SLF001 - the one Tk root
         top = tk.Toplevel(root)
         self._top = top
         top.withdraw()
         top.overrideredirect(True)
         top.attributes("-topmost", True)
-        top.configure(bg=pal.background, padx=PAD, pady=PAD)
+        top.configure(bg=pal.background, padx=self._px(PAD), pady=self._px(PAD))
 
         family = "Segoe UI"
         try:
@@ -130,9 +211,9 @@ class Flyout:
                 family = "Segoe UI Variable Text"
         except Exception:  # noqa: BLE001
             pass
-        body = (family, -14)
-        strong = (family, -14, "bold")
-        caption = (family, -12)
+        body = (family, -self._px(14))
+        strong = (family, -self._px(14), "bold")
+        caption = (family, -self._px(12))
 
         w = self._widgets
 
@@ -154,28 +235,37 @@ class Flyout:
         # garbage-collects it, and that crashes Tcl at shutdown.
         header = tk.Frame(top, bg=pal.background)
         header.grid(row=0, column=0, columnspan=2, sticky="ew")
+        s = self._px(18)
         w["icon"] = tk.Canvas(
-            header, width=18, height=18, bg=pal.background,
+            header, width=s, height=s, bg=pal.background,
             highlightthickness=0, bd=0,
         )
-        w["icon"].create_oval(1, 1, 17, 17, fill=OCEAN, outline="")
-        w["icon"].create_rectangle(7, 4, 11, 10, fill="white", outline="")
-        w["icon"].create_arc(
-            5, 6, 13, 13, start=180, extent=180, style="arc",
-            outline="white", width=2,
+
+        def ic(v: float) -> float:
+            return v * s / 18.0
+
+        w["icon"].create_oval(ic(1), ic(1), ic(17), ic(17), fill=OCEAN, outline="")
+        w["icon"].create_rectangle(
+            ic(7), ic(4), ic(11), ic(10), fill="white", outline=""
         )
-        w["icon"].create_line(9, 13, 9, 15, fill="white", width=2)
-        w["icon"].pack(side="left", padx=(0, 8))
+        w["icon"].create_arc(
+            ic(5), ic(6), ic(13), ic(13), start=180, extent=180, style="arc",
+            outline="white", width=max(self._px(2), 2),
+        )
+        w["icon"].create_line(
+            ic(9), ic(13), ic(9), ic(15), fill="white", width=max(self._px(2), 2)
+        )
+        w["icon"].pack(side="left", padx=(0, self._px(8)))
         tk.Label(
             header, text="Mirabel", bg=pal.background, fg=pal.foreground,
-            font=(family, -13, "bold"),
+            font=(family, -self._px(13), "bold"),
         ).pack(side="left")
         tk.Label(
             header,
             text=" Voice",
             bg=pal.background,
             fg=OCEAN_ON_DARK if not apps_use_light_theme() else OCEAN,
-            font=(family, -13, "bold"),
+            font=(family, -self._px(13), "bold"),
         ).pack(side="left")
 
         separator(1)
@@ -183,11 +273,12 @@ class Flyout:
         # The status row: the pill's dot and words, at rest.
         status = tk.Frame(top, bg=pal.background)
         status.grid(row=2, column=0, columnspan=2, sticky="ew")
+        dot = self._px(10)
         w["dot"] = tk.Canvas(
-            status, width=10, height=10, bg=pal.background,
+            status, width=dot, height=dot, bg=pal.background,
             highlightthickness=0, bd=0,
         )
-        w["dot"].pack(side="left", padx=(0, 8))
+        w["dot"].pack(side="left", padx=(0, self._px(8)))
         w["state"] = label(status, font=strong)
         w["state"].pack(side="left")
         w["hint"] = label(top, font=caption, fg=pal.hint, anchor="w")
@@ -289,8 +380,11 @@ class Flyout:
 
     def _release(self, event) -> None:  # noqa: ANN001
         if self._top is not None and event.widget is self._top:
+            self._cancel_capture()
             self._top = None
             self._widgets = {}
+            self._built_pal = None
+            self._hwnd = 0
 
     def _style_window(self) -> None:
         """Round the corners and keep the card out of Alt-Tab."""
@@ -301,6 +395,7 @@ class Flyout:
                 hwnd = int(self._top.wm_frame(), 16)
             except Exception:  # noqa: BLE001
                 hwnd = int(self._top.winfo_id())
+            self._hwnd = hwnd
             user32 = ctypes.windll.user32
             GWL_EXSTYLE = -20
             WS_EX_TOOLWINDOW = 0x00000080
@@ -338,7 +433,8 @@ class Flyout:
             self._devices = list_input_devices()
         except Exception:  # noqa: BLE001 - a broken listing must not block the card
             self._devices = []
-        w["microphone"]["values"] = microphone_names(self._devices)
+        self._choices = microphone_choices(self._devices)
+        w["microphone"]["values"] = [name for name, _ in self._choices]
         w["microphone"].set(self._current_microphone_name())
         w["language"]["values"] = language_names()
         code = self.app.config.language
@@ -365,19 +461,24 @@ class Flyout:
         index = self.app.config.input_device
         if index is None:
             return SYSTEM_DEFAULT
-        for device in self._devices:
-            if device["index"] == index:
-                return device["name"]
+        for name, choice in self._choices:
+            if choice == index:
+                return name
         return SYSTEM_DEFAULT
 
     def _show_state(self) -> None:
         """The status row: dot colour, state word, and the key hint."""
         w = self._widgets
+        if not w:
+            return  # the card died mid-update
         state = self.app.state
         w["state"].configure(text=LABELS.get(state, "Ready"))
         w["dot"].delete("all")
+        size = self._px(10)
         w["dot"].create_oval(
-            0, 0, 9, 9, fill=DOTS.get(state, DOTS["idle"]), outline=""
+            0, 0, size - 1, size - 1,
+            fill=DOTS.get(state, DOTS["idle"]),
+            outline="",
         )
         if self._capturing:
             hint = "Press the key you want. Esc keeps the old one."
@@ -397,13 +498,20 @@ class Flyout:
             pass
 
     def _maybe_dismiss(self, _event) -> None:  # noqa: ANN001
-        """Hide when the focus truly left, not when it moved inside."""
-        if self._top is None or self._capturing:
+        """Hide when the focus truly left, not when it moved inside.
+
+        A focus-out during a key capture cancels the capture too: the
+        user walked away, and a capture left armed would grab whatever
+        they type into the next window and make it the dictation key.
+        """
+        if self._top is None:
             return
 
         def check() -> None:
             if self._top is None:
                 return
+            if time.monotonic() - self._shown_at < JUST_SHOWN_S:
+                return  # the tray click that opened us also stole focus
             try:
                 if self._top.focus_get() is None:
                     self._hide()
@@ -415,13 +523,14 @@ class Flyout:
     # ---- the controls ----
 
     def _pick_microphone(self, _event) -> None:  # noqa: ANN001
+        # Resolve against the same filtered list the box displayed. The
+        # full device list often carries the same name under several
+        # audio APIs with different indexes, and matching there would
+        # save the wrong one.
         name = self._widgets["microphone"].get()
-        if name == SYSTEM_DEFAULT:
-            self.app.set_input_device(None)
-            return
-        for device in self._devices:
-            if device["name"] == name:
-                self.app.set_input_device(device["index"])
+        for choice_name, index in self._choices:
+            if choice_name == name:
+                self.app.set_input_device(index)
                 return
 
     def _pick_language(self, _event) -> None:  # noqa: ANN001
@@ -464,6 +573,11 @@ class Flyout:
         """
         if self._capturing:
             return
+        if self.app.state in (STATE_STARTING, STATE_RECORDING):
+            # The listener carries the only stop for a live recording.
+            # Tearing it down now would strand the microphone open.
+            self._widgets["hint"].configure(text="Finish dictating first.")
+            return
         self._capturing = True
         self.app.suspend_hotkeys()
         self._widgets["change"].configure(text=CAPTURE_PROMPT)
@@ -474,8 +588,29 @@ class Flyout:
             daemon=True,
         ).start()
 
+    def _card_has_foreground(self) -> bool:
+        """Return whether the card is the window the user is looking at.
+
+        The capture hook is global. Without this check, a key typed
+        into any other window would become the dictation key.
+        """
+        if not self._hwnd:
+            return True  # no hwnd to compare; do not brick the feature
+        try:
+            import ctypes
+
+            return ctypes.windll.user32.GetForegroundWindow() == self._hwnd
+        except Exception:  # noqa: BLE001 - not Windows
+            return True
+
     def _capture_thread(self) -> None:
-        """Listen for exactly one usable key, off the UI thread."""
+        """Listen for exactly one usable key, off the UI thread.
+
+        The hook accepts a key only while the card holds the
+        foreground, gives up after CAPTURE_TIMEOUT_S, and stops when
+        _cancel_capture asks it to - so it can never outlive the card
+        and grab a key later.
+        """
         chosen: list[str | None] = []
         try:
             from pynput import keyboard
@@ -484,8 +619,9 @@ class Flyout:
             from .picker import name_of
 
             def on_press(key) -> bool | None:  # noqa: ANN001
+                if not self._card_has_foreground():
+                    return False  # the user went elsewhere; keep the old key
                 if key is Key.esc:
-                    chosen.append(None)
                     return False
                 label = name_of(key)
                 if label is None:
@@ -493,23 +629,50 @@ class Flyout:
                 chosen.append(label)
                 return False
 
-            with keyboard.Listener(on_press=on_press) as listener:
-                listener.join()
+            listener = keyboard.Listener(on_press=on_press)
+            self._capture_listener = listener
+            listener.start()
+            listener.join(CAPTURE_TIMEOUT_S)
+            if listener.is_alive():
+                listener.stop()
+                listener.join(1.0)
         except Exception:  # noqa: BLE001 - capture is optional, dictation is not
             log.exception("The key capture failed.")
-            chosen.append(None)
         self.overlay.call(lambda: self._end_capture(chosen[0] if chosen else None))
 
+    def _cancel_capture(self) -> None:
+        """Stop a waiting capture and keep the old key.
+
+        The capture thread then delivers _end_capture(None) through the
+        overlay queue, which resumes the hotkeys - one path for every
+        ending.
+        """
+        listener = self._capture_listener
+        if listener is not None:
+            try:
+                listener.stop()
+            except Exception:  # noqa: BLE001 - already gone
+                pass
+
     def _end_capture(self, label: str | None) -> None:
-        """Apply the captured key, or put everything back on Esc."""
+        """Apply the captured key, or put everything back.
+
+        The hotkeys come back FIRST: a widget that died while the
+        capture waited must not leave dictation suspended forever.
+        """
+        if not self._capturing:
+            return  # already ended by an earlier delivery
         self._capturing = False
-        self._widgets["change"].configure(text=CHANGE_KEY)
+        self._capture_listener = None
         if label is None:
             self.app.resume_hotkeys()
         else:
             try:
                 self.app.set_hotkey(label)
             except Exception:  # noqa: BLE001 - a refused key keeps the old one
-                log.exception("The key was refused.")
+                log.exception("pynput refused the key name.")
                 self.app.resume_hotkeys()
+        change = self._widgets.get("change")
+        if change is not None:
+            change.configure(text=CHANGE_KEY)
         self._show_state()

@@ -87,7 +87,9 @@ LINES = {
 }
 
 # The states that last until the app moves on, and so are worth animating.
-BUSY = (STATE_RECORDING, STATE_WORKING)
+# Starting belongs here: a frozen "Starting…" during a slow microphone
+# open would look exactly like the hang it is reporting.
+BUSY = (STATE_STARTING, STATE_RECORDING, STATE_WORKING)
 
 
 def blend(colour: str, background: str, amount: float) -> str:
@@ -292,7 +294,11 @@ class Overlay:
         """Paint every widget from the palette of the moment."""
         pal = self._pal
         self._root.configure(bg=pal.background)
-        if not self._rounded:
+        if self._rounded:
+            # Keep the DWM border on the theme of the moment; set once
+            # at startup it would stay dark around a light pill.
+            winui.round_corners(self.hwnd, pal.border)
+        else:
             # Windows 10 refused the DWM corners and border. A bare dark
             # rectangle looks half drawn, so draw our own hairline edge.
             self._root.configure(
