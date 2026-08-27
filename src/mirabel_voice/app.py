@@ -20,7 +20,7 @@ import threading
 import time
 from typing import Callable
 
-from .audio import Recorder
+from .audio import MicrophoneCancelled, MicrophoneTimeout, Recorder
 from .cleanup import Cleaner
 from .config import LANGUAGES, Config
 from .dictionary import all_words
@@ -322,6 +322,21 @@ class VoiceApp:
         self._set_state(STATE_STARTING)
         try:
             self.recorder.start()
+        except MicrophoneCancelled:
+            # Somebody ended the cycle while the device was opening -
+            # the app quitting, or a cancel. Whoever did it already set
+            # the state; saying "Listening" now would be a lie.
+            log.info("The recording was cancelled while the microphone opened.")
+            return False
+        except MicrophoneTimeout as error:
+            # The device is wedged, not refusing: say so, and come
+            # straight back so the next press still works.
+            log.warning("The microphone did not answer: %s", error)
+            hint = getattr(error, "hint", "")
+            detail = f"{error}\n{hint}" if hint else str(error)
+            self._set_state(STATE_ERROR, detail)
+            self._beep_refused()
+            return False
         except Exception as error:  # noqa: BLE001
             log.exception("The microphone did not open.")
             self._set_state(STATE_ERROR, f"Microphone error: {error}")
@@ -601,8 +616,11 @@ class VoiceApp:
             self._actions.put(None)
             self._dispatch_thread.join(timeout=3.0)
             self._dispatch_thread = None
-        if self.recorder.is_recording:
-            self.recorder.cancel()
+        # Always cancel, not only while recording: an open still in
+        # flight has no stream yet, and without the cancel's generation
+        # bump the worker would install a live microphone on a stopped
+        # app when the slow device finally answers.
+        self.recorder.cancel()
 
     def join(self) -> None:
         """Block until the listener stops."""

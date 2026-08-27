@@ -431,3 +431,68 @@ def test_every_offered_language_switches_and_announces_itself(monkeypatch, tmp_p
         app.set_language(code)
         assert app.transcriber.language == code
         assert any(label in detail for detail in told)
+
+
+# --- a wedged microphone must not wedge the app (#57) -----------------------
+
+
+def test_a_microphone_timeout_reports_and_stays_usable(monkeypatch, tmp_path):
+    from mirabel_voice.audio import MicrophoneTimeout
+    from mirabel_voice.app import STATE_ERROR, STATE_RECORDING
+
+    app = language_app(monkeypatch, tmp_path)
+    seen = []
+    app.on_status = lambda state, detail: seen.append((state, detail))
+
+    wedged = [True]
+    real_start = app.recorder.start
+
+    def start():
+        if wedged[0]:
+            raise MicrophoneTimeout(
+                "The microphone did not answer.",
+                hint="Make sure the microphone is connected.",
+            )
+        real_start()
+
+    app.recorder.start = start
+
+    # The press fails fast, with the reason and a hint line.
+    assert app.start_recording() is False
+    state, detail = seen[-1]
+    assert state == STATE_ERROR
+    assert "did not answer" in detail
+    assert "\n" in detail  # the panel renders the second line as a hint
+
+    # The very next press works once the device answers again.
+    wedged[0] = False
+    assert app.start_recording() is True
+    assert app.state == STATE_RECORDING
+
+
+def test_quitting_always_cancels_the_recorder(monkeypatch, tmp_path):
+    # An open still in flight has no stream yet. Without the cancel's
+    # generation bump, a slow device would install a live microphone
+    # on a stopped app when it finally answers.
+    app = language_app(monkeypatch, tmp_path)
+    cancelled = []
+    app.recorder.cancel = lambda: cancelled.append(True)
+    assert app.recorder.is_recording is False
+    app.stop()
+    assert cancelled == [True]
+
+
+def test_a_cancelled_open_does_not_claim_to_listen(monkeypatch, tmp_path):
+    from mirabel_voice.audio import MicrophoneCancelled
+    from mirabel_voice.app import STATE_RECORDING
+
+    app = language_app(monkeypatch, tmp_path)
+    seen = []
+    app.on_status = lambda state, detail: seen.append(state)
+
+    def cancelled_open():
+        raise MicrophoneCancelled("cancelled while opening")
+
+    app.recorder.start = cancelled_open
+    assert app.start_recording() is False
+    assert STATE_RECORDING not in seen
