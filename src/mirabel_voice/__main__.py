@@ -131,6 +131,39 @@ def _start_update_watch(app: VoiceApp, tray) -> None:  # noqa: ANN001
     ).start()
 
 
+def _log_to_file() -> None:
+    """Keep a copy of the log on disk.
+
+    The shortcuts run pythonw, which throws stderr away - and with it
+    every diagnostic this program writes. The file keeps the last runs
+    readable after something goes wrong. Only the single running
+    instance writes it, so rotation never fights another process.
+    """
+    from logging.handlers import RotatingFileHandler
+
+    from .config import config_dir
+
+    try:
+        folder = config_dir() / "logs"
+        folder.mkdir(parents=True, exist_ok=True)
+        handler = RotatingFileHandler(
+            folder / "mirabel-voice.log",
+            maxBytes=512 * 1024,
+            backupCount=2,
+            encoding="utf-8",
+            delay=True,
+        )
+        handler.setFormatter(
+            logging.Formatter(LOG_FORMAT, datefmt="%Y-%m-%d %H:%M:%S")
+        )
+        logging.getLogger().addHandler(handler)
+        logging.getLogger(__name__).info("Mirabel Voice is starting.")
+    except Exception:  # noqa: BLE001 - a log that cannot open must not stop the app
+        logging.getLogger(__name__).debug(
+            "The log file did not open.", exc_info=True
+        )
+
+
 def _show_error_box(message: str) -> None:
     """Show a Windows message box, so errors are visible without a console."""
     _show_box(
@@ -332,6 +365,7 @@ def main(argv: list[str] | None = None) -> int:
                 _show_info_box(message)
             return 0
 
+    _log_to_file()
     load_api_keys()
     config = Config.load()
     problems = _check_keys(config)
