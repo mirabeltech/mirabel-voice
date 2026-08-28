@@ -331,12 +331,12 @@ class VoiceApp:
         # never appear before the capture is live. The detail coaches the
         # wait: words spoken before the capture is live are lost, and the
         # first word of a sentence is the usual casualty.
-        self._set_state(
-            STATE_STARTING,
+        coach = (
             "Speak after the beep"
             if self.config.play_sounds
-            else "Speak when you see Listening",
+            else "Speak when you see Listening"
         )
+        self._set_state(STATE_STARTING, coach)
         try:
             self.recorder.start()
         except MicrophoneCancelled:
@@ -361,7 +361,10 @@ class VoiceApp:
             return False
         self._warm_cleanup()
         self._warm_transcriber()
-        self._set_state(STATE_RECORDING)
+        # The coaching line rides under "Listening" for a moment: a warm
+        # microphone opens faster than the pill appears, so the Starting
+        # line alone is gone before anyone reads it.
+        self._set_state(STATE_RECORDING, coach)
         self._beep(880, 60)
         return True
 

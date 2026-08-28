@@ -53,6 +53,11 @@ NOTE_MS = 2500
 ERROR_MS = 4500
 DONE_MS = 1200
 
+# How long a hint rides under "Listening" before the pill goes quiet.
+# The Starting phase is usually shorter than the pill's own entrance,
+# so a hint that died with it was never read; this is its second life.
+HINT_LINGER_MS = 2500
+
 # The dot breathes while the app is busy, because a still dot during a
 # two second wait is the thing this panel exists to avoid.
 PULSE_MS = 90
@@ -106,10 +111,14 @@ def status_line(state: str, detail: str) -> tuple[str, int]:
     An empty string means show nothing. A time of 0 means the words stay
     until the state changes again.
     """
-    if state == STATE_STARTING and detail:
-        # The microphone is not live yet: words spoken now are lost.
-        # The second line coaches the wait; the app words it to match
-        # the cue the person actually gets (beep, or the word itself).
+    if state in (STATE_STARTING, STATE_RECORDING) and detail:
+        # Starting: the microphone is not live yet, and words spoken now
+        # are lost - the second line coaches the wait, worded by the app
+        # to match the cue the person actually gets (beep, or the word
+        # itself). Listening keeps the line for a moment (_apply_status
+        # drops it after HINT_LINGER_MS), because a warm microphone
+        # opens faster than the pill appears and the Starting line alone
+        # would never be read.
         return f"{LINES[state]}\n{detail}", 0
     if state in LINES:
         return LINES[state], 0
@@ -359,6 +368,17 @@ class Overlay:
             self._root.after(milliseconds, lambda: self._expire(token))
         elif state in BUSY:
             self._pulse(self._token)
+            if state == STATE_RECORDING and detail:
+                token = self._token
+                self._root.after(
+                    HINT_LINGER_MS, lambda: self._drop_hint(token)
+                )
+
+    def _drop_hint(self, token: int) -> None:
+        """Let "Listening" go quiet once its hint has been read."""
+        if token != self._token:
+            return  # a newer status already replaced the hinted one
+        self._apply_status(STATE_RECORDING, "")
 
     def _expire(self, token: int) -> None:
         """Drop a timed message, unless a newer one replaced it."""
