@@ -26,6 +26,9 @@ class FakeSounddevice:
         self.block.set()  # answer at once unless a test clears it
         self.fail = fail
         self.streams = []
+        # Runs inside InputStream.start, the way PortAudio can deliver
+        # the first callback before the open call returns.
+        self.on_start = None
         outer = self
 
         class InputStream:
@@ -42,6 +45,8 @@ class FakeSounddevice:
                 if outer.fail is not None:
                     raise outer.fail
                 self.started = True
+                if outer.on_start is not None:
+                    outer.on_start(self)
 
             def stop(self):
                 self.stopped = True
@@ -214,6 +219,9 @@ def test_the_level_reports_only_while_armed(rig):
 def test_max_frames_caps_the_capture_including_the_pre_roll(rig):
     fake = FakeSounddevice()
     recorder = rig(fake, max_seconds=0.5)  # 8000 frames
+    # The pre-roll clamps to half of max_seconds, so it can never fill
+    # the whole budget: 0.25 s here, 4000 frames.
+    assert recorder._pre_roll_seconds == 0.25
     open_stream(recorder)
     fake.feed(np.full(6400, 1, dtype=np.int16))
     recorder.start()
@@ -221,7 +229,9 @@ def test_max_frames_caps_the_capture_including_the_pre_roll(rig):
     fake.feed(np.full(4000, 3, dtype=np.int16))  # over the cap: dropped
     recording = recorder.stop()
     assert len(recording.samples) == 8000
-    assert recording.pre_roll_frames == 6400
+    assert recording.pre_roll_frames == 4000
+    assert int(recording.samples[0]) == 1
+    assert int(recording.samples[-1]) == 2
 
 
 # --- a press while the stream is not live -----------------------------------
@@ -384,6 +394,127 @@ def test_a_late_open_worker_self_discards_after_shutdown(rig):
     worker.join(timeout=2.0)
     assert recorder._stream is None
     assert fake.streams[0].closed
+
+
+# --- the races the review confirmed -----------------------------------------
+
+
+def test_shutdown_is_sticky_a_late_press_cannot_reopen(rig):
+    from mirabel_voice.audio import MicrophoneCancelled
+
+    fake = FakeSounddevice()
+    recorder = rig(fake)
+    open_stream(recorder)
+    recorder.shutdown()
+    opened = len(fake.streams)
+    # A press that was queued behind the quit must not revive the
+    # microphone: the open path refuses before it bumps the generation.
+    with pytest.raises(MicrophoneCancelled):
+        recorder.start(timeout=2.0)
+    assert len(fake.streams) == opened
+    assert recorder._stream is None
+    assert not recorder.is_recording
+
+
+def test_set_device_mid_open_discards_the_old_devices_stream(rig):
+    fake = FakeSounddevice()
+    fake.block.clear()  # the old device is still answering
+    recorder = rig(fake)
+    worker = threading.Thread(
+        target=recorder._open, args=(recorder._generation,), daemon=True
+    )
+    recorder._open_thread = worker
+    worker.start()
+    wait_until(lambda: fake.streams)  # the open is really in flight
+    recorder.set_device(3)
+    # The old device finally answers, after the user already left it.
+    fake.block.set()
+    worker.join(timeout=2.0)
+    assert recorder._stream is None
+    assert fake.streams[0].closed
+
+
+def test_a_cold_open_keeps_the_streams_very_first_block(rig):
+    # The old recorder captured from the instant the stream started. A
+    # block delivered before the caller wakes from the join must land
+    # in the recording, not be dropped by the arming gate.
+    fake = FakeSounddevice()
+    fake.on_start = lambda stream: stream.callback(
+        np.full(160, 7, dtype=np.int16).reshape(-1, 1), 160, None, None
+    )
+    recorder = rig(fake, hot=False)
+    recorder.start(timeout=2.0)
+    assert recorder._chunk_frames == 160
+    recording = recorder.stop()
+    assert int(recording.samples[0]) == 7
+
+
+def test_a_press_keeps_audio_heard_while_the_joined_open_finished(rig):
+    # The press arrived before the device answered, so everything the
+    # fresh stream heard belongs to the recording - as press audio, not
+    # as pre-roll.
+    fake = FakeSounddevice()
+    fake.block.clear()
+    fake.on_start = lambda stream: stream.callback(
+        np.full(320, 9, dtype=np.int16).reshape(-1, 1), 320, None, None
+    )
+    recorder = rig(fake)
+    worker = threading.Thread(
+        target=recorder._open, args=(recorder._generation,), daemon=True
+    )
+    recorder._open_thread = worker
+    worker.start()
+    threading.Timer(0.05, fake.block.set).start()
+    recorder.start(timeout=2.0)
+    assert recorder.is_recording
+    assert recorder._chunk_frames == 320
+    assert recorder._pre_roll_frames == 0
+    recording = recorder.stop()
+    assert int(recording.samples[0]) == 9
+    assert recording.pre_roll_frames == 0
+
+
+def test_a_press_ignores_a_stream_that_went_quiet(rig):
+    fake = FakeSounddevice()
+    recorder = rig(fake)
+    open_stream(recorder)
+    fake.feed(np.full(8000, 5, dtype=np.int16))  # would have been pre-roll
+    # The device died and the watchdog has not noticed yet.
+    recorder._last_block_at = time.monotonic() - 10.0
+    assert not recorder.hot_ready
+    recorder.start(timeout=2.0)
+    assert recorder.is_recording
+    # The press opened cold: the dead stream is closed, its last audio
+    # never became pre-roll, and the capture starts clean.
+    assert fake.streams[0].closed
+    assert recorder._stream is not None
+    assert recorder._pre_roll_frames == 0
+    assert recorder._chunk_frames == 0
+    recorder.cancel()
+
+
+def test_pre_roll_is_clamped_to_half_of_max_seconds(rig):
+    fake = FakeSounddevice()
+    recorder = rig(fake, pre_roll_seconds=0.4, max_seconds=0.5)
+    assert recorder._pre_roll_seconds == 0.25
+
+
+def test_a_dead_stream_zeroes_the_level(rig, monkeypatch):
+    shrink_timings(monkeypatch)
+    fake = FakeSounddevice()
+    recorder = rig(fake)
+    recorder.open_hot()
+    wait_until(lambda: recorder._stream is not None)
+    first = recorder._stream
+    fake.feed(np.full(100, 16000, dtype=np.int16))
+    recorder.start()
+    fake.feed(np.full(100, 16000, dtype=np.int16))
+    assert recorder.level > 0.4
+    # The device goes quiet mid-recording. The bars must fall flat, not
+    # keep dancing on the last loud block.
+    wait_until(lambda: first.closed)
+    assert recorder.is_recording
+    assert recorder.level == 0.0
 
 
 # --- Recording --------------------------------------------------------------

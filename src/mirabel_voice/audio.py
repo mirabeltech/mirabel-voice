@@ -205,7 +205,13 @@ class Recorder:
         self.device = device
         self.max_seconds = max_seconds
         self._hot = hot
-        self._pre_roll_seconds = min(max(pre_roll_seconds, 0.0), RING_SECONDS)
+        # Clamped to the ring, and to half of max_seconds: pre-roll that
+        # fills the whole recording budget would leave the callback's cap
+        # refusing every live block, and the dictation itself would be
+        # silently lost.
+        self._pre_roll_seconds = min(
+            max(pre_roll_seconds, 0.0), RING_SECONDS, max_seconds / 2.0
+        )
         self._chunks: list[np.ndarray] = []
         # The callback must never scan a growing list, so the captured
         # frame count rides along as a counter.
@@ -260,8 +266,21 @@ class Recorder:
 
     @property
     def hot_ready(self) -> bool:
-        """Return True when the hot stream is open and a press is instant."""
-        return self._hot and self._stream is not None
+        """Return True when the hot stream is open and a press is instant.
+
+        A stream that stopped delivering blocks does not count, even
+        before the watchdog has replaced it: a press on it would say
+        "Listening" over a dead device.
+        """
+        return (
+            self._hot
+            and self._stream is not None
+            and self._stream_is_fresh()
+        )
+
+    def _stream_is_fresh(self) -> bool:
+        """Return True while the stream's callback shows signs of life."""
+        return time.monotonic() - self._last_block_at <= DEAD_STREAM_SECONDS
 
     def _callback(self, indata, frames, time_info, status) -> None:  # noqa: ANN001
         """Store each block of audio that the sound device delivers.
@@ -299,9 +318,11 @@ class Recorder:
         dropped, never kept.
 
         The caller's thread waits at most the deadline, so a queued
-        cancel cannot run during the wait; a cancel from another thread
-        (the app quitting) still lands, and raises MicrophoneCancelled
-        here.
+        cancel cannot run during the wait. A shutdown from another
+        thread (the app quitting) still lands, and raises
+        MicrophoneCancelled here; in cold mode a cross-thread cancel
+        does the same through its generation bump. A hot-mode cancel
+        deliberately touches neither the stream nor an open in flight.
 
         Raises:
             MicrophoneTimeout: The device did not answer, or an earlier
@@ -313,8 +334,22 @@ class Recorder:
         if self._hot and self._start_hot(timeout):
             return
         self._open_with_deadline(timeout)
+        # The open armed at its spawn. This covers its early return: the
+        # supervisor can install a stream between _start_hot's look and
+        # the open's, and that path must still leave the press armed.
         with self._lock:
             self._armed = True
+
+    def _clear_ring_locked(self) -> None:
+        """Drop the ring's audio. The caller holds _lock."""
+        self._ring.clear()
+        self._ring_frames = 0
+
+    def _reset_capture_locked(self) -> None:
+        """Drop the collected recording state. The caller holds _lock."""
+        self._chunks = []
+        self._chunk_frames = 0
+        self._pre_roll_frames = 0
 
     def _arm_from_ring_locked(self) -> None:
         """Seed the recording with the ring's tail and arm.
@@ -348,13 +383,26 @@ class Recorder:
         Returns True when the press is handled here; False sends the
         caller on to the cold open.
         """
+        stale = None
         with self._lock:
             if self._armed:
                 return True
             if self._stream is not None:
-                self._arm_from_ring_locked()
-                return True
+                if self._stream_is_fresh():
+                    self._arm_from_ring_locked()
+                    return True
+                # The stream stopped delivering but the watchdog has not
+                # replaced it yet. Do what the watchdog would: close it,
+                # and never let its last audio become pre-roll. The
+                # press then opens cold, with the Starting pill and the
+                # coach, because hot_ready already read False.
+                stale, self._stream = self._stream, None
+                self._clear_ring_locked()
+                self._level = 0.0
+                self._reopen_backoff = REOPEN_BACKOFF_START_SECONDS
+                self._next_attempt = 0.0
             worker = self._open_thread
+        self._discard(stale)
         if worker is None or not worker.is_alive():
             return False
         # The supervisor owns this open. The press joins it with its own
@@ -371,18 +419,30 @@ class Recorder:
         with self._lock:
             if self._stream is None:
                 return False
-            # Arm with no pre-roll: every close clears the ring, and
-            # audio heard before a stream died must never be kept.
-            self._chunks = []
-            self._chunk_frames = 0
+            # The stream opened mid-press, so everything it has heard
+            # belongs to this recording - and none of it is pre-roll,
+            # because it all arrived after the press. Audio from before
+            # a death cannot be here: every close clears the ring.
+            self._chunks = list(self._ring)
+            self._chunk_frames = self._ring_frames
             self._pre_roll_frames = 0
             self._level = 0.0
             self._armed = True
         return True
 
     def _open_with_deadline(self, timeout: float) -> None:
-        """Open the microphone on a worker with a deadline."""
+        """Open the microphone on a worker with a deadline, and arm.
+
+        Arming happens at the spawn, not after the join: the callback
+        then keeps the very first block the started stream delivers,
+        instead of dropping whatever arrives before the caller's thread
+        wakes from the join. Every failure path disarms.
+        """
         with self._lock:
+            if self._shutdown.is_set():
+                # The app is quitting. A fresh generation bump here
+                # would revive what shutdown just killed.
+                raise MicrophoneCancelled("The recorder is shut down.")
             if self._stream is not None:
                 return
             if self._open_thread is not None and self._open_thread.is_alive():
@@ -393,13 +453,12 @@ class Recorder:
                     "The microphone is still answering an earlier request.",
                     hint="Wait a moment, then press the key again.",
                 )
-            self._chunks = []
-            self._chunk_frames = 0
-            self._pre_roll_frames = 0
+            self._reset_capture_locked()
             self._generation += 1
             generation = self._generation
             self._level = 0.0
             self._open_error = None
+            self._armed = True
             worker = threading.Thread(
                 target=self._open,
                 args=(generation,),
@@ -416,19 +475,28 @@ class Recorder:
             # see the wedged worker and refuse instead of stacking up.
             with self._lock:
                 self._generation += 1
+                self._armed = False
                 stream, self._stream = self._stream, None
-                self._ring.clear()
-                self._ring_frames = 0
+                self._clear_ring_locked()
             self._discard(stream)
             raise MicrophoneTimeout(
                 "The microphone did not answer.",
                 hint="Make sure the microphone is connected. Close any "
                 "other program that is using it.",
             )
-        self._open_thread = None
-        if self._open_error is not None:
-            raise self._open_error
-        if self._stream is None:
+        with self._lock:
+            # Only this call's worker: the supervisor may have installed
+            # its own by now, and dropping that reference would let
+            # presses stack workers onto a wedged device.
+            if self._open_thread is worker:
+                self._open_thread = None
+            error = self._open_error
+            cancelled = self._stream is None
+            if error is not None or cancelled:
+                self._armed = False
+        if error is not None:
+            raise error
+        if cancelled:
             # No stream, no error: stop or cancel moved the generation
             # while the device was opening. Success here would tell the
             # caller "Listening" with no microphone open.
@@ -473,8 +541,7 @@ class Recorder:
         # dawdled. A stream nobody is waiting for stays closed, and
         # whatever it managed to hear stays out of the ring.
         with self._lock:
-            self._ring.clear()
-            self._ring_frames = 0
+            self._clear_ring_locked()
         self._discard(stream)
 
     @staticmethod
@@ -508,8 +575,7 @@ class Recorder:
             else:
                 self._generation += 1
                 stream, self._stream = self._stream, None
-                self._ring.clear()
-                self._ring_frames = 0
+                self._clear_ring_locked()
         # A driver that errors on the close must not lose the captured
         # audio, and must not leave the caller stuck mid-cycle.
         self._discard(stream)
@@ -532,9 +598,7 @@ class Recorder:
             return
         with self._lock:
             self._armed = False
-            self._chunks = []
-            self._chunk_frames = 0
-            self._pre_roll_frames = 0
+            self._reset_capture_locked()
             pending = self._pending_device
         if pending:
             self._cycle_stream()
@@ -570,14 +634,24 @@ class Recorder:
         with self._lock:
             self._generation += 1
             stream, self._stream = self._stream, None
-            self._ring.clear()
-            self._ring_frames = 0
+            self._clear_ring_locked()
             self._armed = False
-            self._chunks = []
-            self._chunk_frames = 0
-            self._pre_roll_frames = 0
+            self._reset_capture_locked()
             supervisor = self._supervisor
-        self._discard(stream)
+        if stream is not None:
+            # The close runs on a worker with a deadline: a wedged
+            # driver can block it forever, and the update relaunch
+            # waits only 20 seconds for this process to let go of the
+            # single-instance mutex. An abandoned closer is a daemon
+            # and dies with the process.
+            closer = threading.Thread(
+                target=self._discard,
+                args=(stream,),
+                name="mirabel-voice-mic-close",
+                daemon=True,
+            )
+            closer.start()
+            closer.join(timeout=2.0)
         if supervisor is not None:
             supervisor.join(timeout=2.0)
 
@@ -603,10 +677,12 @@ class Recorder:
                         # An armed recording keeps its chunks: the
                         # reopen gives it a gap, not a loss. The ring is
                         # cleared because audio from before the death
-                        # must never become pre-roll.
+                        # must never become pre-roll, and the level is
+                        # zeroed so the bars stop moving over a dead
+                        # device - a flat row is their whole point.
                         dead, self._stream = self._stream, None
-                        self._ring.clear()
-                        self._ring_frames = 0
+                        self._clear_ring_locked()
+                        self._level = 0.0
                         self._next_attempt = now
                     self._discard(dead)
                 else:
@@ -614,6 +690,21 @@ class Recorder:
                         self._reopen_backoff = REOPEN_BACKOFF_START_SECONDS
             elif not worker_alive:
                 with self._lock:
+                    if self._shutdown.is_set():
+                        # shutdown sets the event before it takes the
+                        # lock, so an opener spawned here would carry
+                        # the post-bump generation and install a live
+                        # microphone on a quit app.
+                        return
+                    if self._stream is not None or (
+                        self._open_thread is not None
+                        and self._open_thread.is_alive()
+                    ):
+                        # The snapshot above is a separate critical
+                        # section: a press can open, or even install,
+                        # in between. Spawning on the stale snapshot
+                        # would race two opens onto one device.
+                        continue
                     if now < self._next_attempt:
                         continue
                     self._open_error = None
@@ -628,8 +719,6 @@ class Recorder:
                     self._reopen_backoff = min(
                         self._reopen_backoff * 2, REOPEN_BACKOFF_CAP_SECONDS
                     )
-                    # Started under the lock, like a press's worker, so
-                    # the two spawn paths can never race each other.
                     opener.start()
 
     def set_device(self, index) -> None:  # noqa: ANN001 - index matches self.device
@@ -643,19 +732,27 @@ class Recorder:
         self.device = index
         if not self._hot:
             return
+        self._cycle_stream()
+
+    def _cycle_stream(self) -> None:
+        """Close the hot stream so the supervisor reopens it promptly.
+
+        The armed check lives in the same locked section as the close:
+        checking first and closing later would let a press arm in the
+        gap and lose its stream mid-word.
+        """
         with self._lock:
             if self._armed:
                 self._pending_device = True
                 return
-        self._cycle_stream()
-
-    def _cycle_stream(self) -> None:
-        """Close the hot stream so the supervisor reopens it promptly."""
-        with self._lock:
             self._pending_device = False
+            # The bump makes an open still in flight discard whatever
+            # it delivers: that open belongs to the old device, and
+            # installing it would leave dictation on the microphone the
+            # user just switched away from.
+            self._generation += 1
             stream, self._stream = self._stream, None
-            self._ring.clear()
-            self._ring_frames = 0
+            self._clear_ring_locked()
             self._reopen_backoff = REOPEN_BACKOFF_START_SECONDS
             self._next_attempt = 0.0
         self._discard(stream)

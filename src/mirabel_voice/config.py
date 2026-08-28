@@ -106,7 +106,8 @@ class Config:
             opens the microphone on each press, which is slower to start.
         pre_roll_seconds: How much audio from before the press is kept at
             the start of each recording, when hot_mic is on. Clamped to
-            the 2-second buffer.
+            the 2-second buffer, and to half of max_seconds so the
+            pre-roll can never fill the whole recording budget.
         transcribe_model: The OpenAI speech-to-text model.
         language: A two-letter language code, or None to detect it.
         cleanup_enabled: True sends the transcript to Claude for a cleanup.
