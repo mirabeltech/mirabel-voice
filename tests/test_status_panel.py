@@ -183,6 +183,54 @@ def test_starting_coaches_the_wait_on_its_second_line():
     assert milliseconds == 0
 
 
+def test_listening_carries_its_hint_then_goes_quiet():
+    # A warm microphone opens faster than the pill appears, so a hint
+    # that lived only in Starting was never read. It rides under
+    # Listening for a moment instead, then the pill goes quiet.
+    text, milliseconds = panel.status_line(
+        STATE_RECORDING, "Speak after the beep"
+    )
+    assert text == "Listening\nSpeak after the beep"
+    assert milliseconds == 0
+
+    overlay = make_overlay()
+    overlay._apply_status(STATE_RECORDING, "Speak after the beep")
+    assert overlay.drawn[-1] == (
+        "Listening\nSpeak after the beep",
+        STATE_RECORDING,
+    )
+    linger = [
+        (ms, timer)
+        for ms, timer in overlay._root.timers
+        if ms == panel.HINT_LINGER_MS
+    ]
+    assert linger
+    _, drop = linger[-1]
+    drop()
+    assert overlay.drawn[-1] == ("Listening", STATE_RECORDING)
+
+
+def test_a_new_dictation_outruns_a_stale_hint_drop():
+    # The drop of one dictation's hint must not strip the hint that the
+    # NEXT dictation just put up.
+    overlay = make_overlay()
+    overlay._apply_status(STATE_RECORDING, "Speak after the beep")
+    _, stale_drop = [
+        (ms, timer)
+        for ms, timer in overlay._root.timers
+        if ms == panel.HINT_LINGER_MS
+    ][-1]
+
+    overlay._apply_status(STATE_IDLE, "")
+    overlay._apply_status(STATE_RECORDING, "Hands-free. Press the hotkey to stop.")
+    stale_drop()  # the old timer arrives late
+
+    assert overlay.drawn[-1] == (
+        "Listening\nHands-free. Press the hotkey to stop.",
+        STATE_RECORDING,
+    )
+
+
 def test_a_delivered_dictation_flashes_done_and_goes():
     # One quiet word, briefly. The text on screen is the real answer,
     # so the flash must be shorter than any note or error.
