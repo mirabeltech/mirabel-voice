@@ -5,6 +5,7 @@ Everything else - the choices offered, the key capture, the menu
 shapes - is logic, and runs without a desktop.
 """
 
+import threading
 from types import SimpleNamespace
 
 import pytest
@@ -198,6 +199,8 @@ def test_set_hotkey_restarts_the_listener_with_the_new_key(monkeypatch, tmp_path
     app.on_status = None
     app._listener = None
     app._hotkeys_suspended = False
+    app._listener_lock = threading.Lock()
+    app._stopped = False
 
     def make():
         listener = FakeListener(config.hotkey)
@@ -261,6 +264,8 @@ def test_suspend_and_resume_bracket_a_capture(monkeypatch, tmp_path):
     app._on_state = None
     app.on_status = None
     app._hotkeys_suspended = False
+    app._listener_lock = threading.Lock()
+    app._stopped = False
     app._make_listener = FakeListener
     app._listener = FakeListener()
     app._listener.start()
@@ -368,10 +373,23 @@ def test_stopping_the_app_clears_a_pending_suspend(monkeypatch, tmp_path):
     app._listener = None
     app._dispatch_thread = None
     app._hotkeys_suspended = True
+    app._listener_lock = threading.Lock()
+    app._stopped = False
     app.recorder = SimpleNamespace(is_recording=False, cancel=lambda: None)
 
     app.stop()
     assert app._hotkeys_suspended is False
+
+    # The race this guards: a resume that lands after the quit must not
+    # install the keyboard hook on a stopped app.
+    app._hotkeys_suspended = True
+    resumed = []
+    app._make_listener = lambda: resumed.append(True) or SimpleNamespace(
+        start=lambda: None, stop=lambda: None
+    )
+    app.resume_hotkeys()
+    assert resumed == []
+    assert app._listener is None
 
     made = []
     app._make_listener = lambda: made.append(True) or SimpleNamespace(

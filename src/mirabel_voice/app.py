@@ -106,6 +106,11 @@ class VoiceApp:
         self.last_text = ""
         self._listener: HotkeyListener | None = None
         self._hotkeys_suspended = False
+        # suspend/resume arrive from the Tk thread, stop from the tray.
+        # The lock keeps a key capture that ends mid-quit from
+        # reinstalling the keyboard hook on a stopped app.
+        self._listener_lock = threading.Lock()
+        self._stopped = False
         self._worker: threading.Thread | None = None
         self._paste_thread: threading.Thread | None = None
         # Hotkey presses arrive on the keyboard hook thread. Work that
@@ -193,10 +198,13 @@ class VoiceApp:
         parse_hotkey(key)  # refuse a bad name before anything changes
         self.config.hotkey = key
         self.config.save()
-        if self._listener is not None or self._hotkeys_suspended:
-            self._stop_listener()
-            self._start_listener()
-            self._hotkeys_suspended = False
+        with self._listener_lock:
+            if not self._stopped and (
+                self._listener is not None or self._hotkeys_suspended
+            ):
+                self._stop_listener()
+                self._start_listener()
+                self._hotkeys_suspended = False
         log.info("The dictation key is now %s.", key)
         self._set_state(self.state, f"Dictation key: {key}.")
 
@@ -207,15 +215,17 @@ class VoiceApp:
         listening, pressing the current key mid-capture would start a
         dictation.
         """
-        if self._listener is not None:
-            self._stop_listener()
-            self._hotkeys_suspended = True
+        with self._listener_lock:
+            if self._listener is not None:
+                self._stop_listener()
+                self._hotkeys_suspended = True
 
     def resume_hotkeys(self) -> None:
         """Start watching the keyboard again after a suspend."""
-        if self._hotkeys_suspended:
-            self._start_listener()
-            self._hotkeys_suspended = False
+        with self._listener_lock:
+            if self._hotkeys_suspended and not self._stopped:
+                self._start_listener()
+                self._hotkeys_suspended = False
 
     def copy_last(self) -> bool:
         """Put the last dictated text on the clipboard.
@@ -605,11 +615,14 @@ class VoiceApp:
         """Stop the hotkey listener and close the microphone."""
         # A suspend must not survive the stop: a key capture that ends
         # after the quit would otherwise restart the keyboard hook on a
-        # dead app.
-        self._hotkeys_suspended = False
-        if self._listener is not None:
-            self._listener.stop()
-            self._listener = None
+        # dead app. The lock closes the window where a resume has read
+        # the suspend flag but not yet installed the hook.
+        with self._listener_lock:
+            self._stopped = True
+            self._hotkeys_suspended = False
+            if self._listener is not None:
+                self._listener.stop()
+                self._listener = None
         if self._dispatch_thread is not None:
             # The listener is silent now, so nothing new joins the queue.
             # The queued actions run, then the None ends the thread.
