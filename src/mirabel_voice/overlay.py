@@ -106,6 +106,11 @@ def status_line(state: str, detail: str) -> tuple[str, int]:
     An empty string means show nothing. A time of 0 means the words stay
     until the state changes again.
     """
+    if state == STATE_STARTING and detail:
+        # The microphone is not live yet: words spoken now are lost.
+        # The second line coaches the wait; the app words it to match
+        # the cue the person actually gets (beep, or the word itself).
+        return f"{LINES[state]}\n{detail}", 0
     if state in LINES:
         return LINES[state], 0
     if state == STATE_ERROR:

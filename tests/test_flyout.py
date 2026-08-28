@@ -27,6 +27,7 @@ class FakeApp:
             translate_to_english=False,
             input_device=None,
             hotkey="insert",
+            mode="toggle",
         )
         self.signin = None
         self.state = "idle"
@@ -168,6 +169,19 @@ def test_clicking_open_controls_shows_the_card():
     )
     item(None)
     assert shown == [True]
+
+
+# --- the hint follows the mode ---------------------------------------------
+
+
+def test_the_hint_says_tap_in_toggle_mode():
+    config = SimpleNamespace(hotkey="insert", mode="toggle")
+    assert card.idle_hint(config) == "Tap insert to start and stop · Esc cancels"
+
+
+def test_the_hint_says_hold_in_hold_mode():
+    config = SimpleNamespace(hotkey="f13", mode="hold")
+    assert card.idle_hint(config) == "Hold f13 to dictate · Esc cancels"
 
 
 # --- the app side of the key swap ------------------------------------------

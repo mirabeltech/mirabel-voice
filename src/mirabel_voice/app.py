@@ -328,8 +328,15 @@ class VoiceApp:
         self._focus_at_start = self._focus()
         # "Starting" until the microphone is really open. The user starts
         # to speak the moment anything says "Listening", so that word must
-        # never appear before the capture is live.
-        self._set_state(STATE_STARTING)
+        # never appear before the capture is live. The detail coaches the
+        # wait: words spoken before the capture is live are lost, and the
+        # first word of a sentence is the usual casualty.
+        self._set_state(
+            STATE_STARTING,
+            "Speak after the beep"
+            if self.config.play_sounds
+            else "Speak when you see Listening",
+        )
         try:
             self.recorder.start()
         except MicrophoneCancelled:

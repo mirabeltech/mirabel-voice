@@ -87,6 +87,19 @@ def language_names() -> list[str]:
     return [AUTO_DETECT] + [label for _, label in LANGUAGES]
 
 
+def idle_hint(config) -> str:  # noqa: ANN001 - a Config
+    """The one-line how-to for the mode the person is actually in.
+
+    "Hold" instructions on a toggle-mode machine teach the wrong habit,
+    so the words follow the setting.
+    """
+    from .hotkey import MODE_TOGGLE
+
+    if config.mode == MODE_TOGGLE:
+        return f"Tap {config.hotkey} to start and stop · Esc cancels"
+    return f"Hold {config.hotkey} to dictate · Esc cancels"
+
+
 def language_code(name: str) -> str | None:
     """The settings code behind a menu name."""
     for code, label in LANGUAGES:
@@ -537,7 +550,7 @@ class Flyout:
         if self._capturing:
             hint = "Press the key you want. Esc keeps the old one."
         else:
-            hint = f"Hold {self.app.config.hotkey} to dictate · Esc cancels"
+            hint = idle_hint(self.app.config)
         w["hint"].configure(text=hint)
 
     def _tick(self) -> None:
