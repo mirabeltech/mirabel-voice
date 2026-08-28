@@ -405,9 +405,14 @@ def main(argv: list[str] | None = None) -> int:
             f"[{state}] {detail}".rstrip()
         )
         app.start()
-        print(
-            f"Ready. Hold {config.hotkey} and speak. Press Ctrl+C to quit."
+        from .hotkey import MODE_TOGGLE
+
+        how = (
+            f"Tap {config.hotkey} to start and stop."
+            if config.mode == MODE_TOGGLE
+            else f"Hold {config.hotkey} and speak."
         )
+        print(f"Ready. {how} Press Ctrl+C to quit.")
         try:
             app.join()
         except KeyboardInterrupt:

@@ -175,6 +175,14 @@ def test_starting_stays_until_the_microphone_answers():
     assert milliseconds == 0
 
 
+def test_starting_coaches_the_wait_on_its_second_line():
+    # Words spoken before the capture is live are lost - the first word
+    # of the sentence, usually. The pill says how to not lose them.
+    text, milliseconds = panel.status_line(STATE_STARTING, "Speak after the beep")
+    assert text == "Starting…\nSpeak after the beep"
+    assert milliseconds == 0
+
+
 def test_a_delivered_dictation_flashes_done_and_goes():
     # One quiet word, briefly. The text on screen is the real answer,
     # so the flash must be shorter than any note or error.
