@@ -16,6 +16,19 @@ def test_load_writes_defaults_when_no_file_exists(tmp_path):
     assert config.transcribe_model == "gpt-4o-transcribe"
     assert config.translate_to_english is False
     assert config.paste_last_hotkey == "shift+alt+z"
+    assert config.hot_mic is True
+    assert config.pre_roll_seconds == 0.4
+
+
+def test_a_settings_file_without_the_hot_mic_keys_gets_the_defaults(tmp_path):
+    # Existing installs have config files that predate the hot mic. New
+    # fields are safe: a missing key falls back to the dataclass default,
+    # so those installs get the hot mic without touching their file.
+    target = tmp_path / "config.json"
+    target.write_text('{"hotkey": "insert"}', encoding="utf-8")
+    config = Config.load(target)
+    assert config.hot_mic is True
+    assert config.pre_roll_seconds == 0.4
 
 
 def test_the_retired_transcribe_default_is_upgraded_on_load(tmp_path):

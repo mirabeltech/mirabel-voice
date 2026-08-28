@@ -111,11 +111,11 @@ def test_the_level_is_zero_until_a_recording_runs():
     recorder = Recorder()
     assert recorder.level == 0.0
     # The callback stores the loudness of each block; the property
-    # reports it only while the stream is open.
-    recorder._stream = object()
+    # reports it only while a recording is armed.
+    recorder._armed = True
     recorder._callback(np.array([[8000], [-16000]], dtype=np.int16), 2, None, None)
     assert 0.4 < recorder.level < 0.6
-    recorder._stream = None
+    recorder._armed = False
     assert recorder.level == 0.0
 
 

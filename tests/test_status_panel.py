@@ -32,6 +32,9 @@ def loud_recording(seconds=2.0):
 
 
 class FakeRecorder:
+    hot_ready = False
+    device = None
+
     def __init__(self, recording):
         self.recording = recording
         self.recording_now = False
@@ -48,6 +51,15 @@ class FakeRecorder:
         return self.recording
 
     def cancel(self):
+        self.recording_now = False
+
+    def set_device(self, index):
+        self.device = index
+
+    def open_hot(self):
+        pass
+
+    def shutdown(self):
         self.recording_now = False
 
 

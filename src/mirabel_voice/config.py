@@ -95,8 +95,19 @@ class Config:
         sample_rate: Microphone sample rate in Hz. Whisper uses 16000.
         input_device: Microphone name or index. None selects the default
             Windows microphone.
-        min_seconds: The app discards audio shorter than this value.
+        min_seconds: The app discards audio shorter than this value. The
+            pre-roll does not count toward it: the check judges the time
+            between the press and the stop.
         max_seconds: The app stops the recording at this length.
+        hot_mic: True keeps the microphone open the whole time the app
+            runs, feeding a 2-second in-memory buffer that is discarded
+            continuously. A press then starts instantly and keeps the
+            pre-roll, so a word already in flight is caught whole. False
+            opens the microphone on each press, which is slower to start.
+        pre_roll_seconds: How much audio from before the press is kept at
+            the start of each recording, when hot_mic is on. Clamped to
+            the 2-second buffer, and to half of max_seconds so the
+            pre-roll can never fill the whole recording budget.
         transcribe_model: The OpenAI speech-to-text model.
         language: A two-letter language code, or None to detect it.
         cleanup_enabled: True sends the transcript to Claude for a cleanup.
@@ -151,6 +162,8 @@ class Config:
     input_device: str | int | None = None
     min_seconds: float = 0.4
     max_seconds: float = 300.0
+    hot_mic: bool = True
+    pre_roll_seconds: float = 0.4
     transcribe_model: str = "gpt-4o-transcribe"
     language: str | None = "en"
     cleanup_enabled: bool = True

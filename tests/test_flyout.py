@@ -389,7 +389,7 @@ def test_stopping_the_app_clears_a_pending_suspend(monkeypatch, tmp_path):
     app._hotkeys_suspended = True
     app._listener_lock = threading.Lock()
     app._stopped = False
-    app.recorder = SimpleNamespace(is_recording=False, cancel=lambda: None)
+    app.recorder = SimpleNamespace(is_recording=False, shutdown=lambda: None)
 
     app.stop()
     assert app._hotkeys_suspended is False

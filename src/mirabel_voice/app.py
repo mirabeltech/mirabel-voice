@@ -2,7 +2,8 @@
 
 One cycle runs in this order:
 
-1. The hotkey goes down. The recorder opens the microphone.
+1. The hotkey goes down. The recorder starts a recording - instantly
+   on the hot stream, or by opening the microphone cold.
 2. The hotkey comes up. The recorder returns the audio.
 3. A worker thread sends the audio to Whisper.
 4. The same thread sends the transcript to Claude for a cleanup.
@@ -75,6 +76,8 @@ class VoiceApp:
             sample_rate=config.sample_rate,
             device=config.input_device,
             max_seconds=config.max_seconds,
+            hot=config.hot_mic,
+            pre_roll_seconds=config.pre_roll_seconds,
         )
         words = all_words(config.custom_words)
         self.transcriber = transcriber or Transcriber(
@@ -164,7 +167,7 @@ class VoiceApp:
         switch needs no restart. None means the system default.
         """
         self.config.input_device = index
-        self.recorder.device = index
+        self.recorder.set_device(index)
         self.config.save()
         chosen = "the system default" if index is None else f"device {index}"
         log.info("The microphone is now %s.", chosen)
@@ -326,6 +329,11 @@ class VoiceApp:
         # Remember the window we paste into. If it changes, we must not
         # deliver there: that window belongs to somebody else now.
         self._focus_at_start = self._focus()
+        # The hot stream makes the press instant, so there is no wait to
+        # coach and no Starting to show. If the stream dies in the moment
+        # between this read and the start call, the press falls through
+        # to the cold open without a Starting pill; accepted.
+        hot = self.recorder.hot_ready
         # "Starting" until the microphone is really open. The user starts
         # to speak the moment anything says "Listening", so that word must
         # never appear before the capture is live. The detail coaches the
@@ -336,7 +344,8 @@ class VoiceApp:
             if self.config.play_sounds
             else "Speak when you see Listening"
         )
-        self._set_state(STATE_STARTING, coach)
+        if not hot:
+            self._set_state(STATE_STARTING, coach)
         try:
             self.recorder.start()
         except MicrophoneCancelled:
@@ -361,10 +370,11 @@ class VoiceApp:
             return False
         self._warm_cleanup()
         self._warm_transcriber()
-        # The coaching line rides under "Listening" for a moment: a warm
-        # microphone opens faster than the pill appears, so the Starting
-        # line alone is gone before anyone reads it.
-        self._set_state(STATE_RECORDING, coach)
+        # On the cold path the coaching line rides under "Listening" for
+        # a moment: a warm microphone opens faster than the pill appears,
+        # so the Starting line alone is gone before anyone reads it. The
+        # hot path was capturing before the press; nothing to coach.
+        self._set_state(STATE_RECORDING, "" if hot else coach)
         self._beep(880, 60)
         return True
 
@@ -420,7 +430,9 @@ class VoiceApp:
         recording = self.recorder.stop()
         self._beep(660, 60)
 
-        if recording.duration < self.config.min_seconds:
+        # Judged from the press, not the whole clip: pre-roll padding
+        # must not let a stray tap pass for a dictation.
+        if recording.press_duration < self.config.min_seconds:
             self._set_state(STATE_IDLE, "That was too short.")
             return
         if recording.peak < SILENCE_PEAK:
@@ -586,6 +598,7 @@ class VoiceApp:
         )
         self._dispatch_thread.start()
         self._start_listener()
+        self.recorder.open_hot()
         self._warm_connections()
         log.info(
             "Ready. Hotkey: %s (%s mode).", self.config.hotkey, self.config.mode
@@ -639,11 +652,12 @@ class VoiceApp:
             self._actions.put(None)
             self._dispatch_thread.join(timeout=3.0)
             self._dispatch_thread = None
-        # Always cancel, not only while recording: an open still in
-        # flight has no stream yet, and without the cancel's generation
+        # Always shut down, not only while recording: the hot stream and
+        # its supervisor must not outlive the app, and an open still in
+        # flight has no stream yet - without the shutdown's generation
         # bump the worker would install a live microphone on a stopped
         # app when the slow device finally answers.
-        self.recorder.cancel()
+        self.recorder.shutdown()
 
     def join(self) -> None:
         """Block until the listener stops."""

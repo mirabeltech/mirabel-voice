@@ -7,6 +7,7 @@ from mirabel_voice.app import (
     STATE_ERROR,
     STATE_IDLE,
     STATE_RECORDING,
+    STATE_STARTING,
     VoiceApp,
 )
 from mirabel_voice.audio import Recording
@@ -28,6 +29,9 @@ def silent_recording(seconds=2.0):
 
 
 class FakeRecorder:
+    hot_ready = False
+    device = None
+
     def __init__(self, recording):
         self.recording = recording
         self.recording_now = False
@@ -47,6 +51,15 @@ class FakeRecorder:
     def cancel(self):
         self.recording_now = False
         self.cancelled = True
+
+    def set_device(self, index):
+        self.device = index
+
+    def open_hot(self):
+        pass
+
+    def shutdown(self):
+        self.recording_now = False
 
 
 class CapturingInjector:
@@ -470,16 +483,17 @@ def test_a_microphone_timeout_reports_and_stays_usable(monkeypatch, tmp_path):
     assert app.state == STATE_RECORDING
 
 
-def test_quitting_always_cancels_the_recorder(monkeypatch, tmp_path):
-    # An open still in flight has no stream yet. Without the cancel's
+def test_quitting_always_shuts_the_recorder_down(monkeypatch, tmp_path):
+    # An open still in flight has no stream yet. Without the shutdown's
     # generation bump, a slow device would install a live microphone
-    # on a stopped app when it finally answers.
+    # on a stopped app when it finally answers - and the hot stream and
+    # its supervisor must not outlive the app.
     app = language_app(monkeypatch, tmp_path)
-    cancelled = []
-    app.recorder.cancel = lambda: cancelled.append(True)
+    shut = []
+    app.recorder.shutdown = lambda: shut.append(True)
     assert app.recorder.is_recording is False
     app.stop()
-    assert cancelled == [True]
+    assert shut == [True]
 
 
 def test_a_cancelled_open_does_not_claim_to_listen(monkeypatch, tmp_path):
@@ -496,3 +510,67 @@ def test_a_cancelled_open_does_not_claim_to_listen(monkeypatch, tmp_path):
     app.recorder.start = cancelled_open
     assert app.start_recording() is False
     assert STATE_RECORDING not in seen
+
+
+# --- the hot microphone starts instantly -------------------------------------
+
+
+def test_a_hot_microphone_skips_starting_and_the_coach():
+    # The hot stream was capturing before the press, so there is no wait
+    # to coach and no Starting pill to show.
+    app = make_app()
+    app.recorder.hot_ready = True
+    seen = []
+    app.on_status = lambda state, detail: seen.append((state, detail))
+    assert app.start_recording() is True
+    states = [state for state, _ in seen]
+    assert STATE_STARTING not in states
+    assert (STATE_RECORDING, "") in seen
+
+
+def test_a_cold_microphone_keeps_the_starting_coach():
+    # hot_mic off, the first open, a reopen after an error: the wait is
+    # real, so the coaching line must survive on this path.
+    app = make_app()
+    seen = []
+    app.on_status = lambda state, detail: seen.append((state, detail))
+    assert app.start_recording() is True
+    assert (STATE_STARTING, "Speak when you see Listening") in seen
+    assert (STATE_RECORDING, "Speak when you see Listening") in seen
+
+
+def test_pre_roll_does_not_rescue_a_too_short_press():
+    # 0.7 s of audio, but 0.5 s of it heard before the press: the guard
+    # judges the press, so the padding must not let a stray tap pass.
+    recording = loud_recording(seconds=0.7)
+    recording.pre_roll_frames = int(16000 * 0.5)
+    assert recording.duration > Config().min_seconds
+    injector = CapturingInjector()
+    app = make_app(recording=recording, injector=injector)
+    run_cycle(app)
+    assert injector.sent == []
+    assert app.state == STATE_IDLE
+
+
+def test_the_microphone_switch_reaches_set_device(monkeypatch, tmp_path):
+    # Hot mode cycles the stream inside set_device; a bare attribute
+    # assignment would leave the old device's stream open.
+    app = language_app(monkeypatch, tmp_path)
+    switched = []
+    app.recorder.set_device = lambda index: switched.append(index)
+    app.set_input_device(5)
+    assert switched == [5]
+
+
+def test_the_config_reaches_the_real_recorder():
+    # No recorder is injected here, so the app builds its own. Building
+    # one opens no stream, so no microphone is touched.
+    config = Config(play_sounds=False, hot_mic=True, pre_roll_seconds=1.5)
+    app = VoiceApp(
+        config=config,
+        transcriber=Transcriber(client=FakeOpenAI()),
+        cleaner=Cleaner(client=FakeAnthropic(response=text_response("Hi."))),
+        injector=CapturingInjector(),
+    )
+    assert app.recorder._hot is True
+    assert app.recorder._pre_roll_seconds == 1.5
