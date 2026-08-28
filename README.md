@@ -143,6 +143,7 @@ Both settings live in `config.json`: `"language"` as `"en"`, `"hi"`, `"hu"`, `"k
 ## Good to know
 
 - **Privacy.** Your speech is processed in the cloud, under terms that exclude training on your data. Nothing is saved on your computer — no recordings, no history.
+- **The microphone stays open while the app runs**, which is why dictation starts the instant you press. Between presses the app keeps only the last 2 seconds of sound, in memory, discarded continuously and sent nowhere. If you would rather the microphone open only when you dictate, set `"hot_mic": false` in `config.json` — each dictation starts a little slower, and nothing else changes.
 - **Prose, not code.** Prompts, emails, and messages work very well. Dictating brackets and symbols does not.
 - **Do not click into another window while speaking.** If you do, the app leaves the untidied words where they landed instead of editing a document it no longer owns. Press **Shift+Alt+Z** to put the clean version where you want it.
 - **If the internet drops** mid-sentence, the app quietly falls back to sending the recording when you let go. You still get your text.

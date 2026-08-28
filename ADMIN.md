@@ -116,6 +116,12 @@ A machine set up against the relay holds one token in `%APPDATA%\MirabelVoice\co
 
 What the relay does not do is separate people from each other's dictation history, because there is no history. Nothing spoken or written is stored anywhere, by the app or the relay.
 
+The microphone is the newer part of that promise. The app keeps it open the whole time it runs, so dictation starts the instant the key goes down instead of waiting for the device to open. The open stream feeds a 2-second buffer in memory, discarded continuously and sent nowhere until the person presses their key; the press keeps the last 0.4 seconds of it, so a word already in flight is caught whole. Expect Windows to show the app holding the microphone the whole time — the microphone indicator in the tray, and Mirabel Voice listed as in use under Settings > Privacy & security > Microphone. That is the open stream, not a recording.
+
+Two lines in `%APPDATA%\MirabelVoice\config.json` control it. `hot_mic` (default `true`) is the open stream itself; set it to `false` and the microphone opens only on a press, as it used to, at the cost of a slower start to every dictation. `pre_roll_seconds` (default `0.4`) is how much of the buffer a press keeps, anywhere from `0` to the buffer's full 2 seconds.
+
+One thing to know when somebody's dictation comes out of the wrong microphone: with the microphone left on the system default, the open stream keeps the device that was the default when it opened, and does not follow a later change in Windows. Picking a device in the tray's Microphone menu switches it right away.
+
 A developer running `setup.ps1` without `-RelayUrl` still holds two provider keys in `%APPDATA%\MirabelVoice\keys.json`, in plain text, exactly as the whole pilot used to. That mode exists so the app can be worked on without AWS. Use a key that belongs to you, not the org's, and delete the file when you are done with it.
 
 ## Running the relay
