@@ -287,7 +287,7 @@ class HotkeyListener:
 
     def _handle_other_key(self, key) -> None:  # noqa: ANN001
         """Cancel an active recording when the user presses Esc."""
-        if key == esc_id() and self._active and self.on_cancel is not None:
+        if key == esc_id() and self.on_cancel is not None:
             self._active = False
             self._locked = False
             self._down.clear()

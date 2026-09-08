@@ -62,6 +62,9 @@ def already_running(name: str = "Local\\MirabelVoiceSingleInstance") -> bool:
         import ctypes
 
         kernel32 = ctypes.windll.kernel32
+        kernel32.CreateMutexW.argtypes = [ctypes.c_void_p, ctypes.c_bool, ctypes.c_wchar_p]
+        kernel32.CreateMutexW.restype = ctypes.c_void_p
+        kernel32.CloseHandle.argtypes = [ctypes.c_void_p]
         handle = kernel32.CreateMutexW(None, False, name)
         if kernel32.GetLastError() == 183:  # ERROR_ALREADY_EXISTS
             kernel32.CloseHandle(handle)
@@ -97,38 +100,24 @@ def _start_update_watch(app: VoiceApp, tray) -> None:  # noqa: ANN001
     once - the running code keeps its imported modules - and the
     restart into it waits for a moment with no dictation in flight.
     """
-    from .updater import Updater, endorsement_for
-
-    updater = Updater.discover(
-        endorsement=endorsement_for(app.config, app.signin)
-    )
-    if updater is None or not app.config.auto_update:
-        return
-
     import threading
     import time
+    from pathlib import Path
 
-    from .app import STATE_ERROR, STATE_IDLE
+    def run():
+        next_check = time.monotonic() + 60
+        request = Path(sys.executable).parent.parent / '.update-request'
+        while not app._stopped:
+            manual = request.exists()
+            if manual:
+                request.unlink(missing_ok=True)
+            if manual or (app.config.auto_update and time.monotonic() >= next_check):
+                tray._check_updates()
+                next_check = time.monotonic() + 24 * 60 * 60
+            time.sleep(2)
 
-    def run() -> None:
-        time.sleep(60)  # let the start settle first
-        while True:
-            version = None
-            try:
-                version = updater.apply_latest()
-            except Exception:  # noqa: BLE001 - next day is another chance
-                logging.getLogger(__name__).exception("The update check failed.")
-            if version:
-                while app.state not in (STATE_IDLE, STATE_ERROR):
-                    time.sleep(5)
-                if updater.start_new_copy():
-                    tray.stop()
-                return
-            time.sleep(24 * 60 * 60)
-
-    threading.Thread(
-        target=run, name="mirabel-voice-updater", daemon=True
-    ).start()
+    if tray.updater is not None:
+        threading.Thread(target=run, name="mirabel-update-watch", daemon=True).start()
 
 
 def _log_to_file() -> None:
@@ -268,13 +257,51 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--verbose", action="store_true", help="Print debug messages."
     )
+    parser.add_argument("--self-test", action="store_true", help="Check imports and audio encoder without microphone/network access.")
+    parser.add_argument("--request-update", action="store_true", help="Ask the running app to check for an approved update.")
+    parser.add_argument("--support-export", action="store_true", help="Export allowlisted support facts, without logs or secrets.")
+    parser.add_argument("--set-startup", choices=("on", "off"))
     args = parser.parse_args(argv)
+    from .runtime import bundle_problem
+    problem = bundle_problem()
+    if problem:
+        if sys.stdout is not None:
+            print(problem)
+        else:
+            _show_error_box(problem)
+        return 1
 
     logging.basicConfig(
         level=logging.DEBUG if args.verbose else logging.INFO,
         format=LOG_FORMAT,
         datefmt="%H:%M:%S",
     )
+
+    if args.self_test:
+        from .health import check
+        try:
+            print(check())
+            return 0
+        except Exception as error:
+            print("Bundle check failed: " + type(error).__name__, file=sys.stderr)
+            return 1
+    if args.support_export:
+        from .diagnostics import export
+        print(export())
+        return 0
+    if args.set_startup:
+        from .startup import set_enabled
+        set_enabled(args.set_startup == "on")
+        return 0
+    if args.request_update:
+        from pathlib import Path
+        from .updater import Updater
+        if Updater.discover() is None:
+            print("Install the current Python bundle to enable approved updates.")
+            return 1
+        (Path(sys.executable).parent.parent / '.update-request').touch()
+        print("Update requested. The app checks approval and waits for dictation to finish.")
+        return 0
 
     if args.config:
         print(config_path())
@@ -367,7 +394,11 @@ def main(argv: list[str] | None = None) -> int:
 
     _log_to_file()
     load_api_keys()
-    config = Config.load()
+    try:
+        config = Config.load()
+    except ValueError as error:
+        _show_box(str(error) + "\nOpen the MirabelVoice settings folder to repair config.json.", icon=0x10)
+        return 2
     problems = _check_keys(config)
     for problem in problems:
         print(f"Setup problem: {problem}", file=sys.stderr)
@@ -447,6 +478,8 @@ def main(argv: list[str] | None = None) -> int:
         overlay = None
 
     tray = Tray(app, flyout=flyout)
+    if flyout is not None and not config.onboarding_complete:
+        flyout.show()
     _start_update_watch(app, tray)
     try:
         tray.run()

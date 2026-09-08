@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import os
+import math
 from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
 
@@ -66,6 +67,8 @@ def load_api_keys(base: Path | None = None) -> None:
     try:
         # utf-8-sig also accepts the BOM that Windows PowerShell writes.
         raw = json.loads(target.read_text(encoding="utf-8-sig"))
+        if not isinstance(raw, dict):
+            return
     except (OSError, json.JSONDecodeError):
         return
     for field_name, env_name in KEY_FIELDS.items():
@@ -164,6 +167,9 @@ class Config:
     max_seconds: float = 300.0
     hot_mic: bool = True
     pre_roll_seconds: float = 0.4
+    transcribe_timeout: float = 120.0
+    start_with_windows: bool = True
+    onboarding_complete: bool = False
     transcribe_model: str = "gpt-4o-transcribe"
     language: str | None = "en"
     cleanup_enabled: bool = True
@@ -186,11 +192,18 @@ class Config:
     def load(cls, path: Path | None = None) -> "Config":
         """Read the settings file. Write a default file if none exists."""
         target = path or config_path()
-        if not target.exists():
+        if not target.exists() and not target.with_suffix(target.suffix + ".bak").exists():
             cfg = cls()
             cfg.save(target)
             return cfg
-        raw = json.loads(target.read_text(encoding="utf-8-sig"))
+        from .storage import load_validated
+
+        def decode(data):
+            raw = json.loads(data.decode("utf-8-sig"))
+            cls._validate(raw)
+            return raw
+
+        raw = load_validated(target, decode)
         # save() writes every field, so a settings file always names the
         # transcribe model - a retired default in the file means "the
         # default", not a person's choice. Any other stored value is a
@@ -204,8 +217,44 @@ class Config:
         """Write the settings to disk and return the path."""
         target = path or config_path()
         target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(
-            json.dumps(asdict(self), indent=2, ensure_ascii=False) + "\n",
-            encoding="utf-8",
-        )
+        from .storage import save_bytes
+
+        payload = asdict(self)
+        self._validate(payload)
+        save_bytes(target, (json.dumps(payload, indent=2, ensure_ascii=False) + "\n").encode("utf-8"))
         return target
+
+    @classmethod
+    def _validate(cls, raw: dict) -> None:
+        if not isinstance(raw, dict):
+            raise ValueError("Settings must be a JSON object.")
+        defaults = cls()
+        nullable = {"input_device", "language", "relay_url", "relay_token", "google_client_id", "google_client_secret"}
+        bounds = {"sample_rate": (8000, 192000), "max_seconds": (1, 300),
+                  "min_seconds": (0, 10), "pre_roll_seconds": (0, 2),
+                  "transcribe_timeout": (1, 120), "cleanup_timeout": (1, 20)}
+        for f in fields(cls):
+            if f.name not in raw:
+                continue
+            value, default = raw[f.name], getattr(defaults, f.name)
+            if value is None and f.name in nullable:
+                continue
+            if f.name == "input_device":
+                valid = type(value) in (str, int) and (not isinstance(value, int) or value >= 0)
+            elif f.name == "custom_words":
+                valid = isinstance(value, list) and len(value) <= 500 and all(isinstance(v, str) and len(v) <= 200 for v in value)
+            elif f.name in bounds:
+                lo, hi = bounds[f.name]
+                valid = type(value) in (int, float) and math.isfinite(value) and lo <= value <= hi
+                if f.name == "sample_rate":
+                    valid = valid and type(value) is int
+            elif isinstance(default, bool):
+                valid = type(value) is bool
+            else:
+                valid = isinstance(value, str)
+            if not valid:
+                raise ValueError(f"Invalid setting: {f.name}")
+        if raw.get("mode", defaults.mode) not in ("toggle", "hold"):
+            raise ValueError("Invalid dictation mode.")
+        if raw.get("inject_method", defaults.inject_method) not in ("paste", "type"):
+            raise ValueError("Invalid insertion method.")

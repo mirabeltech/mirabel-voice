@@ -174,20 +174,23 @@ class Cleaner:
         API call fails. Dictation must never disappear because a cleanup step
         did not work.
         """
+        self.last_failed = False
         if not text.strip():
             return text
 
-        options = {"timeout": self.timeout, "max_retries": 1}
+        options = {"timeout": self.timeout, "max_retries": 0}
         if self.relay_url and callable(self.relay_token):
             try:
                 key = self._current_key()
             except Exception as error:  # noqa: BLE001 - never lose the transcript
-                log.warning("The sign-in did not refresh: %s", error)
+                log.warning("The sign-in did not refresh (%s).", type(error).__name__)
+                self.last_failed = True
                 return text
             if key is None:
                 # Signed out. The transcriber already told the user; the
                 # cleanup's job is only to never lose the words.
                 log.warning("Signed out of Google; using the raw transcript.")
+                self.last_failed = True
                 return text
             options["api_key"] = key
         try:
@@ -208,11 +211,13 @@ class Cleaner:
                 stop_sequences=["</clean>"],
             )
         except Exception as error:  # noqa: BLE001 - never lose the transcript
-            log.warning("Cleanup failed, using the raw transcript: %s", error)
+            log.warning("Cleanup failed; using the raw transcript (%s).", type(error).__name__)
+            self.last_failed = True
             return text
 
         if getattr(response, "stop_reason", None) == "refusal":
             log.warning("Cleanup was declined, using the raw transcript.")
+            self.last_failed = True
             return text
 
         parts = [

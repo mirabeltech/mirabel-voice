@@ -1,105 +1,54 @@
-name: Build and release
-
-# Every push to main builds the installer, so a broken build is found on
-# the day it breaks. Pushing a tag such as v0.2.0 also publishes it.
-
+name: Verify Windows Python bundle
 on:
   push:
     branches: [main]
-    tags: ["v*"]
+    tags: ['v*']
   pull_request:
     branches: [main]
   workflow_dispatch:
-
 permissions:
-  contents: write
-
+  contents: read
 jobs:
-  build:
+  bundle:
     runs-on: windows-latest
-
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
-          cache: pip
-
-      - name: Install the app and the build tools
-        run: |
-          python -m pip install --upgrade pip
-          pip install -e ".[dev]" pyinstaller
-
-      - name: Run the tests
-        run: pytest -q
-
-      - name: Write the icon and the version resource
-        id: prep
+          python-version: '3.13.15'
+          architecture: x64
+      - name: Prepare build environment
         shell: pwsh
         run: |
-          $version = (python packaging/prepare.py).Trim()
-          "version=$version" >> $env:GITHUB_OUTPUT
-          Write-Host "Version $version"
-
-      - name: Check that the tag matches the version in the code
+          python -m venv .venv
+          .venv/Scripts/python.exe -m pip install --require-hashes --no-deps -r packaging/requirements-build.lock
+          .venv/Scripts/python.exe -m pip install --require-hashes --no-deps -r packaging/requirements-windows.lock
+          .venv/Scripts/python.exe -m pip install --no-deps --no-build-isolation -e .
+      - name: Check tag matches source
         if: startsWith(github.ref, 'refs/tags/v')
         shell: pwsh
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
         run: |
-          $tag = "${{ github.ref_name }}".TrimStart('v')
-          $code = "${{ steps.prep.outputs.version }}"
-          if ($tag -ne $code) {
-            Write-Host "::error::Tag $tag does not match the version $code in pyproject.toml. Update pyproject.toml, or tag the right version."
-            exit 1
-          }
-
-      - name: Pack the program
-        run: pyinstaller --noconfirm --clean --log-level WARN packaging/mirabel_voice.spec
-
-      - name: Install Inno Setup
-        run: choco install innosetup --no-progress -y
-
-      - name: Make the installer
-        shell: pwsh
+          $version = (.venv/Scripts/python.exe packaging/prepare.py).Trim()
+          if ($env:RELEASE_TAG -ne "v$version") { throw 'Tag does not match source version' }
+      - name: Build and test the actual ZIP with dummy configuration
+        shell: powershell
+        run: packaging/build_bundle.ps1 -RelayUrl https://relay.invalid -GoogleClientId ci-invalid -GoogleClientSecret ci-invalid
+      - name: Verify installation, repair and interrupted-update recovery
+        shell: powershell
         run: |
-          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
-          # Some directives need Inno Setup 6.3 or newer. Say which
-          # version ran, so a failure here is readable.
-          Write-Host "Inno Setup $((Get-Item $iscc).VersionInfo.ProductVersion)"
-          # A deliberately useless relay address. This build proves the
-          # installer still compiles; it is not something to hand out.
-          # The real download is built on the owner's machine with the
-          # real address, and shared privately. See ADMIN.md.
-          & $iscc /Q "/DAppVersion=${{ steps.prep.outputs.version }}" "/DRelayUrl=https://relay.invalid" packaging\installer.iss
-          if ($LASTEXITCODE -ne 0) { exit 1 }
-
-      - name: Keep the build for inspection
+          $zip = Get-ChildItem dist/MirabelVoice-*-python.zip | Select-Object -First 1
+          scripts/verify_bundle.ps1 -Bundle $zip.FullName
+      - name: Audit the locked dependencies
+        run: |
+          .venv/Scripts/python.exe -m pip_audit -r packaging/requirements-windows.lock --require-hashes --disable-pip
+          .venv/Scripts/python.exe -m pip_audit -r packaging/requirements-build.lock --require-hashes --disable-pip
+      - name: Keep test artifact and inventories (no production configuration)
         uses: actions/upload-artifact@v4
         with:
-          name: compile-check-not-for-use-${{ steps.prep.outputs.version }}
-          path: dist/MirabelVoiceSetup-*.exe
+          name: python-bundle-test-only
+          path: |
+            dist/MirabelVoice-*-python.zip*
+            dist/*inventory.json
           if-no-files-found: error
-
-      - name: Publish the release notes
-        if: startsWith(github.ref, 'refs/tags/v')
-        uses: softprops/action-gh-release@v2
-        with:
-          generate_release_notes: true
-          body: |
-            ## Install, or update
-
-            **Already running Mirabel Voice?** Paste the install line from
-            the README into PowerShell and this release swaps itself in.
-            Nothing to download, and your settings stay. (If this release
-            changes the app's foundations, the line says so and sends you
-            to the shared drive for a fresh zip.)
-
-            **New machine?** Download the zip from the company shared
-            drive - the README links it - then paste the same line. You
-            sign in with your Mirabel Google account. No API keys, no
-            administrator password. The app installs in your own profile
-            and starts with Windows.
-
-            There is no file attached here on purpose: the download
-            carries the address of our relay, and this repository is
-            public.

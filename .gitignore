@@ -20,3 +20,6 @@ packaging/version_info.txt
 # The relay address. Not a secret, but this repository is public and
 # the download is handed out privately. See ADMIN.md.
 relay.json
+
+# Isolated release experiments, downloaded runtimes and private test configuration.
+build_probe/

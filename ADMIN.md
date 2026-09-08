@@ -1,128 +1,70 @@
 # Running Mirabel Voice for the team
 
-This is for whoever hands the app out. Everyone else only needs the README.
+The selected distribution is the free **Python ZIP on company-restricted Google Drive**. Store/MSIX, developer registration, paid signing and a software portal are out of scope. Tommy is the only manual acceptance tester. The tested 0.9.0 ZIP is authorized for the final download/installation check. Organization-wide rollout and relay deployment remain separate.
 
-## Handing it out
+## Build and review the download
 
-Point each person at the README: they download the zip from the shared drive and paste the install line into PowerShell. The bootstrap in this repository's `install.ps1` finds the zip in their Downloads folder, unblocks it, unpacks it, and runs the `Install.ps1` inside — the unblock/extract/right-click routine, done for them. For a token build, also send their own token on a channel you trust. They do not need Git, Python, an API key, or an administrator password.
-
-**Do not attach the zip to a GitHub release.** The repository is public, and the zip carries the relay's address in `Install.ps1`. A token still gates every request, but a public address is one anybody can hammer, and every refused call is a billed Lambda invocation.
-
-The install puts the app in `%LOCALAPPDATA%\Programs\Mirabel Voice` and starts it with Windows. Running a newer one over an older one replaces the program and leaves the settings and the token alone.
-
-## Cutting a release
-
-The normal release is three steps, and the third one is the rollout:
-
-1. **Bump the version.** Change `version` in `pyproject.toml` — the only place the version lives — and commit it on `main`.
-
-2. **Tag it and push the tag.** GitHub Actions runs the tests, checks the tag against `pyproject.toml`, and publishes the release notes. It attaches no file, on purpose: the download carries the relay's address and this repository is public.
-
-   ```powershell
-   git tag v0.6.0
-   git push origin main v0.6.0
-   ```
-
-3. **Endorse it.** Nothing rolls out until this runs:
-
-   ```powershell
-   python scripts\deploy_relay.py --endorse v0.6.0
-   ```
-
-That is the whole job. Every installed machine checks the relay once a day, sees the endorsed version, downloads that tag from GitHub, verifies it against the endorsed hash, swaps it in, proves the new code still imports, and restarts between dictations. The team is current within a day and nobody installs anything. The impatient right-click the icon and choose **Check for updates**, and the pasted install line lands on the endorsed release too.
-
-Tag and endorse are a pair. Machines follow the endorsement, not the release list, so a tag without an endorsement reaches nobody. A bad release is recalled with `--endorse` of the previous good version; deleting things achieves nothing, because machines only ever move to what is endorsed.
-
-Why the endorsement exists: it moves the authority to update the fleet from "can publish a GitHub release" to "can deploy the relay". The hash covers the package contents, computed the same way the app computes it (the contents, not the zip — GitHub does not promise byte-identical archives forever), so GitHub is just the delivery. Later deploys carry the endorsement forward until the next `--endorse`. A machine that gets no answer from the relay — development mode, or a relay never endorsed — falls back to following the newest published release.
-
-### The rare release that changes the bundle
-
-A release that touches the runtime itself — a Python version bump, a new binary library, Tkinter — cannot travel as source. Machines refuse it safely: the proof step fails, they keep the old version, and the icon's tooltip sends their person to the shared drive. For those releases, add two steps:
-
-4. **Rebuild the zip.** `relay.json` in the repository root supplies the address and the Google client:
-
-   ```powershell
-   powershell -ExecutionPolicy Bypass -File packaging\build_bundle.ps1
-   ```
-
-5. **Upload it over the existing shared-drive file** with **Manage versions**, and rename the file to the new version — a rename keeps the link the README carries.
-
-People then paste the install line once; the newer zip outranks their install and does the full reinstall, keeping their settings.
-
-Every push to `main` also builds the installer with a deliberately useless relay address, so a broken build is found on the day it breaks. That artifact is a compile check and is not something to hand anybody. `packaging\build.ps1` makes the packaged .exe pair instead and needs [Inno Setup](https://jrsoftware.org/isdl.php) 6.3 or newer; prefer the bundle. See **Build the download** below.
-
-## When Windows blocks it
-
-Two different refusals, and they are not the same problem.
-
-**"Windows protected your PC"** is SmartScreen. It appears because the file is not signed. People click **More info**, then **Run anyway**, and it installs. Annoying, not blocking.
-
-**"An Application Control policy has blocked this file"** is Smart App Control, and there is no way past it. It refuses unsigned programs outright, it is on by default on clean Windows 11 installs, and turning it off is permanent. This is why the Python bundle exists: everything executable in it is signed by the Python Software Foundation, so Smart App Control allows it. See issue #35.
-
-To check a machine before sending anything:
+Use the full python.org **CPython 3.13.15 x64** with Tcl/Tk and a matching `.venv`. Runtime dependencies are pinned with hashes in `packaging/requirements-windows.lock`; the reviewed embeddable Python download is pinned in `packaging/python-runtime.sha256`. Updating either requires a full bundle and new checks. Changes to bundled launch/recovery support or `sitecustomize.py` also require incrementing `bundle_format` in `src/mirabel_voice/data/runtime.json`; the installed runtime keeps a separate format marker so a source-only update will refuse that mismatch. The full Python installation supplies Tk; the builder checks Python/Tk signatures and inventories all native components. Third-party native libraries can be unsigned. A valid interpreter signature does not establish universal Smart App Control compatibility.
 
 ```powershell
-(Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\CI\Policy').VerifiedAndReputablePolicyState
+.venv\Scripts\python.exe -m pytest -q
+.venv\Scripts\python.exe -m pip_audit -r packaging/requirements-windows.lock --require-hashes --disable-pip
+powershell -ExecutionPolicy Bypass -File packaging\build_bundle.ps1
 ```
 
-`1` means Smart App Control is on and only the Python bundle will work there. `0`, blank, or an error means either download is fine.
+The local builder obtains the private relay and Google desktop-client configuration from the existing ignored `relay.json`, or explicit arguments. Never commit that file, configured ZIPs, settings, credentials or private support files. CI uses `https://relay.invalid` and dummy Google values. CI artifacts are test-only downloads, not working company releases. The workflow builds the actual Python ZIP, performs offline import/Tcl/encoder checks and audits the locked packages. Test/build/audit tooling is pinned with hashes in `packaging/requirements-build.lock`; runtime packages cannot float during the build.
 
-A code-signing certificate removes both problems: about $200-400 a year for a standard one, which quiets SmartScreen only after enough people have downloaded the file, or more for one that works at once. Ask Mirabel IT first, since the company may already hold one. It is worth buying when this goes past a handful of people. It is not needed for the pilot, because the bundle sidesteps both.
+The output is `dist/MirabelVoice-[version]-python.zip`, its SHA-256 file, and native/dependency inventories. Preserve those together with the dependency audit and [Tommy's acceptance results](docs/windows-acceptance.md). The generated `_version.txt` comes from `pyproject.toml`; it moves transactionally with the app. Keep the previous configured download privately for recovery. Legacy EXE/Inno scripts remain historical development tools and are not the organization release path or CI release artifact.
 
-## Handing out tokens
+## Approve and distribute
 
-**Nobody you send the app to ever sees an API key.** They get one token, and that token only works through the relay.
+Approval is explicit. Do not publish the dummy CI ZIP as an employee download. Build a configured candidate, verify its integrity, and have Tommy authorize that exact hash for download testing. Tommy then tests it downloaded through a browser with protections enabled before organization-wide rollout. A local smoke test is not a fresh-download test.
 
-### Build the download
+The bootstrap downloads **public approval metadata separately from the private ZIP**. It checks the full ZIP SHA-256 before unblocking, extracting or executing its installer. `packaging/bundles.json` lists only ZIPs explicitly authorized by the release owner. The 0.9.0 entry enables the final download test; it does not mark all release checks complete. A public checksum exposes only filename/version/hash, not private configuration. Protect changes to the bootstrap and this manifest with repository review controls. The metadata is a trust decision based on the repository over HTTPS; it is not Authenticode signing and cannot defeat a managed Windows policy.
+
+Prepare the manifest entry locally after the release owner authorizes the exact ZIP:
 
 ```powershell
-python scripts\setup_relay.py
-powershell -ExecutionPolicy Bypass -File packaging\build_bundle.ps1 -RelayUrl https://<the relay address>
+.venv\Scripts\python.exe scripts\approve_bundle.py dist\MirabelVoice-0.9.0-python.zip
 ```
 
-The wizard prints the address; the build bakes it into `Install.ps1` so that nobody has to type it. A build with no address fails rather than producing a download that points nowhere. The result is `dist\MirabelVoice-x.y.z-python.zip`, about 53 MB.
+Review the exact entry, publish the manifest through the normal reviewed repository change, and place that exact configured ZIP in the restricted Drive folder. Confirm the public manifest and Drive hash match. Do not replace bytes underneath an already reviewed hash. An unpublished candidate can be tested in an isolated profile using a separate local manifest and `install.ps1 -ManifestPath <test-manifest> -DownloadsDir <test-downloads> -Target <test-install>`; this is a developer test input, not an employee trust bypass or production approval.
 
-That zip holds Python's own embeddable build with the app installed into it. It exists because Windows Smart App Control refuses unsigned programs outright, with no way past it, and refuses ours (see issue #35). It does not refuse Python, which the Python Software Foundation signed, and it does not refuse our source, which is text. The build checks that signature and stops if it is not valid.
+Share the [README](README.md) and one stable Drive link. Users need no Git, separate Python installation or provider keys. The bootstrap finds the versioned Python ZIP, including browser duplicate-number filenames, verifies it, and installs current-user shortcuts/startup/removal support. If Windows blocks it, collect the exact block and affected component. Do not advise disabling Smart App Control or weakening organization policy.
 
-`packaging\build.ps1` still makes the older pair, `MirabelVoiceSetup-x.y.z.exe` and `MirabelVoice-x.y.z.zip`, which hold a packaged program instead. They are smaller and they install the same way, but a machine with Smart App Control on cannot run either. Prefer the Python bundle until the program is signed.
+## Source updates and rollback
 
-The bundle carries Tkinter, which the status panel needs and which neither the embeddable build nor the NuGet package ships. `build_bundle.ps1` takes it from the full Python that made the `.venv`, checks that each file is signed, and stops if it is not. That is why the build needs a python.org install of the same version on the machine, not only the `.venv`.
-
-You only rebuild when the app changes. The same zip serves everybody, because the token is the only per-person part and it is typed at install time.
-
-### Give each person their token
-
-Issue it with `python scripts\setup_relay.py` (press `a`, their name, `d`) and send them two things: the zip, and their own token. Send the token on a channel you trust. It is printed once and cannot be read back.
-
-They then download the zip, paste the README's install line into PowerShell, and type their token when asked.
-
-The install checks the token through the relay before it finishes. A token the relay does not know is refused there, with a plain sentence, and cleared so that a second run asks again rather than skipping the page.
-
-A newer zip installed over an older one keeps the token, the dictation key, and every other setting, and does not ask for the token again.
-
-### If somebody's token has to change
-
-Issue them a new one and have them run the installer again. It sees the stored token, so tell them to clear it first: right-click the icon near the clock, quit, then delete the `relay_token` line from `%APPDATA%\MirabelVoice\config.json`. Or run this from the install folder, which is quicker:
+Commit/review the source, ensure `pyproject.toml` matches the release tag, then publish the source release through the normal repository process. A published GitHub release alone does not approve an update for relay-managed users. After testing, the release owner endorses the package content hash through the existing relay deployment tooling:
 
 ```powershell
-& "$env:LOCALAPPDATA\Programs\Mirabel Voice\MirabelVoiceConsole.exe" --set-relay "https://<the relay address>" "<their new token>"
+.venv\Scripts\python.exe scripts\deploy_relay.py --endorse 0.9.0
 ```
 
-`setup.ps1` still works and is the right choice for developers. Both paths produce the same app.
+This is a **production rollout action**, not part of building or testing locally. See the command's help and [AWS operations guide](docs/AWS.md) for account details. Keep the previous approved source/version and private full ZIP available. An explicit older relay endorsement supports source rollback when its dependency lock matches the installed runtime; runtime changes require the previous full ZIP. Version 0.9.0 changes Python itself, so existing users need the full ZIP. The package runtime contract also makes older --config proof commands reject this source-only upgrade and keep their working copy.
 
-## What this does and does not protect
+Tray, daily checks and the bootstrap's update request now share the app coordinator. Missing/invalid approval, expired credentials, an unavailable relay or a hash mismatch keeps the working app. The bootstrap no longer carries a second GitHub-only update implementation. A source/developer checkout without a relay is a separate development mode.
 
-A machine set up against the relay holds one token in `%APPDATA%\MirabelVoice\config.json` and no provider keys at all. Anyone who can use that computer can read the token, so treat it as that person's own credential: it names them in the usage report, and taking it away is one line in the wizard.
+The updater takes an installation lock, waits for active work, checks the candidate with installed dependencies, journals the replacement, verifies startup again and retains the previous package. Package-local version metadata is authoritative after recovery. A stable launcher outside the package restores an interrupted package update. A separate PowerShell launcher restores an interrupted full-runtime replacement before starting Python. If the lock is busy, wait and retry; do not delete it while another process is using it.
 
-What the relay does not do is separate people from each other's dictation history, because there is no history. Nothing spoken or written is stored anywhere, by the app or the relay.
+## Repair and remove
 
-The microphone is the newer part of that promise. The app keeps it open the whole time it runs, so dictation starts the instant the key goes down instead of waiting for the device to open. The open stream feeds a 2-second buffer in memory, discarded continuously and sent nowhere until the person presses their key; the press keeps the last 0.4 seconds of it, so a word already in flight is caught whole. Expect Windows to show the app holding the microphone the whole time — the microphone indicator in the tray, and Mirabel Voice listed as in use under Settings > Privacy & security > Microphone. That is the open stream, not a recording.
+Quit the app before replacing the full runtime; the installer refuses to kill active dictation. For an explicit repair with an approved ZIP in Downloads:
 
-Two lines in `%APPDATA%\MirabelVoice\config.json` control it. `hot_mic` (default `true`) is the open stream itself; set it to `false` and the microphone opens only on a press, as it used to, at the cost of a slower start to every dictation. `pre_roll_seconds` (default `0.4`) is how much of the buffer a press keeps, anywhere from `0` to the buffer's full 2 seconds.
+```powershell
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/mirabeltech/mirabel-voice/main/install.ps1))) -Repair
+```
 
-One thing to know when somebody's dictation comes out of the wrong microphone: with the microphone left on the system default, the open stream keeps the device that was the default when it opened, and does not follow a later change in Windows. Picking a device in the tray's Microphone menu switches it right away.
+Repair stages and tests a full runtime, keeps the previous runtime, and preserves per-user settings/credentials. Startup preference is retained. Normal updates cannot silently migrate changed dependency locks: they ask for a new ZIP. The stable launchers recover pending replacements; if both settings copies are unreadable, repair the configuration rather than resetting it blindly.
 
-A developer running `setup.ps1` without `-RelayUrl` still holds two provider keys in `%APPDATA%\MirabelVoice\keys.json`, in plain text, exactly as the whole pilot used to. That mode exists so the app can be worked on without AWS. Use a key that belongs to you, not the org's, and delete the file when you are done with it.
+Uninstall through Windows Installed apps after Quit. Shortcuts/startup entries and application files are removed; settings are retained unless explicitly removed. `%APPDATA%\MirabelVoice` can include settings backups, encrypted sign-in backups and logs, so do not distribute that directory as a support bundle. Use **Export support information**, which allowlists version/platform and offline health facts.
+
+## Service and privacy maintenance
+
+See [service maintenance](docs/service-maintenance.md) for request/model/output validation, optional distributed request limits, pending usage/alert decisions and the synthetic service-check command. Cloud limits, monitoring and provider-key ownership must be reviewed before rollout; a local implementation is not a deployed safeguard. Existing organization-key work remains issue #46.
+
+The microphone normally maintains a rolling memory buffer for fast starts; Pause closes it. Failed audio is retained only in memory for one explicit retry and discarded on new recording, Discard or Quit. The last transcript remains in memory for copy/paste-last. Configuration, credentials and application logs do persist; clipboard history/sync and provider retention are separate systems. Do not promise zero retention or describe network loss as seamless offline operation. Keep logs limited to operational status, not speech, keys or provider payloads.
+
+The following commands describe existing relay operations. They require the appropriate operator credentials and are not automatically run by the installer.
 
 ## Running the relay
 

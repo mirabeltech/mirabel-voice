@@ -136,6 +136,7 @@ def test_with_a_flyout_the_menu_shrinks_to_the_windows_minimum():
         "Open controls",
         "Check for updates",
         "Open the settings folder",
+        "Export support information",
         "Quit",
     ]
 
@@ -215,6 +216,7 @@ def test_set_hotkey_restarts_the_listener_with_the_new_key(monkeypatch, tmp_path
     app._hotkeys_suspended = False
     app._listener_lock = threading.Lock()
     app._stopped = False
+    app._cancel_work = threading.Event()
 
     def make():
         listener = FakeListener(config.hotkey)
@@ -280,6 +282,7 @@ def test_suspend_and_resume_bracket_a_capture(monkeypatch, tmp_path):
     app._hotkeys_suspended = False
     app._listener_lock = threading.Lock()
     app._stopped = False
+    app._cancel_work = threading.Event()
     app._make_listener = FakeListener
     app._listener = FakeListener()
     app._listener.start()
@@ -389,6 +392,7 @@ def test_stopping_the_app_clears_a_pending_suspend(monkeypatch, tmp_path):
     app._hotkeys_suspended = True
     app._listener_lock = threading.Lock()
     app._stopped = False
+    app._cancel_work = threading.Event()
     app.recorder = SimpleNamespace(is_recording=False, shutdown=lambda: None)
 
     app.stop()
@@ -427,3 +431,118 @@ def test_the_version_comes_from_the_newest_marker_name(tmp_path):
 
 def test_no_markers_answer_nothing(tmp_path):
     assert card.version_from_markers(tmp_path) == ""
+
+
+@pytest.mark.parametrize("focused, cancelled", [
+    (".settings.!button", False),
+    (".settings.!combobox.popdown.f.l", False),
+    (".other", True),
+    ("", True),
+])
+def test_focus_changes_keep_settings_open_and_disarm_capture(focused, cancelled):
+    class Top:
+        def __str__(self):
+            return ".settings"
+
+        def after(self, _delay, callback):
+            callback()
+
+        tk = SimpleNamespace(call=lambda *_: focused)
+
+    flyout = capture_flyout()
+    flyout._top = Top()
+    stopped = []
+    flyout._cancel_capture = lambda: stopped.append(True)
+    flyout._hide = lambda: pytest.fail("Focus changes must not close Settings")
+    flyout._on_focus_out(None)
+    assert bool(stopped) is cancelled
+
+
+def test_settings_controls_and_focus_loss_do_not_close_native_window(monkeypatch):
+    import tkinter as tk
+    from mirabel_voice import audio
+
+    monkeypatch.setattr(card.Flyout, "_warm_devices", staticmethod(lambda: None))
+    monkeypatch.setattr(audio, "list_input_devices", lambda: [])
+    root = tk.Tk()
+    root.withdraw()
+    errors = []
+    root.report_callback_exception = lambda *args: errors.append(args)
+    flyout = card.Flyout(SimpleNamespace(_root=root, _scale=1), FakeApp())
+    flyout.app.set_language = lambda value: setattr(flyout.app.config, "language", value)
+    try:
+        flyout._show()
+        flyout._shown_at = 0
+        top = flyout._top
+        language = flyout._widgets["language"]
+        chosen_code, chosen_label = LANGUAGES[-1]
+        language.set(chosen_label)
+        language.event_generate("<<ComboboxSelected>>")
+        assert flyout.app.config.language == chosen_code
+        # Real ttk dropdowns are Tcl widgets without Python widget objects.
+        top.tk.call("ttk::combobox::Post", str(language))
+        popup = top.tk.call("ttk::combobox::PopdownWindow", str(language))
+        popup_id = int(str(top.tk.call("winfo", "id", popup)), 0)
+        assert flyout._owns_window(language.winfo_id())
+        assert flyout._owns_window(popup_id)
+        other = tk.Toplevel(root)
+        other.update_idletasks()
+        assert not flyout._owns_window(other.winfo_id())
+        other.destroy()
+        top.event_generate("<FocusOut>")
+        root.after(250, root.quit)
+        root.mainloop()
+        assert top.state() == "normal"
+        top.tk.call("ttk::combobox::Unpost", str(language))
+        flyout._widgets["scratch"].focus_force()
+        flyout._widgets["scratch"].insert("1.0", "Practice text")
+        top.event_generate("<FocusOut>")
+        root.after(250, root.quit)
+        root.mainloop()
+        assert top.state() == "normal"
+        assert not errors
+        flyout._hide()
+        assert top.state() == "withdrawn"
+    finally:
+        flyout._discard()
+        root.destroy()
+
+
+def test_outside_mouse_press_closes_but_inside_click_and_release_do_not(monkeypatch):
+    from pynput import mouse
+
+    callbacks = []
+    stopped = []
+
+    class Listener:
+        def __init__(self, on_click):
+            callbacks.append(on_click)
+
+        def start(self):
+            pass
+
+        def stop(self):
+            stopped.append(True)
+
+    monkeypatch.setattr(mouse, "Listener", Listener)
+    flyout = card.Flyout(FakeOverlay(), FakeApp())
+    flyout._top = SimpleNamespace(withdraw=lambda: hidden.append(True))
+    flyout._visible = lambda: True
+    flyout._click_is_inside = lambda x, y: x < 100
+    hidden = []
+    flyout._watch_outside_clicks()
+    old_token = flyout._outside_token
+    callbacks[-1](50, 50, None, True)
+    callbacks[-1](200, 50, None, False)
+    assert not hidden
+    callbacks[-1](200, 50, None, True)
+    assert hidden == [True]
+    assert stopped == [True]
+    assert flyout._outside_listener is None
+    # The tray callback from that same mouse press must not reopen Settings.
+    flyout._show()
+    assert hidden == [True]
+    flyout._watch_outside_clicks()
+    flyout._dismiss_outside_click(old_token)
+    assert hidden == [True]
+    flyout._stop_outside_clicks()

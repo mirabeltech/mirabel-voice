@@ -207,17 +207,13 @@ def test_the_zip_installer_stores_the_token_through_the_app():
 
 
 def test_the_zip_installer_takes_the_address_from_the_build():
-    # build.ps1 substitutes this. A zip that shipped the placeholder would
-    # send every dictation nowhere.
     assert "__RELAY_URL__" in ZIP_INSTALLER
-    assert "http" not in ZIP_INSTALLER.replace("__RELAY_URL__", "")
+    assert "'^https://'" in ZIP_INSTALLER
 
 
-def test_both_installers_clear_a_refused_token_with_a_flag():
-    # An empty argument does not survive PowerShell on its way to a
-    # program, which once left a refused token stored.
-    assert "--forget-relay-token" in ZIP_INSTALLER
-    assert "--forget-relay-token" in INSTALLER
+def test_zip_install_does_not_forget_credentials_on_network_failure():
+    assert "--forget-relay-token" not in ZIP_INSTALLER
+    assert "Existing credentials were not cleared" in ZIP_INSTALLER
 
 
 def test_forgetting_the_token_keeps_every_other_setting(tmp_path, monkeypatch):
@@ -235,12 +231,9 @@ def test_forgetting_the_token_keeps_every_other_setting(tmp_path, monkeypatch):
     assert saved.hotkey == "scroll_lock"
 
 
-def test_one_installer_serves_both_downloads():
-    # The packaged program and the Python bundle ship the same script.
-    # Two copies of it would drift.
-    assert "MirabelVoice.exe" in ZIP_INSTALLER
-    assert "pythonw.exe" in ZIP_INSTALLER
-    assert "-m" in ZIP_INSTALLER
+def test_the_python_installer_checks_staging_before_replacing_runtime():
+    assert ZIP_INSTALLER.index('& $console -m mirabel_voice --self-test') < ZIP_INSTALLER.index('Move-Item $runtime $backup')
+    assert 'Launch.ps1' in ZIP_INSTALLER
 
 
 def test_the_bundle_build_insists_on_a_valid_signature():
@@ -257,15 +250,15 @@ BOOTSTRAP = (PACKAGING.parent / "install.ps1").read_text(encoding="utf-8")
 def test_the_bootstrap_unblocks_the_zip_before_unpacking_it():
     # The whole point of the pasted line: the Properties/Unblock and
     # Extract steps happen in the right order without anybody clicking.
-    assert BOOTSTRAP.index("Unblock-File $zip.FullName") < BOOTSTRAP.index(
-        "Expand-Archive $zip.FullName"
+    assert BOOTSTRAP.index("Unblock-File -LiteralPath $zip.FullName") < BOOTSTRAP.index(
+        "[IO.Compression.ZipFileExtensions]::ExtractToFile"
     )
 
 
 def test_the_bootstrap_runs_the_installer_past_the_execution_policy():
     # The extracted Install.ps1 is unsigned; without Bypass a machine on
     # the default policy stops right after the unpack.
-    assert "-ExecutionPolicy Bypass" in BOOTSTRAP
+    assert "'-ExecutionPolicy', 'Bypass'" in BOOTSTRAP
 
 
 def test_the_bootstrap_carries_no_relay_address():
@@ -284,28 +277,14 @@ def test_the_bootstrap_carries_no_relay_address():
         ), url
 
 
-def test_the_bootstrap_updates_an_installed_bundle_from_the_releases():
-    # An installed machine already holds the relay address, and the code
-    # is public, so an update needs no zip and no shared drive.
-    assert "releases/latest" in BOOTSTRAP
-    assert "site-packages" in BOOTSTRAP
+def test_the_bootstrap_delegates_updates_to_the_app():
+    assert "--request-update" in BOOTSTRAP
+    assert "releases/latest" not in BOOTSTRAP
 
 
-def test_the_update_proves_the_app_answers_or_puts_the_old_code_back():
-    # A release that needs a new library must not leave a broken install:
-    # the swap out comes first, the swap back stands ready after it.
-    assert "--config" in BOOTSTRAP
-    assert BOOTSTRAP.index("Move-Item $installed $backup") < BOOTSTRAP.index(
-        "Move-Item $backup $installed"
-    )
-
-
-def test_a_fresh_install_chains_straight_into_an_update():
-    # The zip on the shared drive can lag the newest release. One paste
-    # still ends current, because the install path runs the update path
-    # right after the zip's own installer finishes.
-    installer_run = BOOTSTRAP.index("-File $installer.FullName")
-    assert "Update-FromNewestRelease" in BOOTSTRAP[installer_run:]
+def test_fresh_install_verifies_approval_before_unblocking_or_executing():
+    assert BOOTSTRAP.index('Get-FileHash') < BOOTSTRAP.index('Unblock-File')
+    assert BOOTSTRAP.index('$release.Count -ne 1') < BOOTSTRAP.index('& powershell @installArgs')
 
 
 def test_the_version_lives_in_pyproject_alone():

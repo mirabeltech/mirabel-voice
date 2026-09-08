@@ -1,0 +1,397 @@
+{
+  "scope": "Existing Windows development environment; PyPI version-specific vulnerability metadata, not a scan of distributed bundles or Python runtime",
+  "packages": [
+    {
+      "name": "altgraph",
+      "version": "0.17.5",
+      "advisories": []
+    },
+    {
+      "name": "annotated-types",
+      "version": "0.8.0",
+      "advisories": []
+    },
+    {
+      "name": "anthropic",
+      "version": "0.122.0",
+      "advisories": []
+    },
+    {
+      "name": "anyio",
+      "version": "4.14.2",
+      "advisories": []
+    },
+    {
+      "name": "boto3",
+      "version": "1.43.77",
+      "advisories": []
+    },
+    {
+      "name": "botocore",
+      "version": "1.43.77",
+      "advisories": []
+    },
+    {
+      "name": "certifi",
+      "version": "2026.7.22",
+      "advisories": []
+    },
+    {
+      "name": "cffi",
+      "version": "2.1.1",
+      "advisories": []
+    },
+    {
+      "name": "colorama",
+      "version": "0.4.6",
+      "advisories": []
+    },
+    {
+      "name": "distro",
+      "version": "1.9.0",
+      "advisories": []
+    },
+    {
+      "name": "docstring_parser",
+      "version": "0.18.0",
+      "advisories": []
+    },
+    {
+      "name": "h11",
+      "version": "0.16.0",
+      "advisories": []
+    },
+    {
+      "name": "httpcore",
+      "version": "1.0.9",
+      "advisories": []
+    },
+    {
+      "name": "httpcore2",
+      "version": "2.12.0",
+      "advisories": []
+    },
+    {
+      "name": "httpx",
+      "version": "0.28.1",
+      "advisories": []
+    },
+    {
+      "name": "httpx2",
+      "version": "2.12.0",
+      "advisories": []
+    },
+    {
+      "name": "idna",
+      "version": "3.19",
+      "advisories": []
+    },
+    {
+      "name": "iniconfig",
+      "version": "2.3.0",
+      "advisories": []
+    },
+    {
+      "name": "jiter",
+      "version": "0.16.0",
+      "advisories": []
+    },
+    {
+      "name": "jmespath",
+      "version": "1.1.0",
+      "advisories": []
+    },
+    {
+      "name": "mirabel-voice",
+      "version": "0.1.0",
+      "unverified": "HTTP Error 404: Not Found"
+    },
+    {
+      "name": "numpy",
+      "version": "2.5.2",
+      "advisories": []
+    },
+    {
+      "name": "openai",
+      "version": "3.2.0",
+      "advisories": []
+    },
+    {
+      "name": "packaging",
+      "version": "26.3",
+      "advisories": []
+    },
+    {
+      "name": "pefile",
+      "version": "2024.8.26",
+      "advisories": []
+    },
+    {
+      "name": "pillow",
+      "version": "12.3.0",
+      "advisories": []
+    },
+    {
+      "name": "pip",
+      "version": "25.0.1",
+      "advisories": [
+        {
+          "id": "GHSA-4xh5-x5gv-qwph",
+          "aliases": [
+            "CVE-2025-8869"
+          ],
+          "fixed_in": [
+            "25.3"
+          ],
+          "link": "https://osv.dev/vulnerability/GHSA-4xh5-x5gv-qwph"
+        },
+        {
+          "id": "GHSA-6vgw-5pg2-w6jp",
+          "aliases": [
+            "CVE-2026-1703"
+          ],
+          "fixed_in": [
+            "26.0"
+          ],
+          "link": "https://osv.dev/vulnerability/GHSA-6vgw-5pg2-w6jp"
+        },
+        {
+          "id": "GHSA-58qw-9mgm-455v",
+          "aliases": [
+            "CVE-2026-3219"
+          ],
+          "fixed_in": [
+            "26.1"
+          ],
+          "link": "https://osv.dev/vulnerability/GHSA-58qw-9mgm-455v"
+        },
+        {
+          "id": "GHSA-jp4c-xjxw-mgf9",
+          "aliases": [
+            "CVE-2026-6357"
+          ],
+          "fixed_in": [
+            "26.1"
+          ],
+          "link": "https://osv.dev/vulnerability/GHSA-jp4c-xjxw-mgf9"
+        },
+        {
+          "id": "PYSEC-2026-196",
+          "aliases": [
+            "CVE-2026-8643",
+            "GHSA-wf93-45jw-7689"
+          ],
+          "fixed_in": [
+            "26.1.2"
+          ],
+          "link": "https://osv.dev/vulnerability/PYSEC-2026-196"
+        },
+        {
+          "id": "PYSEC-2026-1795",
+          "aliases": [
+            "CVE-2025-8869",
+            "GHSA-4xh5-x5gv-qwph"
+          ],
+          "fixed_in": [
+            "25.3"
+          ],
+          "link": "https://osv.dev/vulnerability/PYSEC-2026-1795"
+        },
+        {
+          "id": "PYSEC-2026-1796",
+          "aliases": [
+            "CVE-2026-1703",
+            "GHSA-6vgw-5pg2-w6jp"
+          ],
+          "fixed_in": [
+            "26.0"
+          ],
+          "link": "https://osv.dev/vulnerability/PYSEC-2026-1796"
+        },
+        {
+          "id": "GHSA-wf93-45jw-7689",
+          "aliases": [
+            "CVE-2026-8643",
+            "PYSEC-2026-196"
+          ],
+          "fixed_in": [
+            "26.1.2"
+          ],
+          "link": "https://osv.dev/vulnerability/GHSA-wf93-45jw-7689"
+        },
+        {
+          "id": "PYSEC-2026-2875",
+          "aliases": [
+            "CVE-2026-3219",
+            "GHSA-58qw-9mgm-455v"
+          ],
+          "fixed_in": [
+            "26.1"
+          ],
+          "link": "https://osv.dev/vulnerability/PYSEC-2026-2875"
+        },
+        {
+          "id": "PYSEC-2026-2876",
+          "aliases": [
+            "CVE-2026-6357",
+            "GHSA-jp4c-xjxw-mgf9"
+          ],
+          "fixed_in": [
+            "26.1"
+          ],
+          "link": "https://osv.dev/vulnerability/PYSEC-2026-2876"
+        },
+        {
+          "id": "PYSEC-2026-3721",
+          "aliases": [
+            "CVE-2026-13346"
+          ],
+          "fixed_in": [
+            "26.2"
+          ],
+          "link": "https://osv.dev/vulnerability/PYSEC-2026-3721"
+        },
+        {
+          "id": "GHSA-qwm4-qh6w-59xr",
+          "aliases": [
+            "CVE-2026-13346"
+          ],
+          "fixed_in": [
+            "26.2.0"
+          ],
+          "link": "https://osv.dev/vulnerability/GHSA-qwm4-qh6w-59xr"
+        }
+      ]
+    },
+    {
+      "name": "pluggy",
+      "version": "1.6.0",
+      "advisories": []
+    },
+    {
+      "name": "py-spy",
+      "version": "0.4.2",
+      "advisories": []
+    },
+    {
+      "name": "pycparser",
+      "version": "3.0",
+      "advisories": []
+    },
+    {
+      "name": "pydantic",
+      "version": "2.13.4",
+      "advisories": []
+    },
+    {
+      "name": "pydantic_core",
+      "version": "2.46.4",
+      "advisories": []
+    },
+    {
+      "name": "Pygments",
+      "version": "2.21.0",
+      "advisories": []
+    },
+    {
+      "name": "pyinstaller",
+      "version": "6.22.2",
+      "advisories": []
+    },
+    {
+      "name": "pyinstaller-hooks-contrib",
+      "version": "2026.6",
+      "advisories": []
+    },
+    {
+      "name": "pynput",
+      "version": "1.8.2",
+      "advisories": []
+    },
+    {
+      "name": "pyperclip",
+      "version": "1.11.0",
+      "advisories": []
+    },
+    {
+      "name": "pystray",
+      "version": "0.19.5",
+      "advisories": []
+    },
+    {
+      "name": "pytest",
+      "version": "9.1.1",
+      "advisories": []
+    },
+    {
+      "name": "python-dateutil",
+      "version": "2.9.0.post0",
+      "advisories": []
+    },
+    {
+      "name": "pywin32-ctypes",
+      "version": "0.2.3",
+      "advisories": []
+    },
+    {
+      "name": "s3transfer",
+      "version": "0.19.2",
+      "advisories": []
+    },
+    {
+      "name": "setuptools",
+      "version": "84.0.0",
+      "advisories": []
+    },
+    {
+      "name": "six",
+      "version": "1.17.0",
+      "advisories": []
+    },
+    {
+      "name": "sniffio",
+      "version": "1.3.1",
+      "advisories": []
+    },
+    {
+      "name": "sounddevice",
+      "version": "0.5.6",
+      "advisories": []
+    },
+    {
+      "name": "soundfile",
+      "version": "0.14.0",
+      "advisories": []
+    },
+    {
+      "name": "tqdm",
+      "version": "4.70.0",
+      "advisories": []
+    },
+    {
+      "name": "truststore",
+      "version": "0.10.4",
+      "advisories": []
+    },
+    {
+      "name": "typing_extensions",
+      "version": "4.16.0",
+      "advisories": []
+    },
+    {
+      "name": "typing-inspection",
+      "version": "0.4.4",
+      "advisories": []
+    },
+    {
+      "name": "urllib3",
+      "version": "2.7.0",
+      "advisories": []
+    },
+    {
+      "name": "websockets",
+      "version": "15.0.1",
+      "advisories": []
+    }
+  ]
+}

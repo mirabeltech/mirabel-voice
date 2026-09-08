@@ -28,6 +28,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import logging
 import secrets
 import socket
 import threading
@@ -53,6 +54,9 @@ REFRESH_MARGIN_SECONDS = 120
 SIGN_IN_WAIT_SECONDS = 300
 
 STORE_NAME = "google_signin.bin"
+
+
+log = logging.getLogger(__name__)
 
 
 class SigninError(RuntimeError):
@@ -364,28 +368,41 @@ class GoogleSignin:
         if self._loaded:
             return
         self._loaded = True
+        self.load_problem = None
         try:
-            raw = self.store.read_bytes()
-        except OSError:
-            return
-        try:
-            held = json.loads(self.unprotect(raw))
+            from .storage import load_validated
+            def decode(raw):
+                try:
+                    held = json.loads(self.unprotect(raw))
+                    if not isinstance(held, dict) or not isinstance(held.get("refresh_token"), str):
+                        raise ValueError("Invalid sign-in data")
+                    return held
+                except Exception as error:
+                    raise ValueError("Sign-in data cannot be decrypted") from error
+            held = load_validated(self.store, decode)
             self._refresh_token = held.get("refresh_token") or None
             self.email = held.get("email") or None
-        except Exception:  # noqa: BLE001 - an unreadable store means signed out
+        except ValueError:
             self._refresh_token = None
+            if self.store.exists() or self.store.with_suffix(self.store.suffix + '.bak').exists():
+                self.load_problem = 'Saved sign-in could not be read. Sign in again from controls; the existing file has been preserved.'
+                log.warning(self.load_problem)
 
     def _save(self) -> None:
         held = {"refresh_token": self._refresh_token, "email": self.email}
         payload = self.protect(json.dumps(held).encode("utf-8"))
         self.store.parent.mkdir(parents=True, exist_ok=True)
-        self.store.write_bytes(payload)
+        from .storage import save_bytes
+        save_bytes(self.store, payload)
+        self.load_problem = None
 
     def _forget(self) -> None:
         self._refresh_token = None
         self._id_token = None
         self._expires = 0.0
         try:
-            self.store.unlink()
+            self.store.unlink(missing_ok=True)
+            self.store.with_suffix(self.store.suffix + ".bak").unlink(missing_ok=True)
+            self.store.with_suffix(self.store.suffix + ".damaged").unlink(missing_ok=True)
         except OSError:
             pass

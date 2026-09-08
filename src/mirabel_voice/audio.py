@@ -203,6 +203,7 @@ class Recorder:
     ) -> None:
         self.sample_rate = sample_rate
         self.device = device
+        self._default_input_id = None
         self.max_seconds = max_seconds
         self._hot = hot
         # Clamped to the ring, and to half of max_seconds: pre-roll that
@@ -664,6 +665,7 @@ class Recorder:
         """
         while not self._shutdown.wait(WATCHDOG_INTERVAL_SECONDS):
             now = time.monotonic()
+            self._follow_default_input()
             with self._lock:
                 stream = self._stream
                 worker = self._open_thread
@@ -720,6 +722,19 @@ class Recorder:
                         self._reopen_backoff * 2, REOPEN_BACKOFF_CAP_SECONDS
                     )
                     opener.start()
+
+    def _follow_default_input(self):
+        if self.device is not None:
+            return
+        from .system_audio import default_input_id
+        current = default_input_id()
+        if current is None:
+            return
+        previous, self._default_input_id = self._default_input_id, current
+        if previous is not None and previous != current:
+            # MME's default mapper resolves the new endpoint on reopen.
+            # _cycle_stream defers that reopen until an armed recording finishes.
+            self._cycle_stream()
 
     def set_device(self, index) -> None:  # noqa: ANN001 - index matches self.device
         """Point the recorder at another microphone.

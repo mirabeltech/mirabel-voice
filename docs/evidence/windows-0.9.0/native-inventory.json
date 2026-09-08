@@ -1,0 +1,372 @@
+﻿[
+    {
+        "file":  "libcrypto-3.dll",
+        "sha256":  "09499E186CF0E434FFA17AD153AA9A66D6048C54A2C03B823E2A06C49D9AFFE4",
+        "signature":  "Valid"
+    },
+    {
+        "file":  "libffi-8.dll",
+        "sha256":  "EFF52743773EB550FCC6CE3EFC37C85724502233B6B002A35496D828BD7B280A",
+        "signature":  "Valid"
+    },
+    {
+        "file":  "libssl-3.dll",
+        "sha256":  "28C395290279FA4F4F54A57B85CD66D853895F925FEFB8F6FDEBC0D8B1CDD07C",
+        "signature":  "Valid"
+    },
+    {
+        "file":  "pyexpat.pyd",
+        "sha256":  "B9C9C5A9F52AF559A7EB4E8DDFD60558185BFC7794F32840BED1747D1EC9026A",
+        "signature":  "Valid"
+    },
+    {
+        "file":  "python.exe",
+        "sha256":  "85B71D8C6EC1905935F74BE0C9869AAE198D00E98F39DF699EC66F9C5A84CECD",
+        "signature":  "Valid"
+    },
+    {
+        "file":  "python3.dll",
+        "sha256":  "76E7FD69A01081726308317D6E502721C2BA6792B48880DC1EF649C755788DB7",
+        "signature":  "Valid"
+    },
+    {
+        "file":  "python313.dll",
+        "sha256":  "E820BF024EFD2B56BB2B82791E6B6DDC7303F070F8E72CBA7637482A8A906238",
+        "signature":  "Valid"
+    },
+    {
+        "file":  "pythonw.exe",
+        "sha256":  "146C01E5448A084FF15D63113A790B9AA75250BAF862D984C51DD695AC4775BC",
+        "signature":  "Valid"
+    },
+    {
+        "file":  "select.pyd",
+        "sha256":  "024F955349FE46CF1BB2C22C6B57FCF38CF5755D46166FBF63E7E5B92433B111",
+        "signature":  "Valid"
+    },
+    {
+        "file":  "sqlite3.dll",
+        "sha256":  "C6812EAF0F8605DF273B9BF7E359B83FD65038ECC66455C3F7A933768CB92F3F",
+        "signature":  "Valid"
+    },
+    {
+        "file":  "unicodedata.pyd",
+        "sha256":  "111E0FDFEEF9887C04F6EBF1972CE1CCBEC55B226012E4A288C2D4A0B17B216B",
+        "signature":  "Valid"
+    },
+    {
+        "file":  "vcruntime140.dll",
+        "sha256":  "D1F4225DF2CD877DBF130D5668A021DCE3F94118455FF5EC952061C30AFC9CE7",
+        "signature":  "Valid"
+    },
+    {
+        "file":  "vcruntime140_1.dll",
+        "sha256":  "A7146C08F89FE5B04541AB507CDB59FF7B44534D4BA3C668A426C6450A03434E",
+        "signature":  "Valid"
+    },
+    {
+        "file":  "winsound.pyd",
+        "sha256":  "B078B7F5C53EFD3C4201B63FA34A17C6747142E37298293F52C3A9AD643E69E2",
+        "signature":  "Valid"
+    },
+    {
+        "file":  "_asyncio.pyd",
+        "sha256":  "6941E2AEED3AAD1A4658774ECB60309170066A040C2118A5EFD16458AC3BED00",
+        "signature":  "Valid"
+    },
+    {
+        "file":  "_bz2.pyd",
+        "sha256":  "261545BD24F15A783FC0C82568B766A4AB569DDE14507A81701CCCF5293E6E54",
+        "signature":  "Valid"
+    },
+    {
+        "file":  "_ctypes.pyd",
+        "sha256":  "9D6DCCB4CD84A44A107F9B06B91C0A44E85766D9BF4DEBB6ABBDE8FDA7494C2C",
+        "signature":  "Valid"
+    },
+    {
+        "file":  "_decimal.pyd",
+        "sha256":  "1E6A5707163D3C103E0EB4695EEFEDBEA4B855FB227C61CC265B168970D6C6F0",
+        "signature":  "Valid"
+    },
+    {
+        "file":  "_elementtree.pyd",
+        "sha256":  "26C5C2F3F2B8DAC1499F07A50D7AFD14315C20A6A541ABBE4E306BCD9DF404F1",
+        "signature":  "Valid"
+    },
+    {
+        "file":  "_hashlib.pyd",
+        "sha256":  "79A26289AEF0D92545A082507C7021F10E219621D137CB726C4D0FBBFD4B46AE",
+        "signature":  "Valid"
+    },
+    {
+        "file":  "_lzma.pyd",
+        "sha256":  "EE224AACF5CF9C9974A1B842AAC8D89D5D9B7EEEBBF4D76619AE0CE4DA8ECD96",
+        "signature":  "Valid"
+    },
+    {
+        "file":  "_multiprocessing.pyd",
+        "sha256":  "DB19972CF033B598F5826F8219BC2608412B84061D294F5972B43C2AB95F7AF5",
+        "signature":  "Valid"
+    },
+    {
+        "file":  "_overlapped.pyd",
+        "sha256":  "9DB08B5449E18088754CE57E315657D00B46575E0151CD379EFEF8847488A606",
+        "signature":  "Valid"
+    },
+    {
+        "file":  "_queue.pyd",
+        "sha256":  "4404C2569443FFB54E7CFFFDCA8DDF58C9A609175305970728EC12BC1C147B43",
+        "signature":  "Valid"
+    },
+    {
+        "file":  "_socket.pyd",
+        "sha256":  "CCBD0F83DF3784DA08147B8E8765E28C978DE28B5C0EDDCFBA5567B59D43FEF9",
+        "signature":  "Valid"
+    },
+    {
+        "file":  "_sqlite3.pyd",
+        "sha256":  "4C5FA9341A76AC525FD36E2CB23260934AD9B9F6825725FF139B26C8DC72436D",
+        "signature":  "Valid"
+    },
+    {
+        "file":  "_ssl.pyd",
+        "sha256":  "8D2F51FA1DC929073A2AD8D1C7C0C911E8F695870DCF4DDA2846F4B75A7F77FB",
+        "signature":  "Valid"
+    },
+    {
+        "file":  "_uuid.pyd",
+        "sha256":  "B93832742A2348D6659FD62E8A8AFF061594693FC537DA74C7D2D1CDF83A8475",
+        "signature":  "Valid"
+    },
+    {
+        "file":  "_wmi.pyd",
+        "sha256":  "DB45362354FD4965329CB14BD974E60B26525045D09FB4FDFB1674A93B79D60C",
+        "signature":  "Valid"
+    },
+    {
+        "file":  "_zoneinfo.pyd",
+        "sha256":  "6650DB91ACCC05E625D3C5D8A40E15127A040EA1135E40E875FD78D8A7665A84",
+        "signature":  "Valid"
+    },
+    {
+        "file":  "DLLs\\tcl86t.dll",
+        "sha256":  "A308BEAE8555CFF5AC2AFF7EAF0AEF40B5FE173F047E246DC49DA9A4D3EF62F9",
+        "signature":  "Valid"
+    },
+    {
+        "file":  "DLLs\\tk86t.dll",
+        "sha256":  "20F4876506BCE7F89E53570E64FD1DCE30A64548326B45F372871C7019560DF4",
+        "signature":  "Valid"
+    },
+    {
+        "file":  "DLLs\\zlib1.dll",
+        "sha256":  "1DD27F0411EBB31BD148A61589CEE254410915F1E6C37AA3FFA52FAC71A5426C",
+        "signature":  "Valid"
+    },
+    {
+        "file":  "DLLs\\_tkinter.pyd",
+        "sha256":  "38284C64FE4C6B376FEFC0F0B341815CD37B77E0F24D53DDB4DD48EA3C680274",
+        "signature":  "Valid"
+    },
+    {
+        "file":  "Lib\\site-packages\\_cffi_backend.cp313-win_amd64.pyd",
+        "sha256":  "21B7160D4A6DA9590794FDB38718982060B5C92D56FB0E441FC8B62EE789BE8D",
+        "signature":  "NotSigned"
+    },
+    {
+        "file":  "Lib\\site-packages\\bin\\mirabel-voice.exe",
+        "sha256":  "CF550DB669E31CC94C80B04018BF5586D71ECBC7BA8C39FD50F5A0F03666CF40",
+        "signature":  "NotSigned"
+    },
+    {
+        "file":  "Lib\\site-packages\\jiter\\jiter.cp313-win_amd64.pyd",
+        "sha256":  "F4B14BA25315C6E28114639599734B0D43E182022883C363D34E6EB04EF39488",
+        "signature":  "NotSigned"
+    },
+    {
+        "file":  "Lib\\site-packages\\numpy\\fft\\_pocketfft_umath.cp313-win_amd64.pyd",
+        "sha256":  "295B17C678D48B57FA2763F5AA49ECFC1ABECD936280615F23162A5EFC6037D9",
+        "signature":  "NotSigned"
+    },
+    {
+        "file":  "Lib\\site-packages\\numpy\\linalg\\lapack_lite.cp313-win_amd64.pyd",
+        "sha256":  "D34E19043CDBAD455B8C6585E1C231FE7EC51D574F126F76ABAEE7BBCA885B60",
+        "signature":  "NotSigned"
+    },
+    {
+        "file":  "Lib\\site-packages\\numpy\\linalg\\_umath_linalg.cp313-win_amd64.pyd",
+        "sha256":  "3738D30520754BE2F2457C0041AB0E4C63C4450FBC14A37E8BDAFDF67FB0ACA5",
+        "signature":  "NotSigned"
+    },
+    {
+        "file":  "Lib\\site-packages\\numpy\\random\\bit_generator.cp313-win_amd64.pyd",
+        "sha256":  "11DC6477BEAD61F5655B0997A7EC0F240A12FE1D9CA891B1B2FAA85554412133",
+        "signature":  "NotSigned"
+    },
+    {
+        "file":  "Lib\\site-packages\\numpy\\random\\mtrand.cp313-win_amd64.pyd",
+        "sha256":  "0D18156E760B23A3303E046F2889FB8815EA402ED6669FAFABF8F16FF1A0AD4A",
+        "signature":  "NotSigned"
+    },
+    {
+        "file":  "Lib\\site-packages\\numpy\\random\\_bounded_integers.cp313-win_amd64.pyd",
+        "sha256":  "B9C99CF165FE556021D8E90FBEB571B8954F16031EB7930D3A5104A2A0708182",
+        "signature":  "NotSigned"
+    },
+    {
+        "file":  "Lib\\site-packages\\numpy\\random\\_common.cp313-win_amd64.pyd",
+        "sha256":  "E96E87AA8D263C3403C22F7E4155EB7FFB7B4E6DA4B53F1A42E69146CD922763",
+        "signature":  "NotSigned"
+    },
+    {
+        "file":  "Lib\\site-packages\\numpy\\random\\_generator.cp313-win_amd64.pyd",
+        "sha256":  "D6F1249635097113F12382C7A5136415E62C7E5D49AC28F7441D1B87C1744082",
+        "signature":  "NotSigned"
+    },
+    {
+        "file":  "Lib\\site-packages\\numpy\\random\\_mt19937.cp313-win_amd64.pyd",
+        "sha256":  "D9A4130FC10391C2E2CEEF2F4893614B0F525AA5BB12DB545669A887193BC8AD",
+        "signature":  "NotSigned"
+    },
+    {
+        "file":  "Lib\\site-packages\\numpy\\random\\_pcg64.cp313-win_amd64.pyd",
+        "sha256":  "9432047585A360EDF1DA29A55D8BF66AFFD86369160CBBD61D8D2B3EA5211733",
+        "signature":  "NotSigned"
+    },
+    {
+        "file":  "Lib\\site-packages\\numpy\\random\\_philox.cp313-win_amd64.pyd",
+        "sha256":  "C98430B9B94FBF2322D4364672AFD73B90A799C2E326F487F9DAF6412EDD577F",
+        "signature":  "NotSigned"
+    },
+    {
+        "file":  "Lib\\site-packages\\numpy\\random\\_sfc64.cp313-win_amd64.pyd",
+        "sha256":  "BE20F3899ADD9EF0DF3CBA6CD583F6F51730295B015E00EB72E6E90F5E629DBF",
+        "signature":  "NotSigned"
+    },
+    {
+        "file":  "Lib\\site-packages\\numpy\\_core\\_multiarray_tests.cp313-win_amd64.pyd",
+        "sha256":  "454268AEFE629184784CA5DD4DA0AE62E7C1C4FA26D2F897BDA8A8D112199CA9",
+        "signature":  "NotSigned"
+    },
+    {
+        "file":  "Lib\\site-packages\\numpy\\_core\\_multiarray_umath.cp313-win_amd64.pyd",
+        "sha256":  "B9837D7CDEA6DCC58F76D3AE6EA36789EF2FF8991F480CE89CEF47EA01F1EDD0",
+        "signature":  "NotSigned"
+    },
+    {
+        "file":  "Lib\\site-packages\\numpy\\_core\\_operand_flag_tests.cp313-win_amd64.pyd",
+        "sha256":  "1C5F8D10981956DC96D4D52BECCC1000BDB82E3F98CED70E801E4AA2E01007E4",
+        "signature":  "NotSigned"
+    },
+    {
+        "file":  "Lib\\site-packages\\numpy\\_core\\_rational_tests.cp313-win_amd64.pyd",
+        "sha256":  "A427D9116233E145E454748303AA810F16D993853207694656C90FDF3B7E333B",
+        "signature":  "NotSigned"
+    },
+    {
+        "file":  "Lib\\site-packages\\numpy\\_core\\_simd.cp313-win_amd64.pyd",
+        "sha256":  "D2FC7328034E61B2615345947E8D496CA51D3F3FCBA134D120EF88C8AEA6C8D9",
+        "signature":  "NotSigned"
+    },
+    {
+        "file":  "Lib\\site-packages\\numpy\\_core\\_struct_ufunc_tests.cp313-win_amd64.pyd",
+        "sha256":  "0A7F94104C6487AE95C6A1D8B34D846A8F0AE34DDFC9918C3A916D756FCEBBF2",
+        "signature":  "NotSigned"
+    },
+    {
+        "file":  "Lib\\site-packages\\numpy\\_core\\_umath_tests.cp313-win_amd64.pyd",
+        "sha256":  "9401D24701F97289800C64FDAE32F7A5BAB2BED5DE40A88CBBB59B121FFB564A",
+        "signature":  "NotSigned"
+    },
+    {
+        "file":  "Lib\\site-packages\\numpy.libs\\libscipy_openblas64_-327b2e0bcffce2882e0dc04cdeb4eaa6.dll",
+        "sha256":  "327B2E0BCFFCE2882E0DC04CDEB4EAA6382ED4DBA29871B6176FA157782F484A",
+        "signature":  "NotSigned"
+    },
+    {
+        "file":  "Lib\\site-packages\\numpy.libs\\msvcp140-a4c2229bdc2a2a630acdc095b4d86008.dll",
+        "sha256":  "A4C2229BDC2A2A630ACDC095B4D86008E5C3E3BC7773174354F3DA4F5BEB9CDE",
+        "signature":  "Valid"
+    },
+    {
+        "file":  "Lib\\site-packages\\PIL\\_avif.cp313-win_amd64.pyd",
+        "sha256":  "2E3E5CCE3AEA38C603680CA3DA5D161FAD123CE23A803BB692A56AFF608989BE",
+        "signature":  "NotSigned"
+    },
+    {
+        "file":  "Lib\\site-packages\\PIL\\_imaging.cp313-win_amd64.pyd",
+        "sha256":  "88756E8E0E3F6180E518DA25D379597C861E2D20D716EF001894789B515C1777",
+        "signature":  "NotSigned"
+    },
+    {
+        "file":  "Lib\\site-packages\\PIL\\_imagingcms.cp313-win_amd64.pyd",
+        "sha256":  "7ECB50B954D13D72B7A0FF565872332443CDBC83A36E58A56B2B949A56F32549",
+        "signature":  "NotSigned"
+    },
+    {
+        "file":  "Lib\\site-packages\\PIL\\_imagingft.cp313-win_amd64.pyd",
+        "sha256":  "E94673A471A0B6FD5E92E8B6CDBDFE16E2E91BCF5689E9E4C9B391AB43788D85",
+        "signature":  "NotSigned"
+    },
+    {
+        "file":  "Lib\\site-packages\\PIL\\_imagingmath.cp313-win_amd64.pyd",
+        "sha256":  "9D5BBEA6A877A48ED7995A0640ECB0A5567D9FAD544A4A1FBF9F22D507029B57",
+        "signature":  "NotSigned"
+    },
+    {
+        "file":  "Lib\\site-packages\\PIL\\_imagingmorph.cp313-win_amd64.pyd",
+        "sha256":  "9AA1903B1C4ECD1269A2F7575A62F764492B5510B43FE477970ECC606595CFC5",
+        "signature":  "NotSigned"
+    },
+    {
+        "file":  "Lib\\site-packages\\PIL\\_imagingtk.cp313-win_amd64.pyd",
+        "sha256":  "8CCD6128481D5A3A15993C2F8A69585694FF972652A6B06DCAEE276FC65633A7",
+        "signature":  "NotSigned"
+    },
+    {
+        "file":  "Lib\\site-packages\\PIL\\_webp.cp313-win_amd64.pyd",
+        "sha256":  "9918FAF8D90FAA86E03E48479C6A62383BE71DA759254AFDED18591A406A92FE",
+        "signature":  "NotSigned"
+    },
+    {
+        "file":  "Lib\\site-packages\\pydantic_core\\_pydantic_core.cp313-win_amd64.pyd",
+        "sha256":  "0C4E9BA0B8DA2A7148FF6771F258F53EDAB4A848C43A8D36593DD4170F340507",
+        "signature":  "NotSigned"
+    },
+    {
+        "file":  "Lib\\site-packages\\_sounddevice_data\\portaudio-binaries\\libportaudio32bit-asio.dll",
+        "sha256":  "B96D817DEBE1747D8CA3A5E5B57D1021BF0207EBBD907242331357B97C65E6D7",
+        "signature":  "NotSigned"
+    },
+    {
+        "file":  "Lib\\site-packages\\_sounddevice_data\\portaudio-binaries\\libportaudio32bit.dll",
+        "sha256":  "3D27383A00397DAE64B266189791AC20F84A19820778724E05705C2F6012DFD9",
+        "signature":  "NotSigned"
+    },
+    {
+        "file":  "Lib\\site-packages\\_sounddevice_data\\portaudio-binaries\\libportaudio64bit-asio.dll",
+        "sha256":  "E38618A0CB83A0287BEE3B8BD68A710AE0D34178217EF4FA21ED56F765111943",
+        "signature":  "NotSigned"
+    },
+    {
+        "file":  "Lib\\site-packages\\_sounddevice_data\\portaudio-binaries\\libportaudio64bit.dll",
+        "sha256":  "EC080194F01E4095C7FB43DBD7ED05AF922C5B34295056A9FF56782741D65481",
+        "signature":  "NotSigned"
+    },
+    {
+        "file":  "Lib\\site-packages\\_sounddevice_data\\portaudio-binaries\\libportaudioarm64-asio.dll",
+        "sha256":  "57B7826FD3883DAABBB8951814655A4EC253ACB822C0FF6CE4002DA9463064F5",
+        "signature":  "NotSigned"
+    },
+    {
+        "file":  "Lib\\site-packages\\_sounddevice_data\\portaudio-binaries\\libportaudioarm64.dll",
+        "sha256":  "E39E95E95C0CB262C70CA4E676E440CF34BE5643FE5A31CDFE23E8AB6F1422CB",
+        "signature":  "NotSigned"
+    },
+    {
+        "file":  "Lib\\site-packages\\_soundfile_data\\libsndfile_x64.dll",
+        "sha256":  "22518C16F9D13EDA5AE5ADF999C4740D7D16CC2D6B178B36DD4AC2F759A38559",
+        "signature":  "NotSigned"
+    }
+]

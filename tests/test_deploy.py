@@ -23,6 +23,7 @@ def test_the_package_holds_the_relay_and_its_entry_point():
         "mirabel_relay/relay.py",
         "mirabel_relay/handler.py",
         "mirabel_relay/signin.py",
+        "mirabel_relay/limits.py",
     }
 
 
@@ -147,6 +148,15 @@ def test_a_deploy_without_the_flags_keeps_sign_in_on():
 
 def test_before_sign_in_the_environment_is_the_three_secret_names():
     assert set(deploy_relay.environment_variables(None, None)) == SECRET_NAMES
+
+
+def test_anthropic_workspace_is_set_once_and_kept_by_later_deploys():
+    variables = deploy_relay.environment_variables(
+        None, None, anthropic_workspace_id="wrkspc_mirabel"
+    )
+    assert variables["MIRABEL_ANTHROPIC_WORKSPACE_ID"] == "wrkspc_mirabel"
+    carried = deploy_relay.environment_variables(None, None, variables)
+    assert carried["MIRABEL_ANTHROPIC_WORKSPACE_ID"] == "wrkspc_mirabel"
 
 
 def test_the_flags_replace_what_was_deployed_before():
