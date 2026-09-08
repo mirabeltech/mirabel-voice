@@ -12,16 +12,20 @@ Optional per-person limits use a **shared DynamoDB atomic counter**, not a separ
 
 The table needs string partition key `pk` and TTL attribute `expires`. Grant only `dynamodb:UpdateItem` on that table to the relay role. Keys contain a hash of authenticated identity plus minute, never the credential. Each transcription and cleanup is a separate request. This fixed-minute budget limits bursts within a minute; it is not a monthly spending cap. Table/alert resources may have costs, so provision them only after the owner agrees thresholds and spending.
 
+## Configured operating decision
+
+Tommy supplied 10 active users, up to 50 expected, a $200 monthly target and three private alert recipients. The tested setup and exact permission handoff are in [service operations setup](service-operations-setup.md). Activation is blocked by AWS permissions; the target is not a hard spending cap.
+
 ## Before production release
 
 | Decision or check | Current status |
 |---|---|
-| Expected users, concurrent dictations and requests/minute | Awaiting Tommy |
-| Per-person request budget; organization concurrency cap | Awaiting usage decision; no live change |
+| Expected users, concurrent dictations and requests/minute | 10 active / up to 50 expected; peak concurrency to be observed |
+| Per-person request budget; organization concurrency cap | Prepared: 20 provider requests/person/minute, 20 in-flight requests; AWS activation blocked |
 | Actual provider account/model quotas | Owner must record from the accounts; not inferred from public defaults |
 | Lambda memory, timeout, reserved/account concurrency, Function URL payload limit | Owner must record current deployed settings; client/relay budget uses conservative body margins |
-| Owner and backup for incidents, alerts and model changes | Awaiting names/contact destination |
-| Monthly spend ceiling and warning thresholds | Awaiting owner; no cloud schedule or budget alert enabled |
+| Owner and backup for incidents, alerts and model changes | Three recipients supplied privately; subscription confirmation/delivery pending |
+| Monthly spend ceiling and warning thresholds | $200 target; prepared warning thresholds; AWS activation blocked |
 | Organization-owned provider keys | Existing issue #46; verify before rollout |
 
 Use a mocked provider for simulated load first: concurrent requests must be denied cleanly when the shared counter's atomic condition fails. Then run a small agreed real-service check using synthetic speech. Never use employee recordings for a load test. Account-level throttling and overall concurrency still require owner configuration; a per-person limit alone does not cap total organizational spend.
