@@ -68,7 +68,7 @@ def test_no_prompt_key_without_a_language_or_custom_words():
 
 def test_an_api_failure_raises_a_transcription_error():
     client = FakeOpenAI(error=RuntimeError("network is down"))
-    with pytest.raises(TranscriptionError, match="network is down"):
+    with pytest.raises(TranscriptionError, match="Check your connection"):
         Transcriber(client=client).transcribe(a_recording())
 
 

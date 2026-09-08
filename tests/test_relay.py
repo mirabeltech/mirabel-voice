@@ -48,7 +48,7 @@ class FakeForward:
         return self.status, {"content-type": "application/json"}, self.body
 
 
-def make_relay(forward=None, update_info=None):
+def make_relay(forward=None, update_info=None, anthropic_workspace_id=None):
     forward = forward if forward is not None else FakeForward()
     relay = Relay(
         tokens=TOKENS,
@@ -57,6 +57,7 @@ def make_relay(forward=None, update_info=None):
         forward=forward,
         clock=lambda: 0.0,
         update_info=update_info,
+        anthropic_workspace_id=anthropic_workspace_id,
     )
     return relay, forward
 
@@ -133,6 +134,12 @@ def test_the_providers_own_headers_still_travel():
     sent = forward.calls[0]["headers"]
     assert sent["anthropic-version"] == "2023-06-01"
     assert sent["content-type"] == "application/json"
+
+
+def test_an_anthropic_workspace_is_sent_when_configured():
+    relay, forward = make_relay(anthropic_workspace_id="wrkspc_mirabel")
+    relay.handle(cleanup_request())
+    assert forward.calls[0]["headers"]["anthropic-workspace-id"] == "wrkspc_mirabel"
 
 
 def test_a_missing_token_is_refused_before_any_provider_call():

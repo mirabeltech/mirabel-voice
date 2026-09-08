@@ -25,6 +25,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 import urllib.request
 import zipfile
 from pathlib import Path
@@ -54,7 +55,10 @@ def _fetch(url: str, headers: dict | None = None) -> bytes:
     for name, value in (headers or {}).items():
         request.add_header(name, value)
     with urllib.request.urlopen(request, timeout=30) as response:  # noqa: S310
-        return response.read()
+        data = response.read(64 * 1024 * 1024 + 1)
+        if len(data) > 64 * 1024 * 1024:
+            raise ValueError('Update download is too large')
+        return data
 
 
 def content_hash(root: Path) -> str:
@@ -91,7 +95,7 @@ def relay_endorsement(relay_url: str, credential, fetch=None):  # noqa: ANN001
         if not key:
             return None
         answer = json.loads((fetch or _fetch)(f"{base}/update", {"x-api-key": key}))
-        if answer.get("version") and answer.get("sha256"):
+        if isinstance(answer, dict) and answer.get("version") and answer.get("sha256"):
             return answer
         return None
 
@@ -103,8 +107,6 @@ def endorsement_for(config, signin=None):  # noqa: ANN001
     if not getattr(config, "relay_url", None):
         return None
     credential = signin.credential if signin is not None else config.relay_token
-    if not credential:
-        return None
     return relay_endorsement(config.relay_url, credential)
 
 
@@ -123,7 +125,10 @@ class Updater:
         self.python_dir = python_dir
         self._fetch = fetch or _fetch
         self._prove = prove if prove is not None else self._app_answers
+        self._prove_staging = prove is None
         self._endorsement = endorsement
+        self.outcome = "current"
+        self.message = "Already up to date."
 
     @classmethod
     def discover(cls, endorsement=None) -> "Updater | None":  # noqa: ANN001
@@ -152,6 +157,9 @@ class Updater:
         The marker's version descends from pyproject.toml, the one
         place the version lives.
         """
+        version_file = self.site_packages / "mirabel_voice" / "_version.txt"
+        if version_file.exists():
+            return parse_version(version_file.read_text().strip())
         marker = self._dist_info()
         return parse_version(marker.name) if marker else None
 
@@ -186,18 +194,31 @@ class Updater:
             return None
         try:
             return self._endorsement()
-        except Exception as error:  # noqa: BLE001 - fall back to the newest release
+        except Exception as error:  # noqa: BLE001 - retain the installed release
             log.debug("The relay offered no endorsement: %s", error)
             return None
 
     def apply_latest(self) -> str | None:
+        from .transaction import InstallLock, UpdateBusy
+        try:
+            with InstallLock(self.python_dir.parent):
+                self.outcome, self.message = "current", "Already up to date."
+                return self._apply_locked()
+        except UpdateBusy:
+            self.outcome, self.message = "deferred", "Another installation or update is running."
+        except Exception:
+            self.outcome, self.message = "failed", "Update failed. The previous copy was retained; try again or repair from the full bundle."
+            log.exception("Update failed; use the stable launcher for recovery.")
+        return None
+
+    def _apply_locked(self) -> str | None:
         """Update to what the relay endorses, or to the newest release.
 
         The endorsement outranks the release list: when the relay names
         a version and a hash, only that version at that hash installs.
-        Without an endorsement - no relay, no answer, no network - the
-        newest published release is followed, which is how machines
-        behaved before endorsement existed.
+        Relay-managed machines keep their installed version when approval
+        is unavailable. Only machines without a relay follow GitHub alone.
+        An explicit endorsement can recall a release to an older version.
 
         None means there was nothing to do, or nothing safe to do: no
         newer release, no network, a hash that did not match, or a
@@ -206,32 +227,53 @@ class Updater:
         """
         required_hash = None
         endorsed = self._endorsed()
+        if self._endorsement is not None and not endorsed:
+            self.outcome, self.message = "unavailable", "Update approval is unavailable. Sign in and try again later."
+            log.warning(self.message)
+            return None
         if endorsed:
-            version = parse_version(endorsed["version"])
-            if version is None:
-                log.warning(
-                    "The relay endorsed an unreadable version: %r.",
-                    endorsed["version"],
-                )
+            if not isinstance(endorsed, dict):
+                self.outcome, self.message = "unavailable", "Update approval was invalid. Nothing changed."
                 return None
-            url = f"{ARCHIVE_BASE}/v{endorsed['version']}.zip"
-            required_hash = endorsed["sha256"]
+            tag = endorsed.get("version", "")
+            required_hash = endorsed.get("sha256", "")
+            if (
+                not isinstance(tag, str)
+                or re.fullmatch(r"\d+\.\d+\.\d+", tag) is None
+                or not isinstance(required_hash, str)
+                or re.fullmatch(r"[0-9a-fA-F]{64}", required_hash) is None
+            ):
+                self.outcome, self.message = "unavailable", "Update approval was invalid. Nothing changed."
+                log.warning(self.message)
+                return None
+            version = parse_version(tag)
+            url = f"{ARCHIVE_BASE}/v{tag}.zip"
+            required_hash = required_hash.lower()
         else:
             release = self.latest()
             if release is None:
+                self.outcome, self.message = "unavailable", "The update service could not be reached."
                 return None
             version, url = release
         installed = self.installed_version()
-        if installed and version <= installed:
+        if installed and (version == installed or (not endorsed and version < installed)):
             return None
 
         try:
             archive = zipfile.ZipFile(io.BytesIO(self._fetch(url)))
         except Exception as error:  # noqa: BLE001
-            log.warning("The release download failed: %s", error)
+            self.outcome, self.message = "failed", "The download failed. Nothing changed."
+            log.warning("The release download failed: %s", type(error).__name__)
             return None
 
         with tempfile.TemporaryDirectory(prefix="mirabel-voice-update-") as work:
+            # Bound expansion and reject ambiguous/traversal members before writing.
+            if sum(i.file_size for i in archive.infolist()) > 64 * 1024 * 1024:
+                raise ValueError("Release archive is too large")
+            for member in archive.infolist():
+                relative = Path(member.filename.replace("\\", "/"))
+                if relative.is_absolute() or ".." in relative.parts or ":" in member.filename:
+                    raise ValueError("Unsafe archive path")
             archive.extractall(work)
             staged = next(
                 (
@@ -242,14 +284,20 @@ class Updater:
                 None,
             )
             if staged is None:
-                log.warning("The release download holds no package; not applied.")
+                self.outcome, self.message = "failed", "The release has no app package. Nothing changed."
+                log.warning(self.message)
                 return None
             if required_hash and content_hash(staged) != required_hash:
-                log.warning(
-                    "The download does not match what the relay endorses; "
-                    "nothing was changed."
-                )
+                self.outcome, self.message = "failed", "Download verification failed. Nothing changed."
+                log.warning(self.message)
                 return None
+            candidate_lock = staged.parent.parent / 'packaging' / 'requirements-windows.lock'
+            installed_lock = self.site_packages / 'mirabel_voice' / '_runtime.lock'
+            if installed_lock.exists() and (not candidate_lock.exists() or candidate_lock.read_bytes() != installed_lock.read_bytes()):
+                self.outcome, self.message = 'bundle_required', 'The approved update needs a new Python bundle. Download it from the company drive.'
+                return None
+            if candidate_lock.exists():
+                shutil.copyfile(candidate_lock, staged / '_runtime.lock')
             return self._swap(staged, version)
 
     def _swap(self, staged: Path, version: tuple[int, ...]) -> str | None:
@@ -259,46 +307,48 @@ class Updater:
         change under it; only the next start reads the new files. The
         window with no package on disk is two renames wide.
         """
+        from .transaction import replace_directory
         target = self.site_packages / "mirabel_voice"
-        incoming = self.site_packages / "mirabel_voice.new"
-        backup = self.site_packages / "mirabel_voice.previous"
-        for leftover in (incoming, backup):
-            if leftover.exists():
-                shutil.rmtree(leftover)
-
-        shutil.copytree(staged, incoming)
-        target.rename(backup)
-        incoming.rename(target)
-
-        if not self._prove():
-            shutil.rmtree(target)
-            backup.rename(target)
-            log.warning(
-                "The newest release needs more than new code; the old "
-                "version was kept. The full download applies it."
-            )
-            return None
-
-        shutil.rmtree(backup)
         name = ".".join(str(part) for part in version)
-        wanted = self.site_packages / f"mirabel_voice-{name}.dist-info"
-        marker = self._dist_info()
-        # Stale markers from an install-over-install go first, so the
-        # rename below never lands on a folder that already exists,
-        # which Windows refuses.
-        for stale in self.site_packages.glob("mirabel_voice-*.dist-info"):
-            if stale != marker and stale != wanted:
-                shutil.rmtree(stale)
-        if marker is not None and marker != wanted and not wanted.exists():
-            marker.rename(wanted)
-        log.info("Updated to %s. The next start runs it.", name)
+        (staged / "_version.txt").write_text(name, encoding="utf-8")
+        old_version = self.installed_version()
+        if old_version and not (target / "_version.txt").exists():
+            (target / "_version.txt").write_text(".".join(map(str, old_version)), encoding="utf-8")
+        try:
+            if self._prove_staging:
+                code = "import sys; sys.path.insert(0, sys.argv[1]); from mirabel_voice.health import check; check()"
+                check = subprocess.run([str(self.python_dir / 'python.exe'), '-c', code, str(staged.parent)], capture_output=True, timeout=120, creationflags=CREATE_NO_WINDOW)
+                if check.returncode:
+                    raise RuntimeError('Staged app failed its startup checks')
+            replace_directory(target, staged, self._prove)
+        except RuntimeError:
+            self.outcome, self.message = "bundle_required", "This update needs the full bundle download. The previous version was retained."
+            return None
+        # Package-local version is the transactional authority. Keep dist-info
+        # useful to inventory tools too; recovery still works if this is interrupted.
+        try:
+            marker = self._dist_info()
+            wanted = self.site_packages / f"mirabel_voice-{name}.dist-info"
+            if marker is not None:
+                metadata = marker / "METADATA"
+                if metadata.exists():
+                    text = re.sub(r"(?m)^Version: .*", "Version: " + name, metadata.read_text(encoding="utf-8"))
+                    metadata.write_text(text, encoding="utf-8")
+                for stale in self.site_packages.glob("mirabel_voice-*.dist-info"):
+                    if stale != marker:
+                        shutil.rmtree(stale)
+                if marker != wanted:
+                    marker.rename(wanted)
+        except OSError:
+            log.warning("App update committed; dependency inventory metadata needs repair.")
+        self.outcome, self.message = "updated", f"Updated to {name}. Restarting when dictation finishes."
         return name
 
     def _app_answers(self) -> bool:
         """Prove the code on disk still imports and answers."""
         try:
             done = subprocess.run(  # noqa: S603
-                [str(self.python_dir / "python.exe"), "-m", "mirabel_voice", "--config"],
+                [str(self.python_dir / "python.exe"), "-m", "mirabel_voice", "--self-test"],
                 capture_output=True,
                 timeout=120,
                 creationflags=CREATE_NO_WINDOW,
@@ -321,7 +371,7 @@ class Updater:
         env[RELAUNCH_ENV] = "1"
         try:
             subprocess.Popen(  # noqa: S603
-                [str(self.python_dir / "pythonw.exe"), "-m", "mirabel_voice"],
+                [str(self.python_dir / "pythonw.exe")] + ([str(self.python_dir.parent / "launcher.py")] if (self.python_dir.parent / "launcher.py").exists() else ["-m", "mirabel_voice"]),
                 cwd=str(self.python_dir.parent),
                 env=env,
             )
@@ -329,3 +379,42 @@ class Updater:
             log.exception("The updated app did not start.")
             return False
         return True
+
+
+class UpdateCoordinator:
+    """One coordinator shared by tray, background timer and update requests."""
+    def __init__(self, app, updater, stop):
+        self.app, self.updater, self.stop = app, updater, stop
+        self._lock = threading.Lock()
+
+    def request(self, notify=lambda message: None):
+        if self.updater is None:
+            notify("Updates are available only in the installed Python bundle.")
+            return
+        if not self._lock.acquire(blocking=False):
+            notify("An update check is already running.")
+            return
+        def run():
+            import time
+            try:
+                notify("Checking for an approved update...")
+                # Protect both disk switching and restart from new dictations.
+                while not self.app.reserve_update():
+                    if self.app._stopped:
+                        return
+                    notify("Update deferred until dictation finishes.")
+                    time.sleep(1)
+                try:
+                    version = self.updater.apply_latest()
+                    notify(self.updater.message)
+                    if version:
+                        self.app.injector.flush_restore() if hasattr(self.app.injector, "flush_restore") else None
+                        if self.updater.start_new_copy():
+                            self.stop()
+                        else:
+                            notify("Update installed. Quit and start Mirabel Voice to use it.")
+                finally:
+                    self.app.release_update()
+            finally:
+                self._lock.release()
+        threading.Thread(target=run, name="mirabel-voice-update", daemon=True).start()

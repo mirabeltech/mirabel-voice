@@ -128,7 +128,9 @@ def status_line(state: str, detail: str) -> tuple[str, int]:
     # moment - the text on screen is the real answer - and any other
     # ending says its reason.
     if detail and detail.startswith(INSERTED_PREFIX):
-        return "Done", DONE_MS
+        if "original words sent" in detail:
+            return detail, NOTE_MS
+        return "Sent", DONE_MS
     if detail:
         return detail, NOTE_MS
     return "", 0
@@ -136,7 +138,7 @@ def status_line(state: str, detail: str) -> tuple[str, int]:
 
 def is_done(state: str, text: str) -> bool:
     """Return True when the line is the delivered-dictation flash."""
-    return state == STATE_IDLE and text == "Done"
+    return state == STATE_IDLE and text == "Sent"
 
 
 class Overlay:

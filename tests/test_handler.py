@@ -152,6 +152,12 @@ def test_the_keys_and_tokens_come_from_the_secrets():
     assert relay.tokens == {"tommy-token-1": "tommy"}
 
 
+def test_the_anthropic_workspace_comes_from_the_environment(monkeypatch):
+    monkeypatch.setenv("MIRABEL_ANTHROPIC_WORKSPACE_ID", "wrkspc_mirabel")
+    relay = build_relay(read_secret=fake_reader())
+    assert relay.anthropic_workspace_id == "wrkspc_mirabel"
+
+
 def test_a_pasted_key_may_carry_whitespace():
     secrets = dict(SECRETS, **{"mirabel-voice/openai": "  sk-the-real-openai-key\n"})
     relay = build_relay(read_secret=fake_reader(secrets))

@@ -9,6 +9,8 @@ import io
 import json
 import zipfile
 
+import pytest
+
 from mirabel_voice.updater import ARCHIVE_BASE, RELEASE_API, Updater, parse_version
 
 
@@ -48,8 +50,8 @@ def test_a_newer_release_is_swapped_in(tmp_path):
     assert (site / "mirabel_voice" / "__init__.py").read_text() == "new code"
     assert (site / "mirabel_voice-0.5.0.dist-info").exists()
     assert not (site / "mirabel_voice-0.4.0.dist-info").exists()
-    # No half-finished folders left behind.
-    assert not (site / "mirabel_voice.previous").exists()
+    # Retain the previous usable code for recovery.
+    assert (site / "mirabel_voice.previous" / "__init__.py").read_text() == "old code"
     assert not (site / "mirabel_voice.new").exists()
 
 
@@ -215,7 +217,7 @@ def test_a_download_that_fails_the_hash_is_refused(tmp_path):
     assert (site / "mirabel_voice-0.4.0.dist-info").exists()
 
 
-def test_no_endorsement_answer_falls_back_to_the_newest_release(tmp_path):
+def test_no_endorsement_answer_keeps_the_installed_release(tmp_path):
     def unreachable():
         raise OSError("the relay is out")
 
@@ -227,7 +229,8 @@ def test_no_endorsement_answer_falls_back_to_the_newest_release(tmp_path):
         prove=lambda: True,
         endorsement=unreachable,
     )
-    assert updater.apply_latest() == "0.5.0"
+    assert updater.apply_latest() is None
+    assert (site / "mirabel_voice" / "__init__.py").read_text() == "old code"
 
 
 def test_an_endorsed_version_already_installed_means_nothing_to_do(tmp_path):
@@ -237,7 +240,7 @@ def test_an_endorsed_version_already_installed_means_nothing_to_do(tmp_path):
         python_dir,
         fetch=lambda url: (_ for _ in ()).throw(AssertionError("no fetch needed")),
         prove=lambda: True,
-        endorsement=lambda: {"version": "0.5.0", "sha256": "abc"},
+        endorsement=lambda: {"version": "0.5.0", "sha256": "a" * 64},
     )
     assert updater.apply_latest() is None
 
@@ -268,4 +271,43 @@ def test_a_signed_out_machine_asks_nothing():
         lambda: None,
         fetch=lambda url, headers: (_ for _ in ()).throw(AssertionError("no call")),
     )
+    assert ask() is None
+
+
+def test_an_approved_older_release_recalls_a_bad_update(tmp_path):
+    site, python_dir = a_bundle(tmp_path, version="0.6.0")
+    digest = hash_of_release(tmp_path)
+    updater = Updater(
+        site, python_dir, fetch=a_release("v0.5.0"), prove=lambda: True,
+        endorsement=lambda: {"version": "0.5.0", "sha256": digest},
+    )
+    assert updater.apply_latest() == "0.5.0"
+    assert updater.installed_version() == (0, 5, 0)
+    assert not (site / "mirabel_voice-0.6.0.dist-info").exists()
+
+
+@pytest.mark.parametrize("approval", [
+    None, {}, {"version": "0.5.0"},
+    {"version": "0.5.0", "sha256": ""},
+    {"version": "0.5.0", "sha256": "abc"},
+    {"version": "../0.5.0", "sha256": "a" * 64},
+])
+def test_missing_or_invalid_approval_never_downloads_code(tmp_path, approval):
+    site, python_dir = a_bundle(tmp_path)
+    downloads = []
+    updater = Updater(
+        site, python_dir, fetch=lambda url: downloads.append(url),
+        endorsement=lambda: approval,
+    )
+    assert updater.apply_latest() is None
+    assert downloads == []
+    assert (site / "mirabel_voice" / "__init__.py").read_text() == "old code"
+
+
+def test_a_relay_without_credentials_does_not_follow_public_releases():
+    from mirabel_voice.config import Config
+    from mirabel_voice.updater import endorsement_for
+
+    ask = endorsement_for(Config(relay_url="https://relay.example.on.aws"))
+    assert ask is not None
     assert ask() is None

@@ -26,8 +26,9 @@ from .cleanup import Cleaner
 from .config import LANGUAGES, Config
 from .dictionary import all_words
 from .hotkey import HotkeyListener, UnknownHotkeyError
-from .inject import TextInjector, foreground_window
+from .inject import TextInjector, focus_identity
 from .transcribe import TranscriptionError, Transcriber
+from .work import BoundedWork, WorkCancelled
 
 log = logging.getLogger(__name__)
 
@@ -43,7 +44,7 @@ STATE_ERROR = "error"
 
 # The one idle message that means the cycle worked. The status panel keeps
 # quiet for it, because the text on screen already says the same thing.
-INSERTED_PREFIX = "Inserted "
+INSERTED_PREFIX = "Sent "
 
 SILENCE_PEAK = 0.01  # Below this level the microphone captured nothing.
 
@@ -82,6 +83,7 @@ class VoiceApp:
         words = all_words(config.custom_words)
         self.transcriber = transcriber or Transcriber(
             model=config.transcribe_model,
+            timeout=config.transcribe_timeout,
             language=config.language,
             custom_words=words,
             relay_url=config.relay_url,
@@ -103,7 +105,7 @@ class VoiceApp:
         # The status panel listens here. The tray owns _on_state, so the
         # two displays stay independent of each other.
         self.on_status: Callable[[str, str], None] | None = None
-        self._focus = foreground_window
+        self._focus = focus_identity
         self._focus_at_start = 0
         self.state = STATE_IDLE
         self.last_text = ""
@@ -114,6 +116,13 @@ class VoiceApp:
         # reinstalling the keyboard hook on a stopped app.
         self._listener_lock = threading.Lock()
         self._stopped = False
+        self._activity_lock = threading.RLock()
+        self._updating = False
+        self.microphone_paused = False
+        self._cancel_work = threading.Event()
+        self._network = BoundedWork()
+        self._cleanup_work = BoundedWork()
+        self._pending_recording = None
         self._worker: threading.Thread | None = None
         self._paste_thread: threading.Thread | None = None
         # Hotkey presses arrive on the keyboard hook thread. Work that
@@ -123,6 +132,57 @@ class VoiceApp:
         self._actions: queue.Queue = queue.Queue()
         self._dispatch_thread: threading.Thread | None = None
         self._beep_thread: threading.Thread | None = None
+
+    def reserve_update(self) -> bool:
+        with self._activity_lock:
+            busy = self.state in (STATE_STARTING, STATE_RECORDING, STATE_WORKING)
+            busy = busy or any(t is not None and t.is_alive() for t in (self._worker, self._paste_thread))
+            if busy or self._updating or self._stopped:
+                return False
+            self._updating = True
+            return True
+
+    def release_update(self):
+        with self._activity_lock:
+            self._updating = False
+
+    def set_microphone_paused(self, paused: bool):
+        with self._activity_lock:
+            if self._stopped or paused == self.microphone_paused:
+                return
+            self.microphone_paused = paused
+            if paused:
+                self.cancel_recording()
+                self.recorder.shutdown()
+            else:
+                self.recorder = Recorder(sample_rate=self.config.sample_rate, device=self.config.input_device,
+                                         max_seconds=self.config.max_seconds, hot=self.config.hot_mic,
+                                         pre_roll_seconds=self.config.pre_roll_seconds)
+                if self.config.hot_mic:
+                    self.recorder.open_hot()
+            self._set_state(STATE_IDLE, "Microphone paused." if paused else "Ready.")
+
+    def set_start_with_windows(self, enabled: bool):
+        from .startup import set_enabled
+        set_enabled(enabled)
+        self.config.start_with_windows = enabled
+        self.config.save()
+
+    def retry_last_recording(self):
+        with self._activity_lock:
+            if self._updating or self._stopped or self._pending_recording is None or self.state in (STATE_RECORDING, STATE_STARTING, STATE_WORKING):
+                return
+            if self._worker is not None and self._worker.is_alive():
+                return
+            self._cancel_work.clear()
+            self._focus_at_start = self._focus()
+            self._set_state(STATE_WORKING)
+            self._worker = threading.Thread(target=self._process, args=(self._pending_recording,), daemon=True)
+            self._worker.start()
+
+    def discard_last_recording(self):
+        self.cancel_recording()
+        self._pending_recording = None
 
     @staticmethod
     def _build_signin(config: Config):  # noqa: ANN205 - a GoogleSignin, or None
@@ -235,7 +295,7 @@ class VoiceApp:
 
         Returns whether there was anything to copy.
         """
-        if not self.last_text:
+        if not self.last_text or self._updating or self._stopped:
             return False
         try:
             import pyperclip
@@ -310,6 +370,8 @@ class VoiceApp:
         runs later on the dispatch thread. Presses stay in order because
         the queue is first in, first out.
         """
+        if self._updating or self._stopped or self.microphone_paused:
+            return False
         if self.state == STATE_RECORDING:
             return True
         if self._worker is not None and self._worker.is_alive():
@@ -320,7 +382,13 @@ class VoiceApp:
         return True
 
     def start_recording(self) -> bool:
+        with self._activity_lock:
+            return self._start_recording_locked()
+
+    def _start_recording_locked(self) -> bool:
         """Open the microphone. Return True when a recording started."""
+        if self._updating or self._stopped or self.microphone_paused:
+            return False
         if self.state == STATE_RECORDING:
             return True
         if self._worker is not None and self._worker.is_alive():
@@ -328,6 +396,8 @@ class VoiceApp:
             return False
         # Remember the window we paste into. If it changes, we must not
         # deliver there: that window belongs to somebody else now.
+        self._cancel_work.clear()
+        self._pending_recording = None
         self._focus_at_start = self._focus()
         # The hot stream makes the press instant, so there is no wait to
         # coach and no Starting to show. If the stream dies in the moment
@@ -454,13 +524,15 @@ class VoiceApp:
         The paste runs on its own thread after a short wait, so the user
         can release the combo keys and the keyboard hook stays responsive.
         """
-        if not self.last_text:
+        if not self.last_text or self._updating or self._stopped:
             return
 
         def worker() -> None:
             time.sleep(PASTE_LAST_DELAY_SECONDS)
             try:
-                self.injector.send(self.last_text)
+                with self._activity_lock:
+                    if not self._updating and not self._stopped:
+                        self.injector.send(self.last_text)
             except Exception:  # noqa: BLE001 - a re-paste must never crash the app
                 log.exception("The re-paste failed.")
 
@@ -475,6 +547,12 @@ class VoiceApp:
         Starting counts too: a cancel that lands while the microphone
         is still opening must not leave the cycle stuck.
         """
+        with self._activity_lock:
+            self._cancel_work.set()
+            self._pending_recording = None
+        if self.state == STATE_WORKING:
+            self._set_state(STATE_IDLE, "Cancelled. No text will be pasted.")
+            return
         if self.state not in (STATE_STARTING, STATE_RECORDING):
             return
         self.recorder.cancel()
@@ -484,10 +562,16 @@ class VoiceApp:
         """Transcribe, clean, and inject one recording."""
         started = time.monotonic()
         try:
-            text = self.transcriber.transcribe(recording)
-        except TranscriptionError as error:
-            log.error("Transcription failed: %s", error)
-            self._set_state(STATE_ERROR, f"Transcription failed: {error}")
+            text = self._network.call(lambda: self.transcriber.transcribe(recording), self.config.transcribe_timeout, self._cancel_work)
+        except WorkCancelled:
+            return
+        except Exception as error:
+            if self._cancel_work.is_set():
+                return
+            self._pending_recording = recording
+            message = str(error) if isinstance(error, (TranscriptionError, TimeoutError)) else "The recording could not be sent."
+            log.warning("Transcription failed (%s).", type(error).__name__)
+            self._set_state(STATE_ERROR, message + " Retry or discard from the controls.")
             return
         transcribed = time.monotonic()
 
@@ -495,17 +579,34 @@ class VoiceApp:
             self._set_state(STATE_IDLE, "No words were heard.")
             return
 
+        cleanup_warning = ""
         if self._cleanup_runs():
             # The settings are the one source of truth for the mode. The
             # cleaner re-reads them per dictation, so a writer that only
             # touches the settings still takes effect without a restart.
             self.cleaner.translate = self.config.translate_to_english
-            text = self.cleaner.clean(text)
+            raw = text
+            try:
+                text = self._cleanup_work.call(lambda: self.cleaner.clean(raw), self.config.cleanup_timeout, self._cancel_work)
+                if getattr(self.cleaner, "last_failed", False):
+                    cleanup_warning = " Translation/cleanup unavailable; original words sent."
+            except WorkCancelled:
+                return
+            except Exception:
+                text = raw
+                cleanup_warning = " Translation/cleanup unavailable; original words sent."
+                log.warning("Cleanup unavailable; preserving the raw transcript.")
         cleaned = time.monotonic()
 
-        self.last_text = text
+        if self._cancel_work.is_set() or self._stopped:
+            return
         try:
-            self._deliver(text)
+            with self._activity_lock:
+                if self._cancel_work.is_set() or self._stopped:
+                    return
+                self._pending_recording = None
+                self.last_text = text
+                self._deliver(text)
         except _FocusMoved:
             return  # _deliver already explained what happened
         except Exception as error:  # noqa: BLE001
@@ -518,7 +619,7 @@ class VoiceApp:
         # seconds after the hotkey, and without a signal the user starts
         # the next dictation too early or presses the hotkey again.
         self._beep(990, 50)
-        self._set_state(STATE_IDLE, f"{INSERTED_PREFIX}{words} words.")
+        self._set_state(STATE_IDLE, f"{INSERTED_PREFIX}{words} words." + cleanup_warning)
         # One line per dictation, so "it feels slow" becomes a number.
         log.info(
             "Timing: transcribe %.0f ms, cleanup %.0f ms, insert %.0f ms.",
@@ -640,6 +741,8 @@ class VoiceApp:
         # after the quit would otherwise restart the keyboard hook on a
         # dead app. The lock closes the window where a resume has read
         # the suspend flag but not yet installed the hook.
+        self._cancel_work.set()
+        self._pending_recording = None
         with self._listener_lock:
             self._stopped = True
             self._hotkeys_suspended = False

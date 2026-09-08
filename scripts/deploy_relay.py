@@ -51,7 +51,7 @@ TOKENS_SECRET = "mirabel-voice/tokens"
 SMOKE_HOLDER = "Smoke test"
 
 SOURCE = Path(__file__).resolve().parent.parent / "src" / "mirabel_relay"
-PACKAGED = ("__init__.py", "relay.py", "handler.py", "signin.py")
+PACKAGED = ("__init__.py", "relay.py", "handler.py", "signin.py", "limits.py")
 
 GOOGLE_VARIABLES = ("MIRABEL_GOOGLE_CLIENT_ID", "MIRABEL_GOOGLE_DOMAIN")
 UPDATE_VARIABLES = ("MIRABEL_UPDATE_VERSION", "MIRABEL_UPDATE_HASH")
@@ -100,6 +100,7 @@ def main(argv=None) -> int:
             session, package, role_arn,
             parsed.google_client_id, parsed.google_domain,
             update,
+            parsed.anthropic_workspace_id,
         )
         url = ensure_function_url(session)
         say(f"The relay answers at {url}")
@@ -133,6 +134,11 @@ def _arguments(argv):
         "--google-domain",
         help="The Mirabel Workspace domains for the sign-in check, "
         "comma separated when the org answers to more than one.",
+    )
+    parser.add_argument(
+        "--anthropic-workspace-id",
+        help="Workspace for an organization-scoped Anthropic key. Set once; "
+        "later deploys keep it without the flag.",
     )
     parser.add_argument(
         "--endorse",
@@ -351,6 +357,7 @@ def environment_variables(
     google_domain: str | None,
     existing: dict | None = None,
     update: tuple[str, str] | None = None,
+    anthropic_workspace_id: str | None = None,
 ) -> dict:
     """The Lambda's environment: secret names, sign-in, endorsed update.
 
@@ -366,6 +373,10 @@ def environment_variables(
         "MIRABEL_ANTHROPIC_SECRET": ANTHROPIC_SECRET,
         "MIRABEL_TOKENS_SECRET": TOKENS_SECRET,
     }
+    if existing:
+        for key in ("MIRABEL_RATE_LIMIT_TABLE", "MIRABEL_REQUESTS_PER_MINUTE"):
+            if existing.get(key):
+                variables[key] = existing[key]
     if google_client_id and google_domain:
         variables["MIRABEL_GOOGLE_CLIENT_ID"] = google_client_id
         variables["MIRABEL_GOOGLE_DOMAIN"] = google_domain
@@ -380,6 +391,12 @@ def environment_variables(
         for name in UPDATE_VARIABLES:
             if existing.get(name):
                 variables[name] = existing[name]
+    if anthropic_workspace_id:
+        variables["MIRABEL_ANTHROPIC_WORKSPACE_ID"] = anthropic_workspace_id
+    elif existing and existing.get("MIRABEL_ANTHROPIC_WORKSPACE_ID"):
+        variables["MIRABEL_ANTHROPIC_WORKSPACE_ID"] = existing[
+            "MIRABEL_ANTHROPIC_WORKSPACE_ID"
+        ]
     return variables
 
 
@@ -390,6 +407,7 @@ def ensure_function(
     google_client_id: str | None = None,
     google_domain: str | None = None,
     update: tuple[str, str] | None = None,
+    anthropic_workspace_id: str | None = None,
 ) -> None:
     """Create the function, or update the one that is already there."""
     from botocore.exceptions import ClientError
@@ -404,7 +422,8 @@ def ensure_function(
             raise
         environment = {
             "Variables": environment_variables(
-                google_client_id, google_domain, update=update
+                google_client_id, google_domain, update=update,
+                anthropic_workspace_id=anthropic_workspace_id,
             )
         }
         _create_function(lam, package, role_arn, environment)
@@ -416,7 +435,8 @@ def ensure_function(
     )
     environment = {
         "Variables": environment_variables(
-            google_client_id, google_domain, already_there, update
+            google_client_id, google_domain, already_there, update,
+            anthropic_workspace_id,
         )
     }
 

@@ -3,8 +3,8 @@
 The everyday controls live here - microphone, language, translation,
 copy-last, and the dictation key - so the right-click menu can shrink
 to the Windows minimum. Unlike the status pill this window is
-interactive: it takes the focus while open and goes away the moment
-the focus leaves it, like every other taskbar flyout.
+interactive: it takes focus while open and closes on an outside mouse click.
+Dropdowns and other controls can temporarily move keyboard focus safely.
 
 The overlay owns the one Tkinter thread, so every touch of a widget
 goes through Overlay.call.
@@ -30,8 +30,7 @@ MARGIN = 12  # from the corner of the work area
 
 # A key capture that nobody answers gives the keyboard back on its own.
 CAPTURE_TIMEOUT_S = 15.0
-# A show right after a focus-out is the same tray click that caused the
-# focus-out; the dismiss check must not eat it.
+# Ignore duplicate tray callbacks immediately after opening the card.
 JUST_SHOWN_S = 0.3
 
 AUTO_DETECT = "Detect automatically"
@@ -64,6 +63,10 @@ def version_from_markers(site) -> str:  # noqa: ANN001 - a Path
 
 def app_version() -> str:
     """The running version, or nothing when it cannot be known."""
+    from pathlib import Path
+    marker = Path(__file__).with_name("_version.txt")
+    if marker.exists():
+        return "v" + marker.read_text(encoding="utf-8").strip()
     try:
         from pathlib import Path
 
@@ -72,8 +75,11 @@ def app_version() -> str:
             return marked
     except Exception:  # noqa: BLE001
         pass
-    # A source checkout has no marker beside the package; pip's own
-    # record is right there, because nothing renames it.
+    source_project = Path(__file__).resolve().parents[2] / 'pyproject.toml'
+    if source_project.exists():
+        import tomllib
+        return 'v' + tomllib.loads(source_project.read_text(encoding='utf-8'))['project']['version']
+    # Fall back for other installed layouts.
     try:
         from importlib.metadata import version
 
@@ -138,6 +144,7 @@ class Flyout:
         # except _capture_listener, which the capture thread also sets.
         self._top = None
         self._hwnd = 0
+        self._popup_hwnds = ()
         self._widgets = {}
         self._devices: list[dict] = []
         self._choices: list[tuple[str, int | None]] = []
@@ -145,7 +152,10 @@ class Flyout:
         self._capture_listener = None
         self._built_pal = None
         self._shown_at = 0.0
+        self._dismissed_at = 0.0
         self._tick_id = None
+        self._outside_listener = None
+        self._outside_token = None
         # PortAudio's first enumeration costs hundreds of milliseconds.
         # Pay it here, in the background, so the first click on the tray
         # does not stall the Tk thread and the status pill with it.
@@ -190,6 +200,8 @@ class Flyout:
             return False
 
     def _show(self) -> None:
+        if time.monotonic() - self._dismissed_at < JUST_SHOWN_S:
+            return  # the same outside tray click can also request show
         try:
             if self._visible():
                 # A second tray click on an open card closes it, the
@@ -209,6 +221,7 @@ class Flyout:
             self._top.lift()
             self._top.focus_force()
             self._shown_at = time.monotonic()
+            self._watch_outside_clicks()
         except Exception:  # noqa: BLE001 - the flyout must never kill the app
             log.warning("The controls flyout did not open.", exc_info=True)
             # Throw the half-built window away, or every later click
@@ -216,6 +229,7 @@ class Flyout:
             self._discard()
 
     def _hide(self) -> None:
+        self._stop_outside_clicks()
         if self._capturing:
             self._cancel_capture()
         if self._top is None:
@@ -224,6 +238,7 @@ class Flyout:
 
     def _discard(self) -> None:
         """Destroy the card and every Tk reference to it, on this thread."""
+        self._stop_outside_clicks()
         top, self._top = self._top, None
         self._widgets = {}
         self._built_pal = None
@@ -411,12 +426,11 @@ class Flyout:
         buttons.columnconfigure(1, weight=1)
 
         def button(parent, text, command, column):  # noqa: ANN001, ANN202
-            b = tk.Label(
-                parent, text=text, bg=pal.background, fg=pal.foreground,
+            b = tk.Button(
+                parent, text=text, command=command, takefocus=True, bg=pal.background, fg=pal.foreground,
                 font=caption, bd=1, relief="solid", padx=10, pady=5,
             )
             b.grid(row=0, column=column, sticky="ew", padx=(0 if column == 0 else 4, 4 if column == 0 else 0))
-            b.bind("<Button-1>", lambda _event: command())
             return b
 
         w["copy"] = button(buttons, "Copy last text", self._copy_last, 0)
@@ -424,18 +438,40 @@ class Flyout:
 
         footer = tk.Frame(top, bg=pal.background)
         footer.grid(row=10, column=0, columnspan=2, sticky="ew", pady=(12, 0))
-        w["signin"] = label(footer, font=caption, fg=pal.hint)
+        w["signin"] = tk.Button(footer, command=self._sign_in, takefocus=True, font=caption, fg=pal.hint, bg=pal.background, state="normal" if self.app.signin is not None else "disabled")
         w["signin"].pack(side="left")
-        if self.app.signin is not None:
-            w["signin"].bind("<Button-1>", lambda _event: self._sign_in())
         w["version"] = label(footer, text=app_version(), font=caption, fg=pal.hint)
         w["version"].pack(side="right")
 
+        actions = tk.Frame(top, bg=pal.background)
+        actions.grid(row=11, column=0, columnspan=2, sticky="ew", pady=(8, 0))
+        w["pause"] = tk.Button(actions, text="Pause microphone", command=self._toggle_pause, takefocus=True)
+        w["pause"].pack(side="left")
+        tk.Button(actions, text="Retry recording", command=lambda: self.app.retry_last_recording(), takefocus=True).pack(side="left")
+        tk.Button(actions, text="Discard", command=lambda: self.app.discard_last_recording(), takefocus=True).pack(side="left")
+        w["startup"] = tk.Checkbutton(top, text="Start with Windows", command=self._toggle_startup,
+                                      bg=pal.background, fg=pal.foreground, selectcolor=pal.background)
+        w["startup"].grid(row=12, column=0, columnspan=2, sticky="w")
+        w["level"] = label(top, text="Microphone level: 0%", font=caption)
+        w["level"].grid(row=13, column=0, columnspan=2, sticky="w")
+        w["help"] = label(top, text="Choose your microphone and key, then click below and try dictating.\nIf the level stays at 0%, check Windows microphone permissions.", font=caption)
+        w["help"].grid(row=14, column=0, columnspan=2, sticky="w", pady=(6, 0))
+        w["scratch"] = tk.Text(top, height=3, width=36, wrap="word", font=caption, takefocus=True)
+        w["scratch"].grid(row=15, column=0, columnspan=2, sticky="ew")
+        tk.Button(top, text="Finish setup", command=self._finish_setup, takefocus=True).grid(row=16, column=0, columnspan=2, sticky="e")
+
         top.update_idletasks()
         self._style_window()
-        # Focus out means the user clicked elsewhere: the flyout is a
-        # taskbar flyout, and those dismiss themselves.
-        top.bind("<FocusOut>", self._maybe_dismiss)
+        # ttk dropdowns are separate native windows, not consistently owned
+        # by the Settings HWND. Register their client handles on the Tk thread.
+        self._popup_hwnds = tuple(
+            int(str(top.tk.call("winfo", "id",
+                top.tk.call("ttk::combobox::PopdownWindow", str(w[key])))), 0)
+            for key in ("microphone", "language")
+        )
+        # Focus changes alone do not dismiss Settings; mouse presses do.
+        # Losing focus must still disarm global shortcut capture.
+        top.bind("<FocusOut>", self._on_focus_out)
         top.bind("<Escape>", lambda _event: self._hide())
         # When the window dies (the overlay is stopping), drop every Tk
         # reference HERE, on the Tk thread. Holding them from another
@@ -447,6 +483,7 @@ class Flyout:
 
     def _release(self, event) -> None:  # noqa: ANN001
         if self._top is not None and event.widget is self._top:
+            self._stop_outside_clicks()
             self._cancel_capture()
             self._top = None
             self._widgets = {}
@@ -462,8 +499,12 @@ class Flyout:
                 hwnd = int(self._top.wm_frame(), 16)
             except Exception:  # noqa: BLE001
                 hwnd = int(self._top.winfo_id())
-            self._hwnd = hwnd
             user32 = ctypes.windll.user32
+            from ctypes import wintypes
+            user32.GetAncestor.argtypes = [wintypes.HWND, wintypes.UINT]
+            user32.GetAncestor.restype = wintypes.HWND
+            hwnd = user32.GetAncestor(hwnd, 2) or hwnd
+            self._hwnd = hwnd
             GWL_EXSTYLE = -20
             WS_EX_TOOLWINDOW = 0x00000080
             style = user32.GetWindowLongW(hwnd, GWL_EXSTYLE)
@@ -511,6 +552,10 @@ class Flyout:
         else:
             w["translate"].deselect()
         w["signin"].configure(text=self._signin_text())
+        if getattr(self.app.config, "start_with_windows", True):
+            w["startup"].select()
+        else:
+            w["startup"].deselect()
         self._show_state()
 
     def _signin_text(self) -> str:
@@ -522,6 +567,8 @@ class Flyout:
             signed = signin.signed_in()
         except Exception:  # noqa: BLE001 - a broken store reads as signed out
             signed = False
+        if getattr(signin, "load_problem", None):
+            return "Saved sign-in unreadable. Sign in again."
         return "Signed in with Google" if signed else "Sign in with Google"
 
     def _current_microphone_name(self) -> str:
@@ -540,6 +587,10 @@ class Flyout:
             return  # the card died mid-update
         state = self.app.state
         w["state"].configure(text=LABELS.get(state, "Ready"))
+        if "pause" in w:
+            w["pause"].configure(text="Resume microphone" if getattr(self.app, "microphone_paused", False) else "Pause microphone")
+            level = min(100, int(getattr(getattr(self.app, "recorder", None), "level", 0) * 100))
+            w["level"].configure(text=f"Microphone level: {level}%")
         w["dot"].delete("all")
         size = self._px(10)
         w["dot"].create_oval(
@@ -565,30 +616,115 @@ class Flyout:
         except Exception:  # noqa: BLE001 - the window is mid-destruction
             pass
 
-    def _maybe_dismiss(self, _event) -> None:  # noqa: ANN001
-        """Hide when the focus truly left, not when it moved inside.
+    def _watch_outside_clicks(self) -> None:
+        """Observe mouse presses without consuming or changing the user's click."""
+        self._stop_outside_clicks()
+        token = object()
+        self._outside_token = token
 
-        A focus-out during a key capture cancels the capture too: the
-        user walked away, and a capture left armed would grab whatever
-        they type into the next window and make it the dictation key.
-        """
-        if self._top is None:
+        def on_click(x, y, _button, pressed):  # noqa: ANN001
+            if not pressed or self._outside_token is not token:
+                return
+            # Resolve ownership on the hook thread, before Tk can unpost a
+            # dropdown. Never call Tk here: all widget work stays on its thread.
+            if self._click_is_inside(x, y):
+                return
+            self.overlay.call(lambda: self._dismiss_outside_click(token))
+
+        try:
+            from pynput import mouse
+
+            self._outside_listener = mouse.Listener(on_click=on_click)
+            self._outside_listener.start()
+        except Exception:  # noqa: BLE001 - Escape/tray closing still works
+            self._stop_outside_clicks()
+            log.warning("Outside-click detection could not start.", exc_info=True)
+
+    def _stop_outside_clicks(self) -> None:
+        self._outside_token = None
+        listener, self._outside_listener = self._outside_listener, None
+        if listener is not None:
+            listener.stop()
+
+    def _dismiss_outside_click(self, token) -> None:  # noqa: ANN001
+        # A queued click from a previous opening must not close a reopened card.
+        if token is self._outside_token and self._visible():
+            self._dismissed_at = time.monotonic()
+            self._hide()
+
+    def _click_is_inside(self, x: int, y: int) -> bool:
+        try:
+            import ctypes
+            from ctypes import wintypes
+
+            user32 = ctypes.windll.user32
+            user32.WindowFromPoint.argtypes = [wintypes.POINT]
+            user32.WindowFromPoint.restype = wintypes.HWND
+            hwnd = user32.WindowFromPoint(wintypes.POINT(x, y))
+            return self._owns_window(hwnd)
+        except Exception:  # noqa: BLE001 - uncertain clicks should not dismiss
+            return True
+
+    def _owns_window(self, hwnd: int) -> bool:
+        """Include child controls and owned popup windows, such as dropdowns."""
+        import ctypes
+        from ctypes import wintypes
+
+        user32 = ctypes.windll.user32
+        user32.GetAncestor.argtypes = [wintypes.HWND, wintypes.UINT]
+        user32.GetAncestor.restype = wintypes.HWND
+        user32.GetWindow.argtypes = [wintypes.HWND, wintypes.UINT]
+        user32.GetWindow.restype = wintypes.HWND
+        if not self._hwnd:
+            return True
+        inside_roots = {self._hwnd}
+        for popup in self._popup_hwnds:
+            inside_roots.add(user32.GetAncestor(popup, 2) or popup)
+        seen = set()
+        while hwnd and hwnd not in seen:
+            seen.add(hwnd)
+            root = user32.GetAncestor(hwnd, 2) or hwnd  # GA_ROOT
+            if root in inside_roots:
+                return True
+            hwnd = user32.GetWindow(root, 4)  # GW_OWNER
+        return False
+
+    def _on_focus_out(self, _event) -> None:  # noqa: ANN001
+        """Keep Settings open, but stop shortcut capture when focus leaves."""
+        top = self._top
+        if top is None or not self._capturing:
             return
 
         def check() -> None:
-            if self._top is None:
+            if self._top is not top or not self._capturing:
                 return
-            if time.monotonic() - self._shown_at < JUST_SHOWN_S:
-                return  # the tray click that opened us also stole focus
             try:
-                if self._top.focus_get() is None:
-                    self._hide()
-            except Exception:  # noqa: BLE001 - a dying widget mid-check
-                pass
+                # Ask Tcl directly: ttk popup widgets may not have Python
+                # widget objects, so focus_get() can raise a KeyError.
+                focused = str(top.tk.call("focus"))
+                own_path = str(top)
+                if not (focused == own_path or focused.startswith(own_path + ".")):
+                    self._cancel_capture()
+            except Exception:  # noqa: BLE001 - a disappearing window
+                self._cancel_capture()
 
-        self._top.after(150, check)
+        top.after(150, check)
 
     # ---- the controls ----
+
+    def _toggle_pause(self):
+        threading.Thread(target=lambda: self.app.set_microphone_paused(not self.app.microphone_paused), daemon=True).start()
+
+    def _toggle_startup(self):
+        try:
+            self.app.set_start_with_windows(not self.app.config.start_with_windows)
+        except Exception:
+            self._widgets["hint"].configure(text="Could not change Windows startup. Check your user permissions.")
+
+    def _finish_setup(self):
+        self.app.config.onboarding_complete = True
+        self.app.config.save()
+        self._hide()
 
     def _pick_microphone(self, _event) -> None:  # noqa: ANN001
         # Resolve against the same filtered list the box displayed. The

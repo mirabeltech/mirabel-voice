@@ -170,7 +170,7 @@ def test_the_reason_reaches_the_panel_when_a_dictation_fails():
     run_cycle(app)
 
     failures = [detail for state, detail in seen if state == STATE_ERROR]
-    assert failures and "no network" in failures[0]
+    assert failures and "Check your connection" in failures[0]
 
 
 # --- what the panel decides to show ----------------------------------------
@@ -247,7 +247,7 @@ def test_a_delivered_dictation_flashes_done_and_goes():
     # One quiet word, briefly. The text on screen is the real answer,
     # so the flash must be shorter than any note or error.
     text, milliseconds = panel.status_line(STATE_IDLE, f"{INSERTED_PREFIX}12 words.")
-    assert text == "Done"
+    assert text == "Sent"
     assert 0 < milliseconds < panel.NOTE_MS
     assert panel.is_done(STATE_IDLE, text)
 
@@ -346,7 +346,7 @@ def test_a_delivered_dictation_flashes_done_then_hides():
     overlay = make_overlay()
     overlay._apply_status(STATE_WORKING, "")
     overlay._apply_status(STATE_IDLE, f"{INSERTED_PREFIX}9 words.")
-    assert overlay.drawn[-1] == ("Done", STATE_IDLE)
+    assert overlay.drawn[-1] == ("Sent", STATE_IDLE)
 
     # The Done timer hides the panel; the stale animation timer of the
     # working state must find nothing to do rather than wake it up.

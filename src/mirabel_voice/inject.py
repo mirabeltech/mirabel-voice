@@ -52,6 +52,7 @@ class TextInjector:
         self.method = method
         self.restore_clipboard = restore_clipboard
         self._keyboard = keyboard
+        self._native_clipboard = clipboard is None
         self._clipboard = clipboard
         self._sequence = sequence or clipboard_sequence
         # One paste at a time: the dictation worker and a paste-last press
@@ -59,6 +60,7 @@ class TextInjector:
         self._send_lock = threading.Lock()
         self._restore_timer: threading.Timer | None = None
         self._restore_value: str | None = None
+        self._restore_marker = None
 
     @property
     def keyboard(self):  # noqa: ANN201
@@ -83,14 +85,14 @@ class TextInjector:
         if not text:
             return
         with self._send_lock:
-            if self.method == "type":
+            if self.method == "type" or (self._native_clipboard and (clipboard_has_nontext() or self._sequence() is None)):
                 self._send_as_keystrokes(text)
                 return
             try:
                 self._send_as_paste(text)
             except Exception as error:  # noqa: BLE001 - a paste can fail on locked clipboards
-                log.warning("Paste failed, sending keystrokes instead: %s", error)
-                self._send_as_keystrokes(text)
+                log.warning("Paste failed (%s); the last text remains available.", type(error).__name__)
+                raise
 
     def _send_as_paste(self, text: str) -> None:
         """Copy the text and send Ctrl+V.
@@ -113,16 +115,19 @@ class TextInjector:
 
         self.clipboard.copy(text)
         marker = self._sequence()
-        time.sleep(PASTE_SETTLE_SECONDS)
-        self._press_paste_combination()
-
-        if previous is not None:
-            self._restore_value = previous
-            self._restore_timer = threading.Timer(
-                CLIPBOARD_RESTORE_SECONDS, self._restore, args=(previous, marker)
-            )
-            self._restore_timer.daemon = True
-            self._restore_timer.start()
+        try:
+            time.sleep(PASTE_SETTLE_SECONDS)
+            self._press_paste_combination()
+        finally:
+            # Restore even when simulating Ctrl+V raises after clipboard copy.
+            if previous is not None:
+                self._restore_value = previous
+                self._restore_marker = marker
+                self._restore_timer = threading.Timer(
+                    CLIPBOARD_RESTORE_SECONDS, self._restore, args=(previous, marker)
+                )
+                self._restore_timer.daemon = True
+                self._restore_timer.start()
 
     def _take_pending_restore(self) -> str | None:
         """Cancel a waiting restore and return the content it carried."""
@@ -131,10 +136,18 @@ class TextInjector:
         if timer is None:
             return None
         timer.cancel()
+        if self._restore_marker is not None and self._sequence() != self._restore_marker:
+            return None
         return value
 
     def _restore(self, previous: str, marker: int | None) -> None:
         """Put the old content back, unless somebody copied meanwhile."""
+        with self._send_lock:
+            self._restore_locked(previous, marker)
+
+    def _restore_locked(self, previous, marker):
+        if self._restore_marker != marker:
+            return
         self._restore_value = None
         if marker is not None and self._sequence() != marker:
             # The user or another program copied something new while
@@ -181,3 +194,53 @@ def foreground_window() -> int:
         return int(ctypes.windll.user32.GetForegroundWindow())
     except Exception:  # noqa: BLE001 - not Windows, or no window
         return 0
+
+
+def clipboard_has_nontext() -> bool:
+    """Avoid modifying image/rich-text/file clipboard data; type text instead.
+
+    This deliberately preserves every original format rather than attempting
+    lossy restoration via pyperclip. An unavailable clipboard is also left alone.
+    """
+    try:
+        import ctypes
+        user = ctypes.windll.user32
+        if not user.OpenClipboard(None):
+            return True
+        try:
+            item = 0
+            while True:
+                item = user.EnumClipboardFormats(item)
+                if not item:
+                    return False
+                if item not in (1, 7, 13, 16):  # text, OEM text, Unicode, locale
+                    return True
+        finally:
+            user.CloseClipboard()
+    except Exception:
+        return True
+
+
+def focus_identity():
+    """Window, focused native control, and title; detects many same-app tab changes."""
+    try:
+        import ctypes
+        from ctypes import wintypes as w
+        class GUITHREADINFO(ctypes.Structure):
+            _fields_ = [('cbSize', w.DWORD), ('flags', w.DWORD)] + [(name, w.HWND) for name in
+                ('active', 'focus', 'capture', 'menu', 'move', 'caret')] + [('rect', w.RECT)]
+        user = ctypes.windll.user32
+        user.GetForegroundWindow.restype = w.HWND
+        user.GetWindowThreadProcessId.argtypes = (w.HWND, ctypes.POINTER(w.DWORD))
+        user.GetWindowTextW.argtypes = (w.HWND, w.LPWSTR, ctypes.c_int)
+        hwnd = user.GetForegroundWindow()
+        if not hwnd:
+            return 0
+        info = GUITHREADINFO(cbSize=ctypes.sizeof(GUITHREADINFO))
+        thread = user.GetWindowThreadProcessId(hwnd, None)
+        user.GetGUIThreadInfo(thread, ctypes.byref(info))
+        title = ctypes.create_unicode_buffer(512)
+        user.GetWindowTextW(hwnd, title, len(title))
+        return (hwnd, info.focus, title.value)
+    except Exception:
+        return foreground_window()

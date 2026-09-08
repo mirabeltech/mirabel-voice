@@ -209,7 +209,7 @@ class Tray:
     """Show the app in the Windows notification area."""
 
     def __init__(self, app: VoiceApp, flyout=None) -> None:  # noqa: ANN001
-        from .updater import Updater, endorsement_for
+        from .updater import Updater, UpdateCoordinator, endorsement_for
 
         self.app = app
         self.flyout = flyout
@@ -220,6 +220,7 @@ class Tray:
         self.updater = Updater.discover(
             endorsement=endorsement_for(app.config, app.signin)
         )
+        self.coordinator = UpdateCoordinator(app, self.updater, self.stop)
         app._on_state = self.update  # noqa: SLF001 - the tray owns the display
 
     def _title(self) -> str:
@@ -231,7 +232,8 @@ class Tray:
         """
         label = LABELS.get(self.app.state, "Ready")
         hotkey = self.app.config.hotkey
-        line = f"Mirabel Voice - {label} (hold {hotkey})"
+        action = "press" if getattr(self.app.config, "mode", "toggle") == "toggle" else "hold"
+        line = f"Mirabel Voice - {label} ({action} {hotkey})"
         title = f"{line}\n{self.detail}" if self.detail else line
         if len(title) > 127:
             title = title[:126] + "…"
@@ -286,6 +288,7 @@ class Tray:
                     visible=lambda _: self.updater is not None,
                 ),
                 pystray.MenuItem("Open the settings folder", self._open_config),
+                pystray.MenuItem("Export support information", self._support_export),
                 pystray.Menu.SEPARATOR,
                 pystray.MenuItem("Quit", self._quit),
             )
@@ -307,6 +310,10 @@ class Tray:
                 ),
             ),
             self._microphone_menu(),
+            pystray.MenuItem('Pause microphone', lambda: self.app.set_microphone_paused(not self.app.microphone_paused), checked=lambda _: getattr(self.app, 'microphone_paused', False)),
+            pystray.MenuItem('Start with Windows', lambda: self.app.set_start_with_windows(not self.app.config.start_with_windows), checked=lambda _: getattr(self.app.config, 'start_with_windows', True)),
+            pystray.MenuItem('Retry recording', lambda: self.app.retry_last_recording()),
+            pystray.MenuItem('Discard recording', lambda: self.app.discard_last_recording()),
             pystray.MenuItem(
                 "Check for updates",
                 self._check_updates,
@@ -315,6 +322,7 @@ class Tray:
             pystray.MenuItem("Copy the last text", self._copy_last),
             pystray.MenuItem("Change my dictation key", self._pick_hotkey),
             pystray.MenuItem("Open the settings folder", self._open_config),
+                pystray.MenuItem("Export support information", self._support_export),
             pystray.Menu.SEPARATOR,
             pystray.MenuItem("Quit", self._quit),
         )
@@ -452,38 +460,17 @@ class Tray:
             subprocess.Popen(["explorer", str(folder)])  # noqa: S607
 
     def _check_updates(self) -> None:
-        """Fetch and apply the newest release, then restart into it.
+        self.coordinator.request(lambda message: self.update(self.app.state, message))
 
-        Off the menu thread, like the sign-in: the download can take a
-        while, and the menu must stay alive through it.
-        """
-
-        def run() -> None:
-            updater = self.updater
-            if updater is None:
-                return
-            self.update(self.app.state, "Checking for updates...")
-            release = updater.latest()
-            if release is None:
-                self.update(self.app.state, "The update check could not reach GitHub.")
-                return
-            installed = updater.installed_version()
-            if installed and release[0] <= installed:
-                self.update(self.app.state, "Already up to date.")
-                return
-            version = updater.apply_latest()
-            if version and updater.start_new_copy():
-                self.stop()
-            elif not version:
-                self.update(
-                    self.app.state,
-                    "This update needs the full download. Paste the install "
-                    "line from the README after fetching the new zip.",
-                )
-
-        threading.Thread(
-            target=run, name="mirabel-voice-update", daemon=True
-        ).start()
+    def _support_export(self):
+        from .diagnostics import export
+        def run():
+            try:
+                export()
+                self.update(self.app.state, "Support facts saved as support.json in the settings folder.")
+            except Exception:
+                self.update(self.app.state, "Could not write support facts. Check the settings folder permissions.")
+        threading.Thread(target=run, daemon=True).start()
 
     def _quit(self) -> None:
         """Stop the app."""

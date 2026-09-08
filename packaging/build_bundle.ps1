@@ -1,25 +1,21 @@
-# Build the Python bundle: the download for a computer whose Smart App
-# Control refuses unsigned programs (see issue #35).
-#
-#   powershell -ExecutionPolicy Bypass -File packaging\build_bundle.ps1 -RelayUrl https://...
-#
-# Everything executable in the result is signed by the Python Software
-# Foundation. Our own code ships as source, which Windows is happy to run
-# through an interpreter it already trusts. No certificate is involved.
+# Build the private Python ZIP. Third-party native libraries may be unsigned;
+# this does not guarantee acceptance by every Windows security policy.
 param(
     [string]$RelayUrl = "",
     [string]$GoogleClientId = "",
     [string]$GoogleClientSecret = "",
-    [string]$PythonVersion = "3.12.10"
+    [string]$PythonVersion = "3.13.15",
+    [string]$BuildPython = ""
 )
 
 $ErrorActionPreference = "Stop"
+if ($PythonVersion -ne "3.13.15") { throw "Update and validate the runtime lock before changing Python." }
 $here = $PSScriptRoot
 $root = Split-Path $here -Parent
 
 function Say($text, $colour = "Gray") { Write-Host $text -ForegroundColor $colour }
 
-$py = Join-Path $root ".venv\Scripts\python.exe"
+$py = if ($BuildPython) { $BuildPython } else { Join-Path $root ".venv\Scripts\python.exe" }
 if (-not (Test-Path $py)) { Say "  No .venv here. Run setup.ps1 first." "Red"; exit 1 }
 
 Say ""
@@ -48,6 +44,8 @@ if ($LASTEXITCODE -ne 0) { Say "  Tests failed. Nothing was built." "Red"; exit 
 
 $version = (& $py -c "import tomllib,pathlib;print(tomllib.loads(pathlib.Path('pyproject.toml').read_text())['project']['version'])").Trim()
 Say "  Version $version" "DarkGray"
+$buildPython = (& $py -c "import platform;print(platform.python_version() + '/' + platform.machine())").Trim()
+if ($buildPython -ne "$PythonVersion/AMD64") { throw "Build with Python $PythonVersion AMD64 so Tk matches the embedded runtime." }
 
 # --- 1. Python itself ------------------------------------------------------
 # The official embeddable build. Downloaded once and kept, because it is
@@ -60,6 +58,8 @@ if (-not (Test-Path $embed)) {
     Invoke-WebRequest "https://www.python.org/ftp/python/$PythonVersion/python-$PythonVersion-embed-amd64.zip" -OutFile $embed
 }
 
+$expectedRuntime = (Get-Content (Join-Path $here 'python-runtime.sha256') -Raw).Trim()
+if ((Get-FileHash $embed -Algorithm SHA256).Hash -ne $expectedRuntime) { throw 'Python runtime checksum differs from the reviewed download.' }
 $staging = Join-Path $root "dist\bundle"
 if (Test-Path $staging) { Remove-Item $staging -Recurse -Force }
 New-Item -ItemType Directory -Force $staging | Out-Null
@@ -98,7 +98,7 @@ $dllDir = Join-Path $pythonDir "DLLs"
 New-Item -ItemType Directory -Force $dllDir | Out-Null
 foreach ($file in $tkFiles) {
     $from = Join-Path $source "DLLs\$file"
-    # Every binary in this bundle is signed, or the bundle has no point.
+    # Require the Python/Tk binaries to retain their official signatures.
     $sig = Get-AuthenticodeSignature $from
     if ($sig.Status -ne "Valid") {
         Say "  $file is not validly signed ($($sig.Status)). Stopping." "Red"
@@ -118,11 +118,14 @@ foreach ($lib in @("tcl8", "tcl8.6", "tk8.6")) {
 $sitePackages = Join-Path $pythonDir "Lib\site-packages"
 New-Item -ItemType Directory -Force $sitePackages | Out-Null
 Copy-Item (Join-Path $source "Lib\tkinter") $sitePackages -Recurse
+Copy-Item (Join-Path $here "sitecustomize.py") $sitePackages
 Say "  Tkinter added, signed by $($sig.SignerCertificate.Subject -replace '^CN=([^,]+).*','$1')" "DarkGray"
 
 # --- 2. The app and everything it needs ------------------------------------
 Say "  Installing the app and its libraries (a minute or two)..."
-& $py -m pip install --quiet --disable-pip-version-check --target $sitePackages $root
+& $py -m pip install --quiet --disable-pip-version-check --require-hashes --only-binary=:all: --no-deps --target $sitePackages -r (Join-Path $here "requirements-windows.lock")
+if ($LASTEXITCODE -ne 0) { throw "Locked runtime dependency installation failed." }
+& $py -m pip install --quiet --disable-pip-version-check --no-deps --no-build-isolation --upgrade --target $sitePackages $root
 if ($LASTEXITCODE -ne 0) { Say "  pip failed." "Red"; exit 1 }
 
 # The app icon rides inside the python folder, so the installer can put
@@ -141,6 +144,30 @@ $installer | Out-File -FilePath (Join-Path $staging "Install.ps1") -Encoding utf
 # The README rides along for reference. The unblock step still has to be
 # read before the zip opens, so the download page carries the steps too.
 Copy-Item (Join-Path $root "README.md") $staging
+Copy-Item (Join-Path $root "ADMIN.md") $staging
+New-Item -ItemType Directory -Force (Join-Path $staging 'docs') | Out-Null
+foreach ($guide in @('windows-acceptance.md', 'service-maintenance.md', 'AWS.md')) {
+    Copy-Item (Join-Path $root ('docs\' + $guide)) (Join-Path $staging 'docs')
+}
+
+foreach ($name in @('Launch.ps1', 'launcher.py', 'Uninstall.ps1')) {
+    Copy-Item (Join-Path $here $name) $staging
+}
+Copy-Item (Join-Path $root 'src\mirabel_voice\transaction.py') (Join-Path $staging 'recovery.py')
+[IO.File]::WriteAllText((Join-Path $sitePackages 'mirabel_voice\_version.txt'), $version)
+Copy-Item (Join-Path $here 'requirements-windows.lock') (Join-Path $sitePackages 'mirabel_voice\_runtime.lock')
+$contract = Get-Content (Join-Path $root 'src\mirabel_voice\data\runtime.json') -Raw | ConvertFrom-Json
+[IO.File]::WriteAllText((Join-Path $pythonDir 'bundle-format.txt'), [string]$contract.bundle_format)
+& (Join-Path $pythonDir 'python.exe') -m mirabel_voice --self-test
+if ($LASTEXITCODE -ne 0) { throw 'Produced runtime failed offline startup/encoder checks.' }
+# Save an honest inventory: unsigned third-party libraries remain visible.
+$inventory = @(Get-ChildItem $pythonDir -Recurse -File | Where-Object { $_.Extension -in '.exe','.dll','.pyd' } | ForEach-Object {
+    $sig = Get-AuthenticodeSignature $_.FullName
+    [ordered]@{ file=$_.FullName.Substring($pythonDir.Length+1); sha256=(Get-FileHash $_.FullName).Hash; signature=[string]$sig.Status }
+})
+$inventory | ConvertTo-Json | Set-Content (Join-Path $staging 'native-inventory.json') -Encoding UTF8
+Copy-Item (Join-Path $staging 'native-inventory.json') (Join-Path $root 'dist\native-inventory.json') -Force
+& (Join-Path $pythonDir 'python.exe') -c "import importlib.metadata,json;print(json.dumps(sorted([{'name':d.metadata['Name'],'version':d.version} for d in importlib.metadata.distributions()],key=lambda d:d['name'])))" | Set-Content (Join-Path $root 'dist\dependency-inventory.json') -Encoding UTF8
 
 # --- 4. The zip ------------------------------------------------------------
 $zip = Join-Path $root "dist\MirabelVoice-$version-python.zip"
@@ -149,6 +176,7 @@ Say "  Zipping..."
 Compress-Archive -Path (Join-Path $staging "*") -DestinationPath $zip
 Remove-Item $staging -Recurse -Force
 
+(Get-FileHash $zip -Algorithm SHA256).Hash.ToLowerInvariant() | Set-Content "$zip.sha256" -Encoding ascii
 $size = [math]::Round((Get-Item $zip).Length / 1MB, 1)
 Say ""
 Say "  Done. $zip ($size MB)" "Green"

@@ -113,8 +113,7 @@ class Relay:
             undeployed or half-configured sign-in safely degrades to.
         update_info: The release every machine should self-update to:
             {"version": ..., "sha256": ...}, set at deploy time. None
-            means no endorsement, and the app falls back to following
-            the newest published release.
+            means no endorsement; managed clients retain their installed release.
     """
 
     def __init__(
@@ -126,7 +125,10 @@ class Relay:
         clock: Callable[[], float] | None = None,
         signin=None,
         update_info: dict | None = None,
+        anthropic_workspace_id: str | None = None,
+        limits=None,
     ) -> None:
+        self.limits = limits
         self.tokens = tokens
         self.anthropic_key = anthropic_key
         self.openai_key = openai_key
@@ -134,13 +136,23 @@ class Relay:
         self._clock = clock or time.monotonic
         self.signin = signin
         self.update_info = update_info
+        self.anthropic_workspace_id = anthropic_workspace_id
 
     def handle(self, request: Request) -> Response:
         """Answer one call from the app."""
+        if self.limits and len(request.body) > self.limits.MAX_BODY:
+            return _error(413, 'Recording is too large. Use a shorter recording.')
         name = self._authenticate(request.headers)
         if name is None:
             self._log_usage("-", request.path, None, None, 0.0, "refused")
             return _error(401, "The token is missing or not recognized.")
+        if self.limits:
+            from .limits import Rejected
+            try:
+                self.limits.validate(request, name)
+            except Rejected as refusal:
+                self._log_usage(name, request.path, None, None, 0.0, 'limited')
+                return _error(refusal.status, refusal.message)
         if request.method == "POST" and request.path == "/v1/messages":
             return self._cleanup(name, request)
         if request.method == "POST" and request.path == "/v1/audio/transcriptions":
@@ -153,9 +165,7 @@ class Relay:
         """Say which release this relay endorses for self-update.
 
         The two values are set at deploy time and are not secrets. No
-        endorsement is an answer too: the app then falls back to the
-        newest published release, which is how machines behaved before
-        endorsement existed.
+        endorsement keeps managed clients on the installed release.
         """
         if not self.update_info:
             self._log_usage(name, "update", None, None, 0.0, "none")
@@ -169,6 +179,11 @@ class Relay:
 
     def _cleanup(self, name: str, request: Request) -> Response:
         """Forward a transcript to Anthropic for tidying."""
+        extra_headers = None
+        if self.anthropic_workspace_id:
+            extra_headers = {
+                "anthropic-workspace-id": self.anthropic_workspace_id,
+            }
         return self._proxy(
             name,
             route="cleanup",
@@ -177,6 +192,7 @@ class Relay:
             request=request,
             model=_json_model(request.body),
             usage_from_reply=_token_usage,
+            extra_headers=extra_headers,
         )
 
     def _transcribe(self, name: str, request: Request) -> Response:
@@ -258,6 +274,7 @@ class Relay:
         model: str | None,
         usage_from_reply: Callable[[bytes], dict | None] | None = None,
         extra_usage: dict | None = None,
+        extra_headers: dict[str, str] | None = None,
     ) -> Response:
         """Forward one call with the real key, and log the usage line."""
         headers = {
@@ -267,6 +284,7 @@ class Relay:
         }
         header_name, header_value = auth
         headers[header_name] = header_value
+        headers.update(extra_headers or {})
 
         started = self._clock()
         try:

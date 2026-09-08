@@ -89,9 +89,28 @@ def build_relay(read_secret=aws_secret) -> Relay:
         anthropic_key=_read_key(read_secret, anthropic_name),
         openai_key=_read_key(read_secret, openai_name),
         forward=urllib_forward,
+        limits=_limits(),
         signin=_google_signin(),
         update_info=_update_info(),
+        anthropic_workspace_id=(
+            os.environ.get("MIRABEL_ANTHROPIC_WORKSPACE_ID", "").strip() or None
+        ),
     )
+
+
+def _limits():
+    from .limits import Limits, DynamoRateLimit
+    table = os.environ.get('MIRABEL_RATE_LIMIT_TABLE', '').strip()
+    count = os.environ.get('MIRABEL_REQUESTS_PER_MINUTE', '').strip()
+    if bool(table) != bool(count):
+        raise SecretProblem('Rate limiting needs both its table and requests-per-minute setting.')
+    if not table:
+        return Limits()
+    import boto3
+    try:
+        return Limits(DynamoRateLimit(boto3.client('dynamodb'), table, int(count)))
+    except ValueError as error:
+        raise SecretProblem('Invalid requests-per-minute setting.') from error
 
 
 def _update_info() -> dict | None:

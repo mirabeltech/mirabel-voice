@@ -1,248 +1,92 @@
-# Mirabel Voice - install it, or update it, with one pasted line.
-#
-#   irm https://raw.githubusercontent.com/mirabeltech/mirabel-voice/main/install.ps1 | iex
-#
-# Not installed yet? Download the zip from the company shared drive
-# first. This finds it in Downloads, unblocks it, unpacks it, and runs
-# the installer inside - the old Properties / Unblock / Extract /
-# right-click routine, with none of the clicking. The zip on the drive
-# may lag the newest release; that does not matter, because a fresh
-# install chains straight into the update below and one paste still
-# ends on the newest release.
-#
-# Already installed? Then there is nothing to download: this fetches
-# the newest release's source from this repository, swaps it into the
-# installed bundle, and restarts the app. Your settings stay. The
-# Python runtime is untouched, which is what keeps Smart App Control
-# content. A release that changes the runtime itself is rare; when one
-# comes, this says so and points back at the shared drive.
-#
-# This script holds no secrets, which is why it can live in a public
-# repository. The relay's address travels only inside the zip, and the
-# zip stays behind the shared drive's sign-in. Updates need no secret
-# at all: an installed machine already has the address, and the code
-# is public.
+# Mirabel Voice: verify a company bundle, install it, or request an approved update.
 param(
-    # Where the zip landed, and where work happens. Tests point these
-    # somewhere else.
-    [string]$DownloadsDir = "",
-    [string]$WorkDir = "",
-    # The installed app. Tests point these at a fake one.
-    [string]$Target = "",
-    [string]$PythonExe = "",
-    # A release source zip already on disk, so tests skip the network.
-    [string]$SourceZip = ""
+    [string]$DownloadsDir = '', [string]$WorkDir = '', [string]$Target = '',
+    [string]$PythonExe = '', [string]$ManifestPath = '', [switch]$NoLaunch, [switch]$Repair
 )
-
-$ErrorActionPreference = "Stop"
-$driveLink = "https://drive.google.com/drive/folders/0AL2zqxan1Ec6Uk9PVA"
-$releaseApi = "https://api.github.com/repos/mirabeltech/mirabel-voice/releases/latest"
-$archiveBase = "https://github.com/mirabeltech/mirabel-voice/archive/refs/tags"
-
-function Say($text, $colour = "Gray") { Write-Host $text -ForegroundColor $colour }
-
-function Find-Zip($dirs) {
-    $dirs | Where-Object { $_ -and (Test-Path $_) } | ForEach-Object {
-        Get-ChildItem (Join-Path $_ "MirabelVoice-*.zip") -ErrorAction SilentlyContinue
-    } | Sort-Object LastWriteTime | Select-Object -Last 1
+$ErrorActionPreference = 'Stop'
+$driveLink = 'https://drive.google.com/drive/folders/0AL2zqxan1Ec6Uk9PVA'
+$manifestUrl = 'https://raw.githubusercontent.com/mirabeltech/mirabel-voice/main/packaging/bundles.json'
+if (-not $Target) { $Target = Join-Path $env:LOCALAPPDATA 'Programs\Mirabel Voice' }
+if (-not $PythonExe) { $PythonExe = Join-Path $Target 'python\python.exe' }
+if (-not $DownloadsDir) {
+    try { $DownloadsDir = (Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\User Shell Folders').'{374DE290-123F-4565-9164-39C4925E467B}' } catch {}
+    if (-not $DownloadsDir) { $DownloadsDir = Join-Path $env:USERPROFILE 'Downloads' }
+    $DownloadsDir = [Environment]::ExpandEnvironmentVariables($DownloadsDir)
 }
-
-function Read-Version($text) {
-    # A version out of a file name or a folder name, or $null.
-    if ($text -match "([0-9]+\.[0-9]+(\.[0-9]+)?)") { return [version]$Matches[1] }
-    return $null
-}
-
-function Get-DistInfo {
-    # The version marker pip wrote. pyproject.toml is the one place the
-    # version lives, and this folder's name descends from it.
-    Get-ChildItem $sitePackages -Directory -Filter "mirabel_voice-*.dist-info" -ErrorAction SilentlyContinue |
+function Find-Zip {
+    @(Get-ChildItem -LiteralPath $DownloadsDir -File -ErrorAction SilentlyContinue) |
+        Where-Object { $_.Name -match '^MirabelVoice-([0-9]+\.[0-9]+\.[0-9]+)-python(?: \(\d+\))?\.zip$' } |
+        Sort-Object @{Expression={ [version]([regex]::Match($_.Name, '\d+\.\d+\.\d+').Value) }; Descending=$true}, LastWriteTime -Descending |
         Select-Object -First 1
 }
-
-function Update-FromNewestRelease {
-    # Fetch the newest release's source and swap it into the installed
-    # bundle: prove the result imports, or put the old code back. Runs
-    # for a machine that is already installed, and again right after a
-    # fresh zip install, so one paste always ends on the newest release
-    # however old the downloaded zip is.
-    if (Test-Path $WorkDir) { Remove-Item $WorkDir -Recurse -Force }
-    New-Item -ItemType Directory -Force $WorkDir | Out-Null
-
-    $source = $SourceZip
-    if (-not $source) {
-        Say "  Checking the newest release..."
-        $tag = (Invoke-RestMethod $releaseApi).tag_name
-        $source = Join-Path $WorkDir "source.zip"
-        Invoke-WebRequest "$archiveBase/$tag.zip" -OutFile $source
+function Request-Update {
+    & $PythonExe -m mirabel_voice --request-update
+    if ($LASTEXITCODE -ne 0) { throw 'This older copy needs the latest Python ZIP from the shared drive. Your working copy was left alone.' }
+    $running = @(Get-Process python,pythonw -ErrorAction SilentlyContinue | Where-Object { $_.Path -and $_.Path.StartsWith($Target + '\', [StringComparison]::OrdinalIgnoreCase) })
+    if (-not $NoLaunch -and -not $running.Count) {
+        $launch = Join-Path $Target 'Launch.ps1'
+        if (Test-Path $launch) { & $launch }
+        else { Start-Process (Join-Path $Target 'python\pythonw.exe') -ArgumentList '-m','mirabel_voice' -WorkingDirectory $Target }
     }
-    Expand-Archive $source (Join-Path $WorkDir "source") -Force
-
-    $newPackage = Get-ChildItem (Join-Path $WorkDir "source") -Recurse -Directory -Filter "mirabel_voice" |
-        Where-Object { Test-Path (Join-Path $_.FullName "__init__.py") } | Select-Object -First 1
-    $pyproject = Get-ChildItem (Join-Path $WorkDir "source") -Recurse -Filter "pyproject.toml" | Select-Object -First 1
-    if (-not $newPackage -or -not $pyproject) {
-        Say "  The release download looks wrong; nothing was changed." "Red"
-        return
-    }
-    $newVersion = Read-Version ((Get-Content $pyproject.FullName | Where-Object { $_ -match '^version' }) -join "")
-
-    $distInfo = Get-DistInfo
-    $installedVersion = $null
-    if ($distInfo) { $installedVersion = Read-Version $distInfo.Name }
-    if ($installedVersion -and $newVersion -and $newVersion -le $installedVersion) {
-        Say "  Already up to date (version $installedVersion)." "Green"
-        Remove-Item $WorkDir -Recurse -Force -ErrorAction SilentlyContinue
-        return
-    }
-
-    Say "  Updating $(if ($installedVersion) { "$installedVersion " })to $newVersion..."
-    Get-Process MirabelVoice, pythonw -ErrorAction SilentlyContinue |
-        Where-Object { $_.Path -like "$Target*" } | Stop-Process -Force -Confirm:$false
-    Start-Sleep -Milliseconds 600
-
-    $installed = Join-Path $sitePackages "mirabel_voice"
-    $backup = Join-Path $WorkDir "previous"
-    Move-Item $installed $backup
-    Copy-Item $newPackage.FullName $installed -Recurse
-
-    # The proof: the updated app must still import and answer. A release
-    # that needs a new library fails here, and the old code goes back.
-    # Stop-on-error rests for a moment: a traceback on stderr must land
-    # in the verdict below, not kill the script between swap and restore.
-    $keep = $ErrorActionPreference
-    $ErrorActionPreference = "Continue"
-    & $PythonExe -m mirabel_voice --config *> $null
-    $healthy = ($LASTEXITCODE -eq 0)
-    $ErrorActionPreference = $keep
-    if ($healthy) {
-        if ($distInfo -and $newVersion) {
-            # Keep the version marker honest, so the next run compares right.
-            Rename-Item $distInfo.FullName "mirabel_voice-$newVersion.dist-info"
-        }
-        Say "  Updated. Starting Mirabel Voice..." "Green"
-    } else {
-        Remove-Item $installed -Recurse -Force
-        Move-Item $backup $installed
-        Say "  This release needs more than new code, so the old version" "Red"
-        Say "  was kept. Download the new zip from the shared drive, then" "Red"
-        Say "  paste the same line again:" "Red"
-        Say "  $driveLink" "DarkGray"
-    }
-
-    try {
-        Start-Process -FilePath (Join-Path $Target "python\pythonw.exe") `
-            -ArgumentList "-m", "mirabel_voice" -WorkingDirectory $Target
-    } catch {
-        Say "  Could not restart the app - open Mirabel Voice from the Start menu." "Yellow"
-    }
-    Remove-Item $WorkDir -Recurse -Force -ErrorAction SilentlyContinue
 }
-
-Say ""
-Say "  Mirabel Voice" "Cyan"
-Say "  Speak instead of type." "DarkGray"
-Say ""
-
-if (-not $Target) { $Target = Join-Path $env:LOCALAPPDATA "Programs\Mirabel Voice" }
-if (-not $PythonExe) { $PythonExe = Join-Path $Target "python\python.exe" }
-if (-not $WorkDir) { $WorkDir = Join-Path $env:TEMP "MirabelVoiceInstall" }
-$sitePackages = Join-Path $Target "python\Lib\site-packages"
-
-if (-not $DownloadsDir) {
-    # OneDrive moves the Downloads folder; the registry knows where it went.
-    $shell = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\User Shell Folders"
-    try { $DownloadsDir = (Get-ItemProperty $shell)."{374DE290-123F-4565-9164-39C4925E467B}" } catch {}
-    if (-not $DownloadsDir) { $DownloadsDir = Join-Path $env:USERPROFILE "Downloads" }
-}
-$searched = @($DownloadsDir, (Get-Location).Path)
-
-# --- Which job is this? -----------------------------------------------------
-# A bundle that is already installed updates from the public repository:
-# no download, no zip. The zip flow runs for a first install, and for a
-# downloaded zip newer than what is installed, which is how a release
-# that changes the runtime itself arrives.
-$bundled = Test-Path (Join-Path $Target "python\pythonw.exe")
-$packaged = Test-Path (Join-Path $Target "MirabelVoice.exe")
-$zip = Find-Zip $searched
-
-$job = "install"
-if ($bundled) {
-    $job = "update"
-    if ($zip) {
-        $marker = Get-DistInfo
-        $haveVersion = $null
-        if ($marker) { $haveVersion = Read-Version $marker.Name }
-        $zipVersion = Read-Version $zip.Name
-        if (-not $haveVersion -or ($zipVersion -and $zipVersion -gt $haveVersion)) {
-            $job = "install"  # the downloaded zip is ahead: use it
-        }
-    }
-} elseif ($packaged -and -not $zip) {
-    Say "  This machine runs the packaged program, which updates from the" "Yellow"
-    Say "  zip. Download the newest one from the shared drive, then paste" "Yellow"
-    Say "  the same line again:" "Yellow"
-    Say "  $driveLink" "DarkGray"
-    return
-}
-
-if ($job -eq "update") {
-    Update-FromNewestRelease
-    return
-}
-
-# --- Install: find the zip you downloaded ------------------------------------
+$zip = Find-Zip
+if ((Test-Path $PythonExe) -and -not $zip -and -not $Repair) { Request-Update; return }
 if (-not $zip) {
-    Say "  No MirabelVoice zip in $DownloadsDir yet." "Yellow"
-    Say "  Get it from the shared drive - opening the page now:" "Yellow"
-    Say "  $driveLink" "DarkGray"
+    Write-Host "Download the Python ZIP from $driveLink, then run this command again."
     Start-Process $driveLink
-    Say ""
-    Say "  Waiting here for the download. Ctrl+C stops."
-    $deadline = (Get-Date).AddMinutes(10)
-    while (-not $zip -and (Get-Date) -lt $deadline) {
-        Start-Sleep -Seconds 3
-        $zip = Find-Zip $searched
-    }
-    if (-not $zip) {
-        Say "  Nothing arrived. Download the zip, then paste the same line again." "Red"
-        return
-    }
-    Start-Sleep -Seconds 1
-}
-Say "  Found $($zip.Name)."
-
-# Unblocking here is the tick in the zip's Properties dialog, done for you.
-Unblock-File $zip.FullName
-if (Test-Path $WorkDir) { Remove-Item $WorkDir -Recurse -Force }
-Say "  Unpacking (half a minute)..."
-Expand-Archive $zip.FullName $WorkDir -Force
-
-$installer = Get-ChildItem $WorkDir -Recurse -Filter "Install.ps1" | Select-Object -First 1
-if (-not $installer) {
-    Say "  That zip has no installer inside. Is it the right download?" "Red"
-    Say "  The one to get is at $driveLink" "Red"
     return
 }
-
-if ($ExecutionContext.SessionState.LanguageMode -ne "FullLanguage") {
-    # Smart App Control can hold PowerShell in a restricted mode that
-    # cannot make shortcuts. Warn now rather than fail mysteriously.
-    Say "  This machine restricts PowerShell. If the install stops at" "Yellow"
-    Say "  an error about shortcuts, tell Tommy." "Yellow"
+# The manifest is obtained separately from the ZIP. Never trust a checksum inside it.
+if ($ManifestPath) { $manifest = Get-Content -LiteralPath $ManifestPath -Raw | ConvertFrom-Json }
+else { $manifest = Invoke-RestMethod -Uri $manifestUrl -TimeoutSec 30 }
+if ($manifest.schema -ne 1) { throw 'The release manifest is invalid. Nothing was installed.' }
+$hash = (Get-FileHash -LiteralPath $zip.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+$release = @($manifest.bundles | Where-Object { $_.sha256 -eq $hash -and $_.version -match '^\d+\.\d+\.\d+$' -and $_.approved -eq $true })
+if ($release.Count -ne 1) { throw 'This ZIP is not an approved download, or its download is incomplete. Get the approved Python ZIP from the shared drive. Nothing was changed.' }
+if (Test-Path $PythonExe) {
+    $versionFile = Join-Path $Target 'python\Lib\site-packages\mirabel_voice\_version.txt'
+    if (Test-Path $versionFile) {
+        $current = (Get-Content $versionFile -Raw).Trim()
+        if ($current -eq $release[0].version -and -not $Repair) { Request-Update; return }
+    }
 }
-& powershell -NoProfile -ExecutionPolicy Bypass -File $installer.FullName
-$result = $LASTEXITCODE
-
-Remove-Item $WorkDir -Recurse -Force -ErrorAction SilentlyContinue
-if ($result -ne 0) {
-    Say "  The install did not finish. The message above says why." "Red"
-    return
-}
-
-# The zip on the shared drive may lag the newest release. One paste
-# still ends current: chain straight into the same update a later
-# paste would run.
-if (Test-Path (Join-Path $Target "python\pythonw.exe")) {
-    Update-FromNewestRelease
-}
+# Work only in a newly created directory. Never erase a caller-supplied folder.
+if (-not $WorkDir) { $WorkDir = $env:TEMP }
+$work = Join-Path $WorkDir ('MirabelVoiceInstall-' + [guid]::NewGuid().ToString('N'))
+New-Item -ItemType Directory -Path $work | Out-Null
+try {
+    Unblock-File -LiteralPath $zip.FullName
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    $archive = [IO.Compression.ZipFile]::OpenRead($zip.FullName)
+    try {
+        $total = 0L
+        foreach ($entry in $archive.Entries) {
+            $total += $entry.Length
+            $entryPath = $entry.FullName.Replace('/', '\')
+            if ([IO.Path]::IsPathRooted($entryPath) -or $entryPath.Contains(':')) { throw 'Unsafe ZIP path.' }
+            foreach ($part in $entryPath.Split('\')) {
+                if ($part -eq '.' -or $part -eq '..' -or ($part -and $part.TrimEnd(' ', '.') -ne $part)) { throw 'Unsafe ZIP path.' }
+            }
+        }
+        if ($total -gt 1GB) { throw 'The expanded ZIP is too large.' }
+        # Extended Windows paths require backslashes, including ZIP member names.
+        # Validate every member above before writing any files.
+        $destinationRoot = '\\?\' + [IO.Path]::GetFullPath($work).TrimEnd('\') + '\'
+        foreach ($entry in $archive.Entries) {
+            $entryPath = $entry.FullName.Replace('/', '\')
+            $destination = $destinationRoot + $entryPath
+            if ($entryPath.EndsWith('\')) {
+                [IO.Directory]::CreateDirectory($destination) | Out-Null
+            } else {
+                [IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($destination)) | Out-Null
+                [IO.Compression.ZipFileExtensions]::ExtractToFile($entry, $destination)
+            }
+        }
+    } finally { $archive.Dispose() }
+    $installer = Join-Path $work 'Install.ps1'
+    if (-not (Test-Path $installer)) { throw 'The approved ZIP has no installer.' }
+    $installArgs = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $installer, '-Target', $Target)
+    if ($NoLaunch) { $installArgs += '-NoLaunch' }
+    & powershell @installArgs
+    if ($LASTEXITCODE -ne 0) { throw 'Installation did not finish. Follow the message above; the previous copy was retained.' }
+} finally { [IO.Directory]::Delete(('\\?\' + [IO.Path]::GetFullPath($work)), $true) }

@@ -94,3 +94,27 @@ def test_back_to_back_pastes_keep_the_users_real_clipboard(monkeypatch):
     assert keyboard.field == "First dictation.Second dictation."
     # The value waiting to be restored is still the user's own content.
     assert injector._take_pending_restore() == "old content"
+
+
+def test_native_clipboard_is_checked_again_after_first_use(monkeypatch):
+    injector, keyboard, clipboard = make_injector(monkeypatch, sequences=[5, 5])
+    injector._native_clipboard = True
+    monkeypatch.setattr(inject, 'clipboard_has_nontext', lambda: False)
+    injector.send('First')
+    injector.flush_restore()
+    clipboard.content = 'rich original represented by fake'
+    monkeypatch.setattr(inject, 'clipboard_has_nontext', lambda: True)
+    injector.send('Second')
+    assert clipboard.content == 'rich original represented by fake'
+    assert keyboard.field == 'FirstSecond'
+
+
+def test_keyboard_failure_still_restores_clipboard_and_does_not_repeat(monkeypatch):
+    import pytest
+    injector, keyboard, clipboard = make_injector(monkeypatch, sequences=[5, 5])
+    monkeypatch.setattr(injector, '_press_paste_combination', lambda: (_ for _ in ()).throw(OSError('blocked target')))
+    with pytest.raises(OSError):
+        injector.send('Cannot confirm delivery')
+    injector.flush_restore()
+    assert clipboard.content == 'old content'
+    assert keyboard.field == ''

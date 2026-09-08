@@ -1,160 +1,112 @@
-# Mirabel Voice - install from this folder.
-#
-# Select Install.ps1, right-click it, and choose "Run with PowerShell"
-# (under "Show more options" on some Windows 11 builds), or run:
-#   powershell -ExecutionPolicy Bypass -File Install.ps1
-#
-# There is deliberately no double-click Install.cmd: Smart App Control
-# hard-blocks an unsigned .cmd from the internet with a "may be unsafe"
-# dialog (tried 2026-08-25). A signed installer is the real fix - #35.
-#
-# It copies the app into your own profile, asks for your token, and starts
-# it. Nothing here needs an administrator password.
-#
-# Running it again updates the app and keeps your settings and your token.
-#
-# Two downloads use this script. One holds a packaged program; the other
-# holds Python and the source, for computers whose Smart App Control
-# refuses unsigned programs. The layout in the folder says which is which.
-param([string]$Token = "")
-
-$ErrorActionPreference = "Stop"
+# Run only from the approved company Python ZIP. No administrator privileges needed.
+param([string]$Token = '', [string]$Target = '', [switch]$NoLaunch, [switch]$SkipShortcuts)
+$ErrorActionPreference = 'Stop'
 $here = $PSScriptRoot
-$relayUrl = "__RELAY_URL__"
-$googleClientId = "__GOOGLE_CLIENT_ID__"
-$googleClientSecret = "__GOOGLE_CLIENT_SECRET__"
-# With the Google client in the download, there is no token page at all:
-# the app signs the person in with their work account on first start.
-$googleMode = $googleClientId -and $googleClientSecret -and
-    ($googleClientId -notlike "__GOOGLE*") -and ($googleClientSecret -notlike "__GOOGLE*")
-$target = Join-Path $env:LOCALAPPDATA "Programs\Mirabel Voice"
-
-function Say($text, $colour = "Gray") { Write-Host $text -ForegroundColor $colour }
-
-Say ""
-Say "  Mirabel Voice" "Cyan"
-Say "  Speak instead of type." "DarkGray"
-Say ""
-
-$packaged = Join-Path $here "MirabelVoice\MirabelVoice.exe"
-$bundled = Join-Path $here "python\pythonw.exe"
-if (Test-Path $packaged) {
-    $kind = "packaged"
-} elseif (Test-Path $bundled) {
-    $kind = "bundled"
-} else {
-    Say "  This script has to sit next to the app folder." "Red"
-    Say "  Unzip the whole download, then run it from there." "Red"
-    exit 1
+$architecture = if ($env:PROCESSOR_ARCHITEW6432) { $env:PROCESSOR_ARCHITEW6432 } else { $env:PROCESSOR_ARCHITECTURE }
+if ($architecture -ne 'AMD64') { throw 'This download supports Windows x64. Ask Tommy about a compatible download for this computer; nothing was installed.' }
+$relayUrl = '__RELAY_URL__'
+$googleClientId = '__GOOGLE_CLIENT_ID__'
+$googleClientSecret = '__GOOGLE_CLIENT_SECRET__'
+if (-not $Target) { $Target = Join-Path $env:LOCALAPPDATA 'Programs\Mirabel Voice' }
+$target = [IO.Path]::GetFullPath($Target)
+$source = Join-Path $here 'python'
+if ((Test-Path $target) -and -not (Test-Path (Join-Path $target '.installed')) -and -not (Test-Path (Join-Path $target 'python\Lib\site-packages\mirabel_voice\__init__.py'))) {
+    $unexpected = @(Get-ChildItem -LiteralPath $target -Force | Where-Object { $_.Name -notin @('.update.lock','.install-pending','python.new','python.previous','Launch.ps1','launcher.py','recovery.py','Uninstall.ps1','Launch.ps1.new','launcher.py.new','recovery.py.new','Uninstall.ps1.new','__pycache__') })
+    if ($unexpected.Count) { throw 'Choose an empty folder or an existing Mirabel Voice installation. This folder contains other files.' }
 }
-
-# --- 1. Stop a running copy, or its files cannot be replaced ---------------
-Get-Process MirabelVoice, pythonw -ErrorAction SilentlyContinue |
-    Where-Object { $_.Path -like "$target*" } | Stop-Process -Force -Confirm:$false
-Start-Sleep -Milliseconds 600
-
-# --- 2. Copy the app -------------------------------------------------------
-Say "  Copying the app..."
+if (-not (Test-Path (Join-Path $source 'python.exe'))) { throw 'Get the Python ZIP, extract the whole download, and run Install.ps1 from that folder.' }
+if ($source.TrimEnd('\') -eq (Join-Path $target 'python')) { throw 'Run the installer from the extracted download, not the installed app.' }
+if ($relayUrl -notmatch '^https://' -or $relayUrl -like '*__RELAY*') { throw 'This bundle has no valid relay configuration.' }
+# Refuse rather than forcibly terminating an active recording or unrelated Python.
+$running = @(Get-Process python,pythonw,MirabelVoice -ErrorAction SilentlyContinue | Where-Object { $_.Path -and $_.Path.StartsWith($target + '\', [StringComparison]::OrdinalIgnoreCase) })
+if ($running.Count) { throw 'Finish dictating, choose Quit from the microphone icon, then run this installer again. Your current copy was left alone.' }
 New-Item -ItemType Directory -Force $target | Out-Null
-if ($kind -eq "packaged") {
-    Copy-Item (Join-Path $here "MirabelVoice\*") $target -Recurse -Force
-    $launch = Join-Path $target "MirabelVoice.exe"
-    $launchArgs = @()
-    $console = Join-Path $target "MirabelVoiceConsole.exe"
-    $consoleArgs = @()
-} else {
-    # A copy over an old install must not merge with it: a leftover
-    # dist-info from the old version misleads the in-app updater.
-    $oldPython = Join-Path $target "python"
-    if (Test-Path $oldPython) { Remove-Item $oldPython -Recurse -Force }
-    Copy-Item (Join-Path $here "python") $target -Recurse -Force
-    $launch = Join-Path $target "python\pythonw.exe"
-    $launchArgs = @("-m", "mirabel_voice")
-    $console = Join-Path $target "python\python.exe"
-    $consoleArgs = @("-m", "mirabel_voice")
-}
-Say "  Copied." "Green"
-
-# --- 3. Your sign-in, or your token ----------------------------------------
-# The app owns its settings file, so the app stores the credential. Writing
-# that file from here would overwrite the dictation key and everything else.
-if ($googleMode) {
-    & $console @consoleArgs --set-relay $relayUrl | Out-Null
-    & $console @consoleArgs --set-google $googleClientId $googleClientSecret | Out-Null
-    Say ""
-    Say "  No token to enter: you sign in with your Mirabel Google account." "DarkGray"
-    Say "  Your browser opens once, the first time the app starts." "DarkGray"
-} else {
-    & $console @consoleArgs --has-relay-token | Out-Null
-    $hasToken = ($LASTEXITCODE -eq 0)
-
-    if ($Token) {
-        & $console @consoleArgs --set-relay $relayUrl $Token | Out-Null
-    } elseif ($hasToken) {
-        # Keep the token already here, and follow the relay if it moved.
-        & $console @consoleArgs --set-relay $relayUrl | Out-Null
+$lock = $null
+try { $lock = [IO.File]::Open((Join-Path $target '.update.lock'), 'OpenOrCreate', 'ReadWrite', 'None') }
+catch { throw 'Another installation or update is running. Wait and try again.' }
+$runtime = Join-Path $target 'python'
+$incoming = Join-Path $target 'python.new'
+$backup = Join-Path $target 'python.previous'
+$journal = Join-Path $target '.install-pending'
+try {
+    if ((Test-Path $journal) -and (Test-Path $backup)) {
+        if (Test-Path $runtime) { [IO.Directory]::Delete(('\\?\' + $runtime), $true) }
+        Move-Item $backup $runtime
+        Remove-Item $journal
+    } elseif (-not (Test-Path $runtime) -and (Test-Path $backup)) { Move-Item $backup $runtime }
+    if (Test-Path $incoming) { [IO.Directory]::Delete(('\\?\' + $incoming), $true) }
+    Write-Host 'Checking the new app before changing your installation...'
+    & robocopy.exe $source $incoming /E /R:1 /W:1 /NFL /NDL /NJH /NJS /NP | Out-Null
+    if ($LASTEXITCODE -ge 8) { throw 'Could not copy the new bundle. Check disk space and folder permissions. The current copy was retained.' }
+    $console = Join-Path $incoming 'python.exe'
+    & $console -m mirabel_voice --self-test
+    if ($LASTEXITCODE -ne 0) { throw 'The new bundle failed its checks. The working version was retained.' }
+    $googleMode = $googleClientId -and $googleClientSecret -and $googleClientId -notlike '__GOOGLE*'
+    # Configure through the staged app. Atomic settings writes retain preferences.
+    & $console -m mirabel_voice --set-relay $relayUrl | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw 'Could not save relay settings. Repair config.json and retry.' }
+    if ($googleMode) {
+        & $console -m mirabel_voice --set-google $googleClientId $googleClientSecret | Out-Null
+        if ($LASTEXITCODE -ne 0) { throw 'Could not save sign-in settings.' }
     } else {
-        Say ""
-        Say "  The app needs your token. Ask Tommy for it." "Yellow"
-        Say "  There are no API keys to enter: they stay on our server." "DarkGray"
-        $answer = Read-Host "  Token"
-        if (-not $answer) { Say "  A token is needed. Run this again when you have one." "Red"; exit 1 }
-        & $console @consoleArgs --set-relay $relayUrl $answer.Trim() | Out-Null
+        & $console -m mirabel_voice --has-relay-token | Out-Null
+        if ($LASTEXITCODE -ne 0 -and -not $Token) { $Token = Read-Host 'Your Mirabel token (ask the support contact)' }
+        if ($Token) {
+            & $console -m mirabel_voice --set-relay $relayUrl $Token | Out-Null
+            if ($LASTEXITCODE -ne 0) { throw 'Could not save the token.' }
+        }
+        & $console -m mirabel_voice --check-keys
+        if ($LASTEXITCODE -ne 0) { throw 'Sign-in could not be checked. Verify the connection/token and retry. Existing credentials were not cleared.' }
     }
-
-    Say "  Checking your token..."
-    $check = & $console @consoleArgs --check-keys
-    if ($LASTEXITCODE -ne 0) {
-        # Clear the refused token, so that running this again asks for one.
-        & $console @consoleArgs --forget-relay-token | Out-Null
-        Say "  $check" "Red"
-        Say ""
-        Say "  That token was not accepted. Check it with Tommy and run this again." "Red"
-        exit 1
+    # Stable launch/recovery lives outside the runtime directory being replaced.
+    foreach ($name in @('Launch.ps1','launcher.py','recovery.py','Uninstall.ps1')) {
+        Copy-Item (Join-Path $here $name) (Join-Path $target ($name + '.new')) -Force
+        Move-Item (Join-Path $target ($name + '.new')) (Join-Path $target $name) -Force
     }
-    Say "  Your token works." "Green"
+    if (Test-Path $backup) { [IO.Directory]::Delete(('\\?\' + $backup), $true) }
+    $hadRuntime = Test-Path $runtime
+    [IO.File]::WriteAllText($journal, 'pending')
+    try {
+        if (Test-Path $runtime) { Move-Item $runtime $backup }
+        Move-Item $incoming $runtime
+        & (Join-Path $runtime 'python.exe') -m mirabel_voice --self-test
+        if ($LASTEXITCODE -ne 0) { throw 'The installed bundle failed its checks.' }
+        Remove-Item $journal
+    } catch {
+        if (Test-Path $backup) {
+            if (Test-Path $runtime) { [IO.Directory]::Delete(('\\?\' + $runtime), $true) }
+            Move-Item $backup $runtime
+        } elseif (-not $hadRuntime -and (Test-Path $runtime)) { [IO.Directory]::Delete(('\\?\' + $runtime), $true) }
+        Remove-Item $journal -Force -ErrorAction SilentlyContinue
+        throw
+    }
+    [IO.File]::WriteAllText((Join-Path $target '.installed'), 'Mirabel Voice')
+    if (-not $SkipShortcuts) {
+        $shell = New-Object -ComObject WScript.Shell
+        foreach ($folder in @([Environment]::GetFolderPath('Desktop'), [Environment]::GetFolderPath('Programs'))) {
+            $link = $shell.CreateShortcut((Join-Path $folder 'Mirabel Voice.lnk'))
+            $link.TargetPath = "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe"
+            $link.Arguments = '-NoProfile -WindowStyle Hidden -File "' + (Join-Path $target 'Launch.ps1') + '"'
+            $link.WorkingDirectory = $target
+            $link.IconLocation = (Join-Path $runtime 'MirabelVoice.ico') + ',0'
+            $link.Save()
+        }
+        $console = Join-Path $runtime 'python.exe'
+        $settingsPath = (& $console -m mirabel_voice --config).Trim()
+        $settings = Get-Content -LiteralPath $settingsPath -Raw | ConvertFrom-Json
+        $startup = if ($settings.start_with_windows -eq $false) { 'off' } else { 'on' }
+        & $console -m mirabel_voice --set-startup $startup
+        if ($LASTEXITCODE -ne 0) { throw 'The app was installed but Windows startup could not be configured.' }
+        $reg = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\MirabelVoice'
+        New-Item $reg -Force | Out-Null
+        $version = (Get-Content (Join-Path $runtime 'Lib\site-packages\mirabel_voice\_version.txt') -Raw).Trim()
+        New-ItemProperty $reg DisplayName -Value 'Mirabel Voice' -Force | Out-Null
+        New-ItemProperty $reg DisplayVersion -Value $version -Force | Out-Null
+        New-ItemProperty $reg UninstallString -Value ('powershell.exe -NoProfile -File "' + (Join-Path $target 'Uninstall.ps1') + '"') -Force | Out-Null
+    }
+    Write-Host 'Installed. Start Mirabel Voice from the Start menu. Your settings have been kept.'
+} finally {
+    if ($lock) { $lock.Dispose() }
+    if (Test-Path $incoming) { [IO.Directory]::Delete(('\\?\' + $incoming), $true) }
 }
-
-# --- 4. Shortcuts ----------------------------------------------------------
-$shell = New-Object -ComObject WScript.Shell
-function New-Launcher($path) {
-    $s = $shell.CreateShortcut($path)
-    $s.TargetPath = $launch
-    $s.Arguments = ($launchArgs -join " ")
-    $s.WorkingDirectory = $target
-    $s.Description = "Mirabel Voice"
-    # The bundle ships the app icon beside pythonw; without this the
-    # shortcuts wear the plain Python icon.
-    $icon = Join-Path $target "python\MirabelVoice.ico"
-    if (Test-Path $icon) { $s.IconLocation = "$icon,0" }
-    $s.Save()
-}
-New-Launcher (Join-Path ([Environment]::GetFolderPath("Desktop")) "Mirabel Voice.lnk")
-New-Launcher (Join-Path ([Environment]::GetFolderPath("Startup")) "Mirabel Voice.lnk")
-
-# --- 5. Start it -----------------------------------------------------------
-if ($launchArgs.Count) {
-    Start-Process -FilePath $launch -ArgumentList $launchArgs -WorkingDirectory $target
-} else {
-    Start-Process -FilePath $launch -WorkingDirectory $target
-}
-
-$settings = (& $console @consoleArgs --config).Trim()
-$key = "Insert"
-if (Test-Path $settings) {
-    $saved = (Get-Content $settings -Raw | ConvertFrom-Json).hotkey
-    if ($saved) { $key = (Get-Culture).TextInfo.ToTitleCase($saved.Replace("_", " ")) }
-}
-
-Say ""
-Say "  Ready. Mirabel Voice is running and starts with Windows." "Green"
-Say ""
-Say "  Click into any text box, then:" "Cyan"
-Say ""
-Say "    Press $key    start listening"
-Say "    Speak"
-Say "    Press $key    finish, and your words are tidied up"
-Say ""
-Say "  Esc          throw away what you are saying"
-Say "  Shift+Alt+Z  paste the last dictation again"
-Say ""
+if (-not $NoLaunch) { & (Join-Path $target 'Launch.ps1') }

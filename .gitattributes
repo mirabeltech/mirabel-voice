@@ -1,0 +1,4 @@
+# Runtime compatibility compares the reviewed lock file across Windows builds
+# and GitHub source archives. Keep its bytes consistent in both locations.
+packaging/*.lock text eol=lf
+packaging/python-runtime.sha256 text eol=lf
