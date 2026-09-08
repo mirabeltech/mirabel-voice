@@ -2,7 +2,7 @@
 
 Press **Insert**, speak, then press **Insert** again. Mirabel Voice turns your speech into text and inserts it where you were typing.
 
-**Download verification:** version 0.9.0 has passed Tommy’s local use checks. The installer approves the exact tested ZIP; the fresh Google Drive download check and remaining [release checklist](docs/windows-acceptance.md) must be completed before organization-wide rollout.
+**Release status:** Tommy has confirmed the Google Drive download, installation/repair, Settings, dictation, restart, sleep/wake, microphone reconnection and connection recovery on his Windows computer. The installer verifies the approved 0.9.0 ZIP. Service usage limits, outage monitoring and the remaining [release checklist](docs/windows-acceptance.md) still need to be completed before organization-wide rollout. These results do not verify every Windows computer or a fresh user profile.
 
 ## Install on Windows
 

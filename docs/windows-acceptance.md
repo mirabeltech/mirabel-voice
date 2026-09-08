@@ -16,7 +16,7 @@ Record the ZIP filename and SHA-256, app version, Windows version/build, x64/oth
 
 | Check | Your action | Result |
 |---|---|---|
-| Fresh installation | Download the configured ZIP from company Drive in a browser and follow README in a fresh Windows profile if available. Leave protections on. | Pending Tommy |
+| Browser download and installation | Download the configured ZIP from company Drive in a browser and follow README in a fresh Windows profile if available. Leave protections on. | Tommy confirmed the browser download, repair installation on his existing profile, and dictation. Fresh-profile installation remains untested. |
 | Settings controls | Open dropdowns, select a language/microphone, click buttons and type in the practice box. Settings stays open for controls and dropdowns; clicking anywhere outside, Escape or Finish setup closes it. | Passed: Tommy confirmed the final Settings behavior |
 | First use | Sign in, choose microphone/key, dictate a harmless sentence into the practice box. Check it appears once. | Pending Tommy |
 | Your usual apps | Try your email, browser and editor. Keep the destination selected until text arrives. | Passed: Tommy reported Notepad/usual-app dictation works |
