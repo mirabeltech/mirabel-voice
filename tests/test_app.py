@@ -574,3 +574,19 @@ def test_the_config_reaches_the_real_recorder():
     )
     assert app.recorder._hot is True
     assert app.recorder._pre_roll_seconds == 1.5
+
+
+def test_driver_error_has_recovery_instructions_and_stays_usable(monkeypatch, tmp_path):
+    app = language_app(monkeypatch, tmp_path)
+    app.recorder.start = lambda: (_ for _ in ()).throw(
+        RuntimeError("WdmSyncIoctl: DeviceIoControl GLE = 0x00000490")
+    )
+    states = []
+    app._on_state = lambda state, detail: states.append((state, detail))
+    assert app.start_recording() is False
+    assert app.state == STATE_ERROR
+    assert "Choose your microphone again" in states[-1][1]
+    assert "WdmSyncIoctl" not in states[-1][1]
+    app.recorder.start = lambda: None
+    assert app.start_recording() is True
+    app.cancel_recording()

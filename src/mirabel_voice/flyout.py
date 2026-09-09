@@ -458,7 +458,9 @@ class Flyout:
         w["help"].grid(row=14, column=0, columnspan=2, sticky="w", pady=(6, 0))
         w["scratch"] = tk.Text(top, height=3, width=36, wrap="word", font=caption, takefocus=True)
         w["scratch"].grid(row=15, column=0, columnspan=2, sticky="ew")
-        tk.Button(top, text="Finish setup", command=self._finish_setup, takefocus=True).grid(row=16, column=0, columnspan=2, sticky="e")
+        w["finish_setup"] = tk.Button(top, text="Finish setup", command=self._finish_setup, takefocus=True)
+        w["finish_setup"].grid(row=16, column=0, columnspan=2, sticky="e")
+        self._refresh_setup()
 
         top.update_idletasks()
         self._style_window()
@@ -557,6 +559,15 @@ class Flyout:
         else:
             w["startup"].deselect()
         self._show_state()
+
+    def _refresh_setup(self) -> None:
+        complete = getattr(self.app.config, "onboarding_complete", False)
+        for key in ("help", "scratch", "finish_setup"):
+            widget = self._widgets[key]
+            if complete:
+                widget.grid_remove()
+            else:
+                widget.grid()
 
     def _signin_text(self) -> str:
         """The footer line. Clicking it always re-runs the sign-in."""
@@ -724,6 +735,7 @@ class Flyout:
     def _finish_setup(self):
         self.app.config.onboarding_complete = True
         self.app.config.save()
+        self._refresh_setup()
         self._hide()
 
     def _pick_microphone(self, _event) -> None:  # noqa: ANN001
