@@ -214,6 +214,7 @@ class Tray:
         self.app = app
         self.flyout = flyout
         self.icon = None
+        self.before_stop = None
         self.detail = ""
         self._last_image = None
         # None outside the installed bundle, and the menu item hides.
@@ -482,6 +483,8 @@ class Tray:
 
     def stop(self) -> None:
         """Stop the app and close the icon. Safe from any thread."""
+        if self.before_stop is not None:
+            self.before_stop()
         self.app.stop()
         if self.icon is not None:
             self.icon.stop()
