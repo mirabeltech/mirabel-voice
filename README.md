@@ -2,7 +2,7 @@
 
 Press **Insert**, speak, then press **Insert** again. Mirabel Voice turns your speech into text and inserts it where you were typing.
 
-**Release status:** Tommy has confirmed the Google Drive download, installation/repair, Settings, dictation, restart, sleep/wake, microphone reconnection and connection recovery on his Windows computer. The installer verifies the approved 0.9.1 ZIP. Version 0.9.1 fixes setup completion and microphone startup/recovery; fresh installations use English and Insert, while upgrades retain saved preferences. Service usage limits, outage monitoring and the remaining [release checklist](docs/windows-acceptance.md) still need to be completed before organization-wide rollout. These results do not verify every Windows computer or a fresh user profile.
+**Release status:** Tommy has confirmed the Google Drive download, installation/repair, Settings, dictation, restart, sleep/wake, microphone reconnection and connection recovery on his Windows computer. Version 0.9.2 refreshes Settings with grouped preferences, consistent icon buttons and an optional microphone test. Settings opens once on first launch; no setup completion is required. Fresh installations use English and Insert, while upgrades retain saved preferences. Service usage limits, outage monitoring and the remaining [release checklist](docs/windows-acceptance.md) still need to be completed before organization-wide rollout. These results do not verify every Windows computer or a fresh user profile.
 
 ## Install on Windows
 
@@ -14,7 +14,7 @@ Press **Insert**, speak, then press **Insert** again. Mirabel Voice turns your s
    ```
 
    The command checks that the ZIP is approved and complete, then unpacks and installs it in your own Windows profile. It needs no administrator password. If you have not downloaded the ZIP, it opens the drive; download the file and run the command again.
-3. Sign in with your Mirabel Google account when asked. Open the microphone icon near the clock (look under **^** if hidden). Choose your microphone, language and dictation key. Try a sentence in the practice box, then choose **Finish setup**.
+3. Sign in with your Mirabel Google account when asked. Settings opens on first launch. Choose your microphone, language and dictation key, or keep the defaults. **Test microphone** optionally shows the live input level. Reopen Settings anytime from the microphone icon near the clock (look under **^** if hidden).
 
 This distribution method needs no Microsoft 365 subscription, developer account, Store registration or signing purchase. AI processing and the existing relay still have running costs.
 
@@ -30,16 +30,16 @@ Click into the intended text box and keep it selected until your text arrives.
 | Cancel recording or waiting for a result | Esc |
 | Insert the last completed text again | Shift+Alt+Z |
 | Choose microphone, language, key or translation | Click the microphone icon |
-| Stop microphone access between sessions | **Pause microphone** in controls |
+| Close the app and microphone | **Quit** in controls |
 | Start automatically after signing into Windows | **Start with Windows** checkbox |
-| Recover a failed recording | **Retry recording**, or **Discard** |
+| Check for an approved update | **Check for Updates** in controls |
 | Copy the completed transcript yourself | **Copy last text** |
 
-A hold-mode configuration uses hold/release instead of two presses. The controls show the current mode. Microphone pause closes the stream and clears its audio buffer; resume opens it again. Choosing the system default microphone lets the app reopen it after Windows changes the default, once the current recording finishes. Explicitly selected microphones stay selected.
+A hold-mode configuration uses hold/release instead of two presses. The controls show the current mode. Choosing the system default microphone lets the app reopen it after Windows changes the default, once the current recording finishes. Explicitly selected microphones stay selected.
 
 The status panel shows listening, processing, completion or an error. One sound means start, a lower sound means captured, and a high sound means the text was sent to the selected application; check the result before sending your message. Two low sounds mean the action could not complete; check the displayed message. Processing time varies with recording length, connection and service availability.
 
-If transcription fails, one recording stays **in memory** for Retry. Starting a new recording, Discard or Quit drops it. Esc cancels local waiting and prevents the late result from being inserted; a request already sent may still finish at the provider. If cleanup or translation fails, the app preserves the original transcript and reports that the original words were used.
+If transcription fails, dictate again. The failed recording stays in memory until a new recording, Esc or Quit clears it. Esc cancels local waiting and prevents the late result from being inserted; a request already sent may still finish at the provider. If cleanup or translation fails, the app preserves the original transcript and reports that the original words were used.
 
 If the destination window, focused control or detectable document title changes, automatic insertion is held back. Use Copy last text or deliberately paste into the intended field. Some applications do not expose every change of document or field: keep your intended destination selected and check the result before sending it. Rich text or an image already on your clipboard makes the app use typing instead of replacing it. A failed paste is not automatically repeated, to avoid duplicate text.
 
@@ -55,7 +55,7 @@ For a damaged installation, use the full ZIP repair route. A damaged settings fi
 
 Speech goes through Mirabel's relay to OpenAI for transcription. When cleanup or translation is enabled, transcript text also goes through the relay to Anthropic. Provider retention and account terms must be confirmed by the service owner; this app does not promise zero provider retention.
 
-Recordings, recent microphone audio and the last completed transcript are held in memory, not intentionally written to a recording/history file. The microphone normally stays open for fast response and keeps a rolling buffer of up to two seconds locally. Pause or Quit closes it. `"hot_mic": false` in the settings makes it open only for a dictation.
+Recordings, recent microphone audio and the last completed transcript are held in memory, not intentionally written to a recording/history file. The microphone normally stays open for fast response and keeps a rolling buffer of up to two seconds locally. Quit closes it. `"hot_mic": false` in the settings makes it open only for a dictation.
 
 Settings, custom words and application logs are stored in `%APPDATA%\MirabelVoice`. Google refresh credentials and their recovery copies use Windows account encryption. Legacy relay tokens, if used, remain in the settings file. Settings backups and damaged copies may contain the same personal configuration as the original. The clipboard belongs to Windows; Windows clipboard history or sync may retain pasted text if you enabled those features.
 
