@@ -140,6 +140,8 @@ class Flyout:
     def __init__(self, overlay: Overlay, app) -> None:  # noqa: ANN001
         self.overlay = overlay
         self.app = app
+        self.on_quit = None
+        self.on_check_updates = None
         # Everything below is touched on the overlay thread only,
         # except _capture_listener, which the capture thread also sets.
         self._top = None
@@ -148,6 +150,7 @@ class Flyout:
         self._widgets = {}
         self._devices: list[dict] = []
         self._choices: list[tuple[str, int | None]] = []
+        self._testing_microphone = False
         self._capturing = False
         self._capture_listener = None
         self._built_pal = None
@@ -222,6 +225,7 @@ class Flyout:
             self._top.focus_force()
             self._shown_at = time.monotonic()
             self._watch_outside_clicks()
+            self._remember_settings_opened()
         except Exception:  # noqa: BLE001 - the flyout must never kill the app
             log.warning("The controls flyout did not open.", exc_info=True)
             # Throw the half-built window away, or every later click
@@ -234,6 +238,9 @@ class Flyout:
             self._cancel_capture()
         if self._top is None:
             return
+        self._testing_microphone = False
+        if "test_microphone" in self._widgets:
+            self._refresh_microphone_test()
         self._top.withdraw()
 
     def _discard(self) -> None:
@@ -272,195 +279,289 @@ class Flyout:
         top.withdraw()
         top.overrideredirect(True)
         top.attributes("-topmost", True)
-        top.configure(bg=pal.background, padx=self._px(PAD), pady=self._px(PAD))
+        top.configure(bg=pal.background)
+        window = top
+        viewport = tk.Canvas(window, bg=pal.background, bd=0, highlightthickness=0)
+        viewport.pack(side="left", fill="both", expand=True)
+        scrollbar = ttk.Scrollbar(window, orient="vertical", command=viewport.yview, takefocus=True)
+        viewport.configure(yscrollcommand=scrollbar.set)
+        top = tk.Frame(viewport, bg=pal.background)
+        viewport.create_window((0, 0), window=top, anchor="nw")
 
         family = "Segoe UI"
         try:
             import tkinter.font as tkfont
-
             if "Segoe UI Variable Text" in set(tkfont.families(root)):
                 family = "Segoe UI Variable Text"
         except Exception:  # noqa: BLE001
             pass
-        body = (family, -self._px(14))
-        strong = (family, -self._px(14), "bold")
-        caption = (family, -self._px(12))
-
+        body = (family, -self._px(13))
+        strong = (family, -self._px(13), "bold")
+        caption = (family, -self._px(11))
+        light = apps_use_light_theme()
+        accent = "#0369A1" if light else OCEAN_ON_DARK
+        surface = "#F0F5F9" if light else "#202A36"
+        hover = "#E5EDF4" if light else "#2B3848"
+        top.configure(padx=self._px(20), pady=self._px(16))
+        top.columnconfigure(0, weight=1, minsize=self._px(332))
         w = self._widgets
+        w.update(viewport=viewport, content=top, scrollbar=scrollbar)
 
         def label(parent, **kwargs):  # noqa: ANN001, ANN202
-            options = {"bg": pal.background, "fg": pal.foreground, "font": body}
+            options = {"bg": parent.cget("bg"), "fg": pal.foreground, "font": body}
             options.update(kwargs)
             return tk.Label(parent, **options)
 
-        def separator(row):  # noqa: ANN001, ANN202
-            line = tk.Frame(top, bg=pal.border, height=1)
-            line.grid(row=row, column=0, columnspan=2, sticky="ew", pady=10)
-            return line
+        def frame(row, pady=0):  # noqa: ANN001, ANN202
+            section = tk.Frame(top, bg=pal.background)
+            section.grid(row=row, column=0, sticky="ew", pady=pady)
+            return section
 
-        top.columnconfigure(1, weight=1)
+        section_bg = "#FFFFFF" if light else "#1D232C"
 
-        # The lockup: the app icon beside the name, "Voice" in ocean.
-        # The icon is drawn on a canvas, not loaded through ImageTk: an
-        # ImageTk.PhotoImage frees its Tcl image from whatever thread
-        # garbage-collects it, and that crashes Tcl at shutdown.
-        header = tk.Frame(top, bg=pal.background)
-        header.grid(row=0, column=0, columnspan=2, sticky="ew")
-        s = self._px(18)
-        w["icon"] = tk.Canvas(
-            header, width=s, height=s, bg=pal.background,
-            highlightthickness=0, bd=0,
-        )
+        def section(row, title):  # noqa: ANN001, ANN202
+            card = tk.Frame(top, bg=section_bg, highlightthickness=1,
+                            highlightbackground=pal.border, bd=0)
+            card.grid(row=row, column=0, sticky="ew", pady=(self._px(12), 0))
+            label(card, text=title, font=(family, -self._px(11), "bold"),
+                  fg=accent).pack(anchor="w", padx=self._px(12),
+                                  pady=(self._px(9), self._px(8)))
+            content = tk.Frame(card, bg=section_bg)
+            content.pack(fill="x", padx=self._px(12), pady=(0, self._px(10)))
+            return content
 
-        def ic(v: float) -> float:
-            return v * s / 18.0
+        def action_icon(name):
+            import base64
+            import io
+            from PIL import Image, ImageDraw
 
-        w["icon"].create_oval(ic(1), ic(1), ic(17), ic(17), fill=OCEAN, outline="")
-        w["icon"].create_rectangle(
-            ic(7), ic(4), ic(11), ic(10), fill="white", outline=""
-        )
-        w["icon"].create_arc(
-            ic(5), ic(6), ic(13), ic(13), start=180, extent=180, style="arc",
-            outline="white", width=max(self._px(2), 2),
-        )
-        w["icon"].create_line(
-            ic(9), ic(13), ic(9), ic(15), fill="white", width=max(self._px(2), 2)
-        )
+            # Draw one consistent set of line icons at the monitor scale.
+            factor = 4
+            size = self._px(16)
+            artwork = Image.new("RGBA", (64, 64))
+            draw = ImageDraw.Draw(artwork)
+            color = pal.hint
+            def line(points):
+                draw.line([(round(x * factor), round(y * factor)) for x, y in points],
+                          fill=color, width=5, joint="curve")
+            def box(bounds, radius=1):
+                draw.rounded_rectangle(tuple(round(v * factor) for v in bounds),
+                                       radius=radius * factor, outline=color, width=5)
+            if name == "copy":
+                line([(10, 3), (10, 1), (2, 1), (2, 11), (4, 11)])
+                box((5, 4, 13, 14))
+            elif name == "microphone":
+                box((6, 1, 10, 10), radius=2)
+                draw.arc((3*factor, 5*factor, 13*factor, 12*factor), 0, 180, fill=color, width=5)
+                line([(8, 12), (8, 15)])
+                line([(5, 15), (11, 15)])
+            elif name == "edit":
+                line([(3, 10), (11, 2), (14, 5), (6, 13), (2, 14), (3, 10), (6, 13)])
+                line([(9, 4), (12, 7)])
+            elif name == "updates":
+                draw.arc((2*factor, 2*factor, 14*factor, 14*factor), 35, 325, fill=color, width=5)
+                line([(10, 6), (14, 5), (13, 1)])
+            elif name == "quit":
+                draw.arc((2*factor, 3*factor, 14*factor, 15*factor), -55, 235, fill=color, width=5)
+                line([(8, 1), (8, 8)])
+            artwork = artwork.resize((size, size), Image.Resampling.LANCZOS)
+            padded = Image.new("RGBA", (size + self._px(7), size))
+            padded.paste(artwork, (0, 0))
+            output = io.BytesIO()
+            padded.save(output, format="PNG")
+            return tk.PhotoImage(master=top, data=base64.b64encode(output.getvalue()))
+
+        def action(parent, text, command, icon=None):  # noqa: ANN001, ANN202
+            # A rounded surface around a native Button keeps Tk's keyboard
+            # activation, focus traversal and disabled-state behavior.
+            resting = "#F3F5F7" if light else "#2B333E"
+            hovered = "#E8EDF2" if light else "#364150"
+            pressed = "#DEE5EC" if light else "#202833"
+            stroke = "#DEE3E9" if light else "#414C5B"
+            border = tk.Canvas(parent, bg=parent.cget("bg"), bd=0,
+                               highlightthickness=0, takefocus=False)
+            button = tk.Button(
+                border, text=text, command=command,
+                font=(family, -self._px(12)), bg=resting, fg=pal.foreground,
+                activebackground=pressed, activeforeground=pal.foreground,
+                disabledforeground=pal.hint, cursor="hand2", takefocus=True,
+                bd=0, relief="flat", overrelief="flat", highlightthickness=0,
+                padx=self._px(5), pady=self._px(3),
+            )
+            if icon:
+                button._action_icon = action_icon(icon)
+                button.configure(image=button._action_icon, compound="left")
+            button.pack(fill="both", expand=True,
+                        padx=self._px(7), pady=self._px(2))
+            interaction = {"hover": False, "pressed": False}
+
+            def paint(_event=None):
+                enabled = str(button.cget("state")) != "disabled"
+                fill = pressed if enabled and interaction["pressed"] else hovered if enabled and interaction["hover"] else resting
+                button.configure(bg=fill)
+                x, y = border.winfo_width() - 1, border.winfo_height() - 1
+                r = self._px(5)
+                border.delete("surface")
+                border.create_polygon(
+                    r, 1, x-r, 1, x, 1, x, r, x, y-r, x, y,
+                    x-r, y, r, y, 1, y, 1, y-r, 1, r, 1, 1,
+                    smooth=True, splinesteps=16, fill=fill,
+                    outline=accent if button.focus_get() == button else stroke,
+                    width=self._px(2) if button.focus_get() == button else 1,
+                    tags="surface")
+                border.tag_lower("surface")
+
+            def state(name, value):
+                interaction[name] = value
+                paint()
+
+            border.bind("<Configure>", paint)
+            for widget in (border, button):
+                widget.bind("<Enter>", lambda _: state("hover", True))
+                widget.bind("<Leave>", lambda _: state("hover", False))
+                widget.bind("<ButtonPress-1>", lambda _: state("pressed", True))
+                widget.bind("<ButtonRelease-1>", lambda _: state("pressed", False))
+            def release_border(_event):
+                was_pressed = interaction["pressed"]
+                state("pressed", False)
+                if was_pressed:
+                    button.focus_set()
+                    button.invoke()
+
+            border.bind("<ButtonRelease-1>", release_border)
+            button.bind("<FocusIn>", paint)
+            button.bind("<FocusOut>", paint)
+            return button
+
+        # Brand and version form one quiet header.
+        header = frame(0, (0, self._px(12)))
+        size = self._px(22)
+        w["icon"] = tk.Canvas(header, width=size, height=size,
+                              bg=pal.background, highlightthickness=0, bd=0)
+        w["icon"].create_oval(1, 1, size - 1, size - 1, fill=OCEAN, outline="")
+        w["icon"].create_line(size * .5, size * .27, size * .5, size * .55,
+                              fill="white", width=self._px(4), capstyle="round")
+        w["icon"].create_arc(size * .27, size * .33, size * .73, size * .75,
+                             start=180, extent=180, style="arc", outline="white", width=self._px(2))
+        w["icon"].create_line(size * .5, size * .75, size * .5, size * .85,
+                              fill="white", width=self._px(2))
         w["icon"].pack(side="left", padx=(0, self._px(8)))
-        tk.Label(
-            header, text="Mirabel", bg=pal.background, fg=pal.foreground,
-            font=(family, -self._px(13), "bold"),
-        ).pack(side="left")
-        tk.Label(
-            header,
-            text=" Voice",
-            bg=pal.background,
-            fg=OCEAN_ON_DARK if not apps_use_light_theme() else OCEAN,
-            font=(family, -self._px(13), "bold"),
-        ).pack(side="left")
+        label(header, text="Mirabel Voice", font=(family, -self._px(15), "bold")).pack(side="left")
+        w["version"] = label(header, text=app_version(), font=caption, fg=pal.hint)
+        w["version"].pack(side="right")
 
-        separator(1)
-
-        # The status row: the pill's dot and words, at rest.
-        status = tk.Frame(top, bg=pal.background)
-        status.grid(row=2, column=0, columnspan=2, sticky="ew")
+        # Status and the transcript action belong together.
+        status = tk.Frame(top, bg=surface, padx=self._px(14), pady=self._px(12))
+        status.grid(row=1, column=0, sticky="ew")
+        status.columnconfigure(1, weight=1)
         dot = self._px(10)
-        w["dot"] = tk.Canvas(
-            status, width=dot, height=dot, bg=pal.background,
-            highlightthickness=0, bd=0,
-        )
-        w["dot"].pack(side="left", padx=(0, self._px(8)))
-        w["state"] = label(status, font=strong)
-        w["state"].pack(side="left")
-        w["hint"] = label(top, font=caption, fg=pal.hint, anchor="w")
-        w["hint"].grid(row=3, column=0, columnspan=2, sticky="w", pady=(2, 0))
-
-        separator(4)
+        w["dot"] = tk.Canvas(status, width=dot, height=dot, bg=surface,
+                             highlightthickness=0, bd=0)
+        w["dot"].grid(row=0, column=0, padx=(0, self._px(8)))
+        w["state"] = label(status, font=(family, -self._px(18), "bold"))
+        w["state"].grid(row=0, column=1, sticky="w")
+        w["hint"] = label(status, font=caption, fg=pal.hint, anchor="w",
+                           wraplength=self._px(298), justify="left")
+        w["hint"].grid(row=1, column=0, columnspan=3, sticky="w", pady=(self._px(5), 0))
+        w["copy"] = action(status, "Copy last text", self._copy_last, icon="copy")
+        w["copy"].master.grid(row=0, column=2, sticky="e", padx=(self._px(12), 0))
 
         style = ttk.Style(top)
         try:
             style.theme_use("clam")
-        except Exception:  # noqa: BLE001 - keep whatever theme exists
+        except Exception:  # noqa: BLE001
             pass
-        style.configure(
-            "Mirabel.TCombobox",
-            fieldbackground=pal.background,
-            background=pal.background,
-            foreground=pal.foreground,
-            arrowcolor=pal.hint,
-            bordercolor=pal.border,
-        )
-        # A readonly combobox takes its colours from the state map, not
-        # the base style - without this the theme's default grey wins
-        # and the boxes look like a different decade than the card.
-        style.map(
-            "Mirabel.TCombobox",
-            fieldbackground=[("readonly", pal.background)],
-            background=[("readonly", pal.background)],
-            foreground=[("readonly", pal.foreground)],
-            selectbackground=[("readonly", pal.background)],
-            selectforeground=[("readonly", pal.foreground)],
-        )
+        style.configure("Mirabel.TCombobox", fieldbackground=pal.background,
+                        background=pal.background, foreground=pal.foreground,
+                        arrowcolor=pal.hint, bordercolor=pal.border,
+                        lightcolor=pal.background, darkcolor=pal.background,
+                        padding=(self._px(9), self._px(7)), arrowsize=self._px(13))
+        style.map("Mirabel.TCombobox",
+                  fieldbackground=[("readonly", pal.background)],
+                  background=[("readonly", pal.background)],
+                  foreground=[("readonly", pal.foreground)],
+                  bordercolor=[("focus", accent)],
+                  selectbackground=[("readonly", pal.background)],
+                  selectforeground=[("readonly", pal.foreground)])
         top.option_add("*TCombobox*Listbox.background", pal.background)
         top.option_add("*TCombobox*Listbox.foreground", pal.foreground)
 
-        label(top, text="Microphone", font=caption, fg=pal.hint).grid(
-            row=5, column=0, sticky="w"
-        )
-        w["microphone"] = ttk.Combobox(
-            top, state="readonly", style="Mirabel.TCombobox", width=20,
-            font=caption,
-        )
-        w["microphone"].grid(row=5, column=1, sticky="ew", padx=(12, 0))
+        dictation = section(2, "DICTATION")
+        microphone = tk.Frame(dictation, bg=section_bg)
+        microphone.pack(fill="x", pady=(0, self._px(12)))
+        microphone.columnconfigure(0, weight=1)
+        label(microphone, text="Microphone", font=strong).grid(row=0, column=0, sticky="w", pady=(0, self._px(7)))
+        w["microphone"] = ttk.Combobox(microphone, state="readonly", style="Mirabel.TCombobox", width=28, font=body)
+        w["microphone"].grid(row=1, column=0, sticky="ew")
         w["microphone"].bind("<<ComboboxSelected>>", self._pick_microphone)
+        w["test_microphone"] = action(microphone, "Test microphone", self._toggle_microphone_test, icon="microphone")
+        w["test_microphone"].master.grid(row=2, column=0, sticky="w", pady=(self._px(5), 0))
+        w["test_help"] = label(microphone, text="Speak normally and watch the level move.", font=caption, fg=pal.hint)
+        w["test_help"].grid(row=3, column=0, sticky="w", pady=(self._px(5), 0))
+        w["level"] = label(microphone, text="Microphone level: 0%", font=caption, fg=pal.hint)
+        w["level"].grid(row=4, column=0, sticky="w", pady=(self._px(5), 0))
+        w["meter"] = tk.Canvas(microphone, height=self._px(3), width=self._px(286),
+                               bg=pal.border, bd=0, highlightthickness=0)
+        w["meter"].grid(row=5, column=0, sticky="ew", pady=(self._px(4), self._px(12)))
+        w["meter"].create_rectangle(0, 0, 0, self._px(3), fill=accent, outline="", tags="level")
 
-        label(top, text="Language", font=caption, fg=pal.hint).grid(
-            row=6, column=0, sticky="w", pady=(8, 0)
-        )
-        w["language"] = ttk.Combobox(
-            top, state="readonly", style="Mirabel.TCombobox", width=20,
-            font=caption,
-        )
-        w["language"].grid(row=6, column=1, sticky="ew", padx=(12, 0), pady=(8, 0))
+        settings = tk.Frame(dictation, bg=section_bg)
+        settings.pack(fill="x")
+        settings.columnconfigure(1, weight=1)
+        label(settings, text="Language", font=strong).grid(row=0, column=0, sticky="w", padx=(0, self._px(14)))
+        w["language"] = ttk.Combobox(settings, state="readonly", style="Mirabel.TCombobox", width=16, font=body)
+        w["language"].grid(row=0, column=1, sticky="ew")
         w["language"].bind("<<ComboboxSelected>>", self._pick_language)
+        def checkbox(parent, text, command):  # noqa: ANN001, ANN202
+            return tk.Checkbutton(parent, text=text, command=command,
+                bg=section_bg, fg=pal.foreground, selectcolor=section_bg,
+                activebackground=section_bg, activeforeground=pal.foreground,
+                font=body, anchor="w", takefocus=True, cursor="hand2", bd=0,
+                highlightthickness=1, highlightbackground=section_bg, highlightcolor=accent)
 
-        w["translate"] = tk.Checkbutton(
-            top,
-            text="Translate to English",
-            bg=pal.background,
-            fg=pal.foreground,
-            activebackground=pal.background,
-            activeforeground=pal.foreground,
-            selectcolor=pal.background,
-            font=caption,
-            anchor="w",
-            command=self._toggle_translate,
-        )
-        w["translate"].grid(row=7, column=0, columnspan=2, sticky="w", pady=(8, 0))
+        w["translate"] = checkbox(settings, "Translate to English", self._toggle_translate)
+        w["translate"].grid(row=1, column=0, columnspan=2, sticky="w", pady=(self._px(9), 0))
 
-        separator(8)
+        preferences = section(5, "PREFERENCES")
+        preferences.columnconfigure(1, weight=1)
+        label(preferences, text="Dictation key", font=strong).grid(row=0, column=0, sticky="w", padx=(0, self._px(14)))
+        shortcut = tk.Frame(preferences, bg=section_bg)
+        shortcut.grid(row=0, column=1, sticky="e")
+        keycap = tk.Frame(shortcut, bg=pal.border, bd=0,
+                          highlightthickness=1, highlightbackground=pal.border)
+        keycap.pack(side="left", padx=(0, self._px(8)))
+        w["key"] = label(keycap, text=self._key_label(),
+                         font=("Consolas", -self._px(12)), bg=surface,
+                         padx=self._px(10), pady=self._px(5))
+        w["key"].pack(pady=(0, self._px(2)))
+        w["change"] = action(shortcut, CHANGE_KEY, self._begin_capture, icon="edit")
+        w["change"].master.pack(side="right")
+        w["key_help"] = label(preferences, text="Press your new key. Esc cancels.",
+                              font=caption, fg=accent, justify="left")
+        w["key_help"].grid(row=1, column=0, columnspan=2, sticky="w", pady=(self._px(7), 0))
+        w["key_help"].grid_remove()
+        w["startup"] = checkbox(preferences, "Start with Windows", self._toggle_startup)
+        w["startup"].grid(row=2, column=0, columnspan=2, sticky="w", pady=(self._px(9), 0))
 
-        buttons = tk.Frame(top, bg=pal.background)
-        buttons.grid(row=9, column=0, columnspan=2, sticky="ew")
-        buttons.columnconfigure(0, weight=1)
-        buttons.columnconfigure(1, weight=1)
+        self._refresh_microphone_test()
 
-        def button(parent, text, command, column):  # noqa: ANN001, ANN202
-            b = tk.Button(
-                parent, text=text, command=command, takefocus=True, bg=pal.background, fg=pal.foreground,
-                font=caption, bd=1, relief="solid", padx=10, pady=5,
-            )
-            b.grid(row=0, column=column, sticky="ew", padx=(0 if column == 0 else 4, 4 if column == 0 else 0))
-            return b
-
-        w["copy"] = button(buttons, "Copy last text", self._copy_last, 0)
-        w["change"] = button(buttons, CHANGE_KEY, self._begin_capture, 1)
-
-        footer = tk.Frame(top, bg=pal.background)
-        footer.grid(row=10, column=0, columnspan=2, sticky="ew", pady=(12, 0))
-        w["signin"] = tk.Button(footer, command=self._sign_in, takefocus=True, font=caption, fg=pal.hint, bg=pal.background, state="normal" if self.app.signin is not None else "disabled")
-        w["signin"].pack(side="left")
-        w["version"] = label(footer, text=app_version(), font=caption, fg=pal.hint)
-        w["version"].pack(side="right")
-
-        actions = tk.Frame(top, bg=pal.background)
-        actions.grid(row=11, column=0, columnspan=2, sticky="ew", pady=(8, 0))
-        w["pause"] = tk.Button(actions, text="Pause microphone", command=self._toggle_pause, takefocus=True)
-        w["pause"].pack(side="left")
-        tk.Button(actions, text="Retry recording", command=lambda: self.app.retry_last_recording(), takefocus=True).pack(side="left")
-        tk.Button(actions, text="Discard", command=lambda: self.app.discard_last_recording(), takefocus=True).pack(side="left")
-        w["startup"] = tk.Checkbutton(top, text="Start with Windows", command=self._toggle_startup,
-                                      bg=pal.background, fg=pal.foreground, selectcolor=pal.background)
-        w["startup"].grid(row=12, column=0, columnspan=2, sticky="w")
-        w["level"] = label(top, text="Microphone level: 0%", font=caption)
-        w["level"].grid(row=13, column=0, columnspan=2, sticky="w")
-        w["help"] = label(top, text="Choose your microphone and key, then click below and try dictating.\nIf the level stays at 0%, check Windows microphone permissions.", font=caption)
-        w["help"].grid(row=14, column=0, columnspan=2, sticky="w", pady=(6, 0))
-        w["scratch"] = tk.Text(top, height=3, width=36, wrap="word", font=caption, takefocus=True)
-        w["scratch"].grid(row=15, column=0, columnspan=2, sticky="ew")
-        w["finish_setup"] = tk.Button(top, text="Finish setup", command=self._finish_setup, takefocus=True)
-        w["finish_setup"].grid(row=16, column=0, columnspan=2, sticky="e")
-        self._refresh_setup()
+        app_section = section(10, "ACCOUNT & APP")
+        app_section.columnconfigure(0, weight=1)
+        account = tk.Frame(app_section, bg=section_bg)
+        account.grid(row=0, column=0, sticky="ew")
+        w["signin"] = action(account, "", self._sign_in)
+        w["signin"].configure(wraplength=self._px(296), justify="left", state="normal" if self.app.signin is not None else "disabled")
+        w["signin"].master.pack(side="left")
+        actions = tk.Frame(app_section, bg=section_bg)
+        actions.grid(row=1, column=0, sticky="ew", pady=(self._px(8), 0))
+        w["updates"] = action(actions, "Check for updates", self._check_updates, icon="updates")
+        w["updates"].master.pack(side="left")
+        w["quit"] = action(actions, "Quit", self._quit, icon="quit")
+        w["quit"].master.pack(side="right")
+        w["update_status"] = label(app_section, text="", font=caption, fg=pal.hint,
+                                  wraplength=self._px(296), justify="left")
+        w["update_status"].grid(row=2, column=0, sticky="w", pady=(self._px(6), 0))
+        w["update_status"].grid_remove()
 
         top.update_idletasks()
         self._style_window()
@@ -473,14 +574,17 @@ class Flyout:
         )
         # Focus changes alone do not dismiss Settings; mouse presses do.
         # Losing focus must still disarm global shortcut capture.
-        top.bind("<FocusOut>", self._on_focus_out)
-        top.bind("<Escape>", lambda _event: self._hide())
+        window.bind("<FocusOut>", self._on_focus_out)
+        window.bind("<Escape>", lambda _event: self._hide())
+        window.bind("<MouseWheel>", self._scroll_controls)
+        window.bind("<FocusIn>", self._reveal_control)
+        top.bind("<Configure>", lambda _: window.after_idle(self._place))
         # When the window dies (the overlay is stopping), drop every Tk
         # reference HERE, on the Tk thread. Holding them from another
         # thread means the Tcl interpreter is finally freed by whatever
         # thread garbage-collects last, and Tcl aborts the process with
         # "Tcl_AsyncDelete: async handler deleted by the wrong thread".
-        top.bind("<Destroy>", self._release)
+        window.bind("<Destroy>", self._release)
         self._tick()
 
     def _release(self, event) -> None:  # noqa: ANN001
@@ -520,19 +624,52 @@ class Flyout:
             pass
 
     def _place(self) -> None:
-        """Anchor the card above the notification area."""
+        """Keep the full card reachable within the current monitor's work area."""
+        if self._top is None:
+            return
         self._top.update_idletasks()
-        width = self._top.winfo_reqwidth()
-        height = self._top.winfo_reqheight()
         area = winui.focused_work_area()
-        if area is not None:
-            left, top_edge, right, bottom = area
-            x = right - width - MARGIN
-            y = bottom - height - MARGIN
+        if area is None:
+            area = (0, 0, self._top.winfo_screenwidth(), self._top.winfo_screenheight() - 48)
+        left, top_edge, right, bottom = area
+        w = self._widgets
+        content, viewport = w["content"], w["viewport"]
+        content_height = content.winfo_reqheight()
+        available = max(120, bottom - top_edge - 2 * MARGIN)
+        viewport.configure(width=content.winfo_reqwidth(), height=min(content_height, available),
+                           scrollregion=(0, 0, content.winfo_reqwidth(), content_height))
+        if content_height > available:
+            w["scrollbar"].pack(side="right", fill="y")
         else:
-            x = self._top.winfo_screenwidth() - width - MARGIN
-            y = self._top.winfo_screenheight() - height - 60
+            w["scrollbar"].pack_forget()
+            viewport.yview_moveto(0)
+        self._top.update_idletasks()
+        width, height = self._top.winfo_reqwidth(), self._top.winfo_reqheight()
+        x = max(left + MARGIN, right - width - MARGIN)
+        y = max(top_edge + MARGIN, bottom - height - MARGIN)
         self._top.geometry(f"+{x}+{y}")
+
+    def _scroll_controls(self, event):  # noqa: ANN001
+        # Dropdowns and the practice box retain their own wheel behavior.
+        if event.widget.winfo_class() in ("TCombobox", "Text"):
+            return
+        w = self._widgets
+        if w["content"].winfo_reqheight() > w["viewport"].winfo_height():
+            w["viewport"].yview_scroll(-int(event.delta / 120), "units")
+
+    def _reveal_control(self, event):  # noqa: ANN001
+        w = self._widgets
+        if not w or event.widget in (self._top, w["scrollbar"]):
+            return
+        viewport, content = w["viewport"], w["content"]
+        y = event.widget.winfo_rooty() - content.winfo_rooty()
+        bottom = y + event.widget.winfo_height()
+        visible_top = viewport.canvasy(0)
+        height = viewport.winfo_height()
+        if y < visible_top:
+            viewport.yview_moveto(max(0, y - 8) / content.winfo_reqheight())
+        elif bottom > visible_top + height:
+            viewport.yview_moveto((bottom - height + 8) / content.winfo_reqheight())
 
     def _refresh(self) -> None:
         """Read the app and put its facts on the card."""
@@ -560,20 +697,31 @@ class Flyout:
             w["startup"].deselect()
         self._show_state()
 
-    def _refresh_setup(self) -> None:
-        complete = getattr(self.app.config, "onboarding_complete", False)
-        for key in ("help", "scratch", "finish_setup"):
+    def _remember_settings_opened(self) -> None:
+        # Keep the saved flag compatible with existing installations.
+        if not getattr(self.app.config, "onboarding_complete", False):
+            self.app.config.onboarding_complete = True
+            self.app.config.save()
+
+    def _toggle_microphone_test(self) -> None:
+        self._testing_microphone = not self._testing_microphone
+        self._refresh_microphone_test()
+
+    def _refresh_microphone_test(self) -> None:
+        self._widgets["test_microphone"].configure(
+            text="Done testing" if self._testing_microphone else "Test microphone")
+        for key in ("test_help", "level", "meter"):
             widget = self._widgets[key]
-            if complete:
-                widget.grid_remove()
-            else:
+            if self._testing_microphone:
                 widget.grid()
+            else:
+                widget.grid_remove()
 
     def _signin_text(self) -> str:
         """The footer line. Clicking it always re-runs the sign-in."""
         signin = self.app.signin
         if signin is None:
-            return "Token sign-in"
+            return "Company access" if self.app.config.relay_token else "Sign-in unavailable"
         try:
             signed = signin.signed_in()
         except Exception:  # noqa: BLE001 - a broken store reads as signed out
@@ -591,6 +739,9 @@ class Flyout:
                 return name
         return SYSTEM_DEFAULT
 
+    def _key_label(self) -> str:
+        return self.app.config.hotkey.replace("_", " ").replace("+", " + ").title()
+
     def _show_state(self) -> None:
         """The status row: dot colour, state word, and the key hint."""
         w = self._widgets
@@ -598,10 +749,20 @@ class Flyout:
             return  # the card died mid-update
         state = self.app.state
         w["state"].configure(text=LABELS.get(state, "Ready"))
-        if "pause" in w:
-            w["pause"].configure(text="Resume microphone" if getattr(self.app, "microphone_paused", False) else "Pause microphone")
-            level = min(100, int(getattr(getattr(self.app, "recorder", None), "level", 0) * 100))
+        if "level" in w:
+            level = min(100, int(getattr(getattr(self.app, "recorder", None), "input_level", 0) * 100))
             w["level"].configure(text=f"Microphone level: {level}%")
+        if "meter" in w:
+            w["meter"].coords("level", 0, 0, w["meter"].winfo_width() * level / 100, self._px(3))
+        if "copy" in w:
+            w["copy"].configure(state="normal" if self.app.last_text else "disabled")
+        if "key" in w:
+            w["key"].configure(text=self._key_label())
+        if "key_help" in w:
+            if self._capturing:
+                w["key_help"].grid()
+            else:
+                w["key_help"].grid_remove()
         w["dot"].delete("all")
         size = self._px(10)
         w["dot"].create_oval(
@@ -723,20 +884,29 @@ class Flyout:
 
     # ---- the controls ----
 
-    def _toggle_pause(self):
-        threading.Thread(target=lambda: self.app.set_microphone_paused(not self.app.microphone_paused), daemon=True).start()
+    def _quit(self) -> None:
+        self._hide()
+        if self.on_quit is not None:
+            threading.Thread(target=self.on_quit, name="mirabel-voice-quit", daemon=True).start()
+
+    def _check_updates(self) -> None:
+        if self.on_check_updates is not None:
+            self.on_check_updates()
+
+    def show_update_status(self, message: str) -> None:
+        """Display update progress from the coordinator on the Tk thread."""
+        def show():
+            widget = self._widgets.get("update_status")
+            if widget is not None:
+                widget.configure(text=message)
+                widget.grid()
+        self.overlay.call(show)
 
     def _toggle_startup(self):
         try:
             self.app.set_start_with_windows(not self.app.config.start_with_windows)
         except Exception:
             self._widgets["hint"].configure(text="Could not change Windows startup. Check your user permissions.")
-
-    def _finish_setup(self):
-        self.app.config.onboarding_complete = True
-        self.app.config.save()
-        self._refresh_setup()
-        self._hide()
 
     def _pick_microphone(self, _event) -> None:  # noqa: ANN001
         # Resolve against the same filtered list the box displayed. The
@@ -796,7 +966,7 @@ class Flyout:
             return
         self._capturing = True
         self.app.suspend_hotkeys()
-        self._widgets["change"].configure(text=CAPTURE_PROMPT)
+        self._widgets["change"].configure(text=CAPTURE_PROMPT, state="disabled")
         self._show_state()
         threading.Thread(
             target=self._capture_thread,
@@ -890,5 +1060,5 @@ class Flyout:
                 self.app.resume_hotkeys()
         change = self._widgets.get("change")
         if change is not None:
-            change.configure(text=CHANGE_KEY)
+            change.configure(text=CHANGE_KEY, state="normal")
         self._show_state()

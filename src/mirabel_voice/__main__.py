@@ -478,6 +478,9 @@ def main(argv: list[str] | None = None) -> int:
         overlay = None
 
     tray = Tray(app, flyout=flyout)
+    if flyout is not None:
+        flyout.on_quit = tray._quit
+        flyout.on_check_updates = tray._check_updates
     if flyout is not None and not config.onboarding_complete:
         flyout.show()
     _start_update_watch(app, tray)

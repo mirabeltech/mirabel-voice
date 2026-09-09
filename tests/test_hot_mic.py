@@ -219,6 +219,19 @@ def test_the_level_reports_only_while_armed(rig):
     assert recorder.level == 0.0
 
 
+def test_microphone_test_reads_idle_signal_but_not_a_stale_stream(rig, monkeypatch):
+    fake = FakeSounddevice()
+    recorder = rig(fake)
+    assert recorder.input_level == 0.0
+    open_stream(recorder)
+    fake.feed(np.full(100, 16000, dtype=np.int16))
+    assert 0.4 < recorder.input_level < 0.6
+    assert not recorder.is_recording
+    assert recorder.level == 0.0
+    monkeypatch.setattr(recorder, "_stream_is_fresh", lambda: False)
+    assert recorder.input_level == 0.0
+
+
 def test_max_frames_caps_the_capture_including_the_pre_roll(rig):
     fake = FakeSounddevice()
     recorder = rig(fake, max_seconds=0.5)  # 8000 frames

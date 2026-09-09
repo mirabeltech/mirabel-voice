@@ -267,6 +267,13 @@ class Recorder:
         return self._level if self._armed else 0.0
 
     @property
+    def input_level(self) -> float:
+        """Live signal for the optional microphone test, including while idle."""
+        if self._stream is None or not self._stream_is_fresh():
+            return 0.0
+        return self._level
+
+    @property
     def hot_ready(self) -> bool:
         """Return True when the hot stream is open and a press is instant.
 

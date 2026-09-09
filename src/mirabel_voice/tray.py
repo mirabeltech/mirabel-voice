@@ -460,7 +460,11 @@ class Tray:
             subprocess.Popen(["explorer", str(folder)])  # noqa: S607
 
     def _check_updates(self) -> None:
-        self.coordinator.request(lambda message: self.update(self.app.state, message))
+        def notify(message):
+            self.update(self.app.state, message)
+            if self.flyout is not None:
+                self.flyout.show_update_status(message)
+        self.coordinator.request(notify)
 
     def _support_export(self):
         from .diagnostics import export
