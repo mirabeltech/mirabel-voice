@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import io
 import logging
+import sys
 import threading
 import time
 import wave
@@ -507,14 +508,21 @@ class Recorder:
 
     def _open(self, generation: int) -> None:
         """Open the stream, and keep it only if the cycle still wants it."""
+        stream = None
         try:
             import sounddevice as sd
 
+            with self._lock:
+                if generation != self._generation:
+                    return
+                device = self.device
+            device, extra_settings = input_stream_settings(sd, device)
             stream = sd.InputStream(
                 samplerate=self.sample_rate,
                 channels=CHANNELS,
                 dtype="int16",
-                device=self.device,
+                device=device,
+                **extra_settings,
                 callback=self._callback,
                 blocksize=0,
             )
@@ -528,7 +536,12 @@ class Recorder:
                 return
             stream.start()
         except Exception as error:  # noqa: BLE001 - the caller re-raises
-            self._open_error = error
+            # start() can fail after allocating driver resources. Release
+            # them before a subsequent press or microphone switch retries.
+            self._discard(stream)
+            with self._lock:
+                if generation == self._generation:
+                    self._open_error = error
             return
         with self._lock:
             if generation == self._generation and self._stream is None:
@@ -771,6 +784,38 @@ class Recorder:
             self._reopen_backoff = REOPEN_BACKOFF_START_SECONDS
             self._next_attempt = 0.0
         self._discard(stream)
+
+
+def input_stream_settings(sd, device):  # noqa: ANN001, ANN201
+    """Use shared WASAPI for identifiable legacy WDM-KS picks.
+
+    Never substitute a different microphone for an explicit selection.
+    A legacy index can only move to a unique, exactly named WASAPI entry.
+    """
+    if sys.platform != "win32":
+        return device, {}
+    apis = sd.query_hostapis()
+    wasapi = next((i for i, api in enumerate(apis)
+                   if api.get("name") == "Windows WASAPI"), None)
+    if wasapi is None:
+        return device, {}
+    info = sd.query_devices(device, "input")
+    if device is None and apis[info["hostapi"]].get("name") == "Windows WDM-KS":
+        default = apis[wasapi].get("default_input_device", -1)
+        if default >= 0:
+            device = default
+            info = sd.query_devices(device, "input")
+    if apis[info["hostapi"]].get("name") == "Windows WDM-KS":
+        matches = [i for i, candidate in enumerate(sd.query_devices())
+                   if candidate.get("hostapi") == wasapi
+                   and candidate.get("max_input_channels", 0) > 0
+                   and candidate.get("name") == info.get("name")]
+        if len(matches) == 1:
+            device = matches[0]
+            info = sd.query_devices(device, "input")
+    if info["hostapi"] == wasapi:
+        return device, {"extra_settings": sd.WasapiSettings(auto_convert=True)}
+    return device, {}
 
 
 def list_input_devices() -> list[dict]:

@@ -125,6 +125,9 @@ def test_the_level_is_zero_until_a_recording_runs():
 class FakeSounddevice:
     """A sounddevice whose InputStream behaves as the test dictates."""
 
+    def query_hostapis(self):
+        return []
+
     def __init__(self, block=None, fail=None):
         import threading
 
@@ -228,6 +231,7 @@ def test_a_failing_open_raises_its_error(monkeypatch):
     with pytest.raises(RuntimeError, match="device refused"):
         recorder.start(timeout=2.0)
     assert not recorder.is_recording
+    assert fake.streams[0].closed
 
     # The failure is not sticky: a later open on a repaired device works.
     fake.fail = None
@@ -286,3 +290,85 @@ def test_a_stop_that_errors_still_returns_the_audio(monkeypatch):
     recording = recorder.stop()  # must not raise
     assert list(recording.samples) == [1, 2, 3]
     assert not recorder.is_recording
+
+
+class WindowsSounddevice(FakeSounddevice):
+    devices = [
+        {"name": "USB Microphone", "hostapi": 0, "max_input_channels": 1},
+        {"name": "USB Microphone", "hostapi": 1, "max_input_channels": 1},
+        {"name": "Laptop Microphone", "hostapi": 1, "max_input_channels": 1},
+    ]
+
+    def query_hostapis(self):
+        return [
+            {"name": "Windows WDM-KS", "default_input_device": 0},
+            {"name": "Windows WASAPI", "default_input_device": 2},
+        ]
+
+    def query_devices(self, device=None, kind=None):
+        return self.devices if kind is None else self.devices[0 if device is None else device]
+
+    def WasapiSettings(self, **kwargs):
+        return kwargs
+
+
+def test_windows_default_uses_shared_wasapi(monkeypatch):
+    import mirabel_voice.audio as audio
+    monkeypatch.setattr(audio.sys, "platform", "win32")
+    fake = WindowsSounddevice()
+    recorder = recorder_with(monkeypatch, fake)
+    recorder.start()
+    assert fake.streams[0].kwargs["device"] == 2
+    assert fake.streams[0].kwargs["extra_settings"] == {"auto_convert": True}
+    recorder.cancel()
+
+
+def test_saved_wdm_selection_uses_the_same_microphones_wasapi_entry(monkeypatch):
+    import mirabel_voice.audio as audio
+    monkeypatch.setattr(audio.sys, "platform", "win32")
+    fake = WindowsSounddevice()
+    recorder = recorder_with(monkeypatch, fake)
+    recorder.device = 0
+    recorder.start()
+    assert fake.streams[0].kwargs["device"] == 1
+    recorder.cancel()
+
+
+def test_unmatched_or_ambiguous_legacy_microphone_is_not_substituted(monkeypatch):
+    import mirabel_voice.audio as audio
+    monkeypatch.setattr(audio.sys, "platform", "win32")
+    fake = WindowsSounddevice()
+    fake.devices = [dict(d) for d in fake.devices]
+    fake.devices[1]["name"] = "Other Microphone"
+    assert audio.input_stream_settings(fake, 0) == (0, {})
+    fake.devices[1]["name"] = "USB Microphone"
+    fake.devices[2]["name"] = "USB Microphone"
+    assert audio.input_stream_settings(fake, 0) == (0, {})
+
+
+def test_switch_after_failed_start_closes_old_stream_and_opens_new_device(monkeypatch):
+    import mirabel_voice.audio as audio
+    monkeypatch.setattr(audio.sys, "platform", "win32")
+    fake = WindowsSounddevice(fail=RuntimeError("WdmSyncIoctl: DeviceIoControl GLE"))
+    recorder = recorder_with(monkeypatch, fake)
+    recorder.device = 0
+    with pytest.raises(RuntimeError):
+        recorder.start()
+    assert fake.streams[0].closed
+    fake.fail = None
+    recorder.set_device(2)
+    recorder.start()
+    assert fake.streams[1].kwargs["device"] == 2
+    assert recorder.is_recording
+    recorder.cancel()
+
+
+def test_mme_default_mapper_remains_dynamic(monkeypatch):
+    import mirabel_voice.audio as audio
+    monkeypatch.setattr(audio.sys, "platform", "win32")
+    fake = WindowsSounddevice()
+    fake.query_hostapis = lambda: [
+        {"name": "MME", "default_input_device": 0},
+        {"name": "Windows WASAPI", "default_input_device": 2},
+    ]
+    assert audio.input_stream_settings(fake, None) == (None, {})

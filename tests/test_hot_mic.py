@@ -21,6 +21,9 @@ RATE = 16000
 class FakeSounddevice:
     """A sounddevice whose InputStream behaves as the test dictates."""
 
+    def query_hostapis(self):
+        return []
+
     def __init__(self, block=None, fail=None):
         self.block = block or threading.Event()
         self.block.set()  # answer at once unless a test clears it

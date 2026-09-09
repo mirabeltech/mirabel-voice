@@ -435,7 +435,12 @@ class VoiceApp:
             return False
         except Exception as error:  # noqa: BLE001
             log.exception("The microphone did not open.")
-            self._set_state(STATE_ERROR, f"Microphone error: {error}")
+            self._set_state(
+                STATE_ERROR,
+                "Could not start the microphone.\n"
+                "Choose your microphone again in Settings. "
+                "If it was just connected, restart Mirabel Voice and try again.",
+            )
             self._beep_refused()
             return False
         self._warm_cleanup()

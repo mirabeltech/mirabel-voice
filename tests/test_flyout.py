@@ -546,3 +546,33 @@ def test_outside_mouse_press_closes_but_inside_click_and_release_do_not(monkeypa
     flyout._dismiss_outside_click(old_token)
     assert hidden == [True]
     flyout._stop_outside_clicks()
+
+
+def test_finishing_setup_hides_onboarding_and_stays_hidden_on_reopen(tmp_path):
+    from mirabel_voice.config import Config
+
+    class Widget:
+        visible = True
+
+        def grid(self):
+            self.visible = True
+
+        def grid_remove(self):
+            self.visible = False
+
+    flyout = card.Flyout(FakeOverlay(), FakeApp())
+    config = Config()
+    target = tmp_path / "config.json"
+    config.save = lambda: Config.save(config, target)
+    flyout.app.config = config
+    flyout._widgets = {key: Widget() for key in ("help", "scratch", "finish_setup")}
+    hidden = []
+    flyout._hide = lambda: hidden.append(True)
+    flyout._refresh_setup()
+    assert all(w.visible for w in flyout._widgets.values())
+    flyout._finish_setup()
+    assert hidden == [True]
+    assert all(not w.visible for w in flyout._widgets.values())
+    flyout.app.config = Config.load(target)
+    flyout._refresh_setup()
+    assert all(not w.visible for w in flyout._widgets.values())
