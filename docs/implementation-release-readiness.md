@@ -1,3 +1,15 @@
+# Current implementation status — September 10, 2026
+
+The September 8 preparation notes below are historical. They are superseded where they say local-only, unapproved updates, blocked monitoring, pending Drive upload or open provider-key ownership:
+
+- PRs #75/#76 and #78–#80 merged; v0.9.3 is published with successful Windows bundle CI. Tommy confirmed Drive upload, normal dictation and the final clipboard/destination/busy-update usage checks.
+- Issues #64–#72 track completed implementation. Remaining manual acceptance belongs to #74 and [windows-acceptance.md](windows-acceptance.md); no untested case is implicitly passed.
+- Operations are deployed with per-person/concurrency limits, health/spending schedules and confirmed SNS test delivery. PR #77 publishes the current setup, revision/rollback fixes and budget-independent activation option. #73 remains open until merge and operating follow-ups are recorded.
+- Company-owned provider keys were confirmed by Tommy and #46 is closed.
+- Parent #63 remains open for #73 and #74. Fresh-profile install/Google sign-in/first dictation and explicit remaining acceptance results or deferrals are still needed for the broader rollout record.
+
+## Historical implementation evidence
+
 # Windows release-readiness implementation
 
 Prepared locally on 8 September 2026 as **Mirabel Voice 0.9.0**. This is an implementation/verification record. Tommy has authorized publishing the tested download and its installer/approval metadata for the final Drive installation check. Source endorsement and relay deployment are separate; organization-wide rollout checks remain open.

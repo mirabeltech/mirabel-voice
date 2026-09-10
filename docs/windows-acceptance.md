@@ -1,37 +1,28 @@
-# Tommy's release check
+# Windows release acceptance
 
-Tommy is the only manual acceptance tester. Automated checks supplement his testing. No employee pilot is required.
+Tommy is the sole manual tester. Version 0.9.3 is published and approved for in-app updates; Tommy confirmed upload to company Drive. The installed app updated/restarted successfully and normal dictation works. This does not establish a fresh-profile installation or universal Windows compatibility.
 
-**Current status: not approved for organization-wide release.** The code and test build do not establish fresh-download compatibility or a successful production update. Complete the rows below against one configured ZIP. Do not test destructive failures against your only working copy.
+## Verified evidence
 
-For a first local check on Tommy's current Windows computer, quit Mirabel Voice and run this in PowerShell:
+| Check | Evidence |
+|---|---|
+| Browser download and repair in existing profile | Tommy confirmed; recorded in merged PR #76. Fresh-profile installation remains untested. |
+| Approved update and restart | 0.9.3 update/restart verified in the release thread; normal dictation confirmed again after operations activation. |
+| Settings and ordinary apps | Tommy confirmed controls, retained settings and ordinary dictation. |
+| Clipboard, changed destination and busy update | Tommy confirmed the final usage checks for 0.9.3. |
+| Sleep/wake, microphone reconnection, offline/reconnect | Tommy reported these working; this does not cover every device, cancellation race or network condition. |
+| Installation/update failure recovery | Automated isolated installation, repair, interrupted runtime/source recovery and removal; Windows CI passed for v0.9.3. No destructive test on Tommy's working installation. |
+| Service operation | Rate limits and schedules deployed; normal dictation works; owner confirmed receipt of an explicitly labeled SNS test email. See service-operations-setup.md. |
 
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File "C:\Dev\mirabel-voice\build_probe\Test-MirabelVoice.ps1"
-```
+## Remaining acceptance record — issue #74
 
-This uses the prepared private 0.9.0 candidate and its separate local test manifest, preserves settings, and starts the new app. It has **not** been run against Tommy's working installation by the developer. This local install does not replace the fresh browser-download check below. Do not send this machine-specific test command to employees.
+- [ ] Fresh Windows profile: company Drive browser download, documented installation, Google work sign-in and first dictation with protections enabled. Record artifact/hash, app version, Windows build/architecture and Smart App Control state. Use a separate test profile where available.
+- [ ] Explicit Google sign-in refresh/recovery observation; current normal dictation does not prove every refresh path.
+- [ ] Long non-sensitive dictation; network interruption with cancellation and no late paste. Automated size/fallback/cancellation checks exist; record manual result or explicit deferral.
+- [ ] Owner-controlled recovery/repair/removal, startup off/on, and support export spot-check where feasible. Isolated automated checks exist; do not damage the only working installation.
+- [ ] Record unavailable microphone, accessibility/scaling, elevated-app and remote-desktop configurations as untested. No additional employee testing cohort is required.
+- [ ] Tommy records broader rollout decision with the above results or explicit deferrals. Do not silently convert untested cases to passes.
 
-Record the ZIP filename and SHA-256, app version, Windows version/build, x64/other architecture, Smart App Control state, account type, and date. The developer can supply the artifact details. Keep private account information out of public issues.
+Use only non-sensitive sample speech. Never disable Windows security as an installation step. Keep private account details, credentials, speech/text and service URLs out of public evidence. The selected route remains the free company Drive Python ZIP, Google work sign-in and in-app updates; Store packaging and paid signing are out of scope.
 
-| Check | Your action | Result |
-|---|---|---|
-| Browser download and installation | Download the configured ZIP from company Drive in a browser and follow README in a fresh Windows profile if available. Leave protections on. | Tommy confirmed the browser download, repair installation on his existing profile, and dictation. Fresh-profile installation remains untested. |
-| Settings controls | Open dropdowns, select a language/microphone, click buttons and type in the practice box. Settings stays open for controls and dropdowns; clicking anywhere outside, Escape or Finish setup closes it. | Passed: Tommy confirmed the final Settings behavior |
-| First use | Sign in, choose microphone/key, dictate a harmless sentence into the practice box. Check it appears once. | Pending Tommy |
-| Your usual apps | Try your email, browser and editor. Keep the destination selected until text arrives. | Passed: Tommy reported Notepad/usual-app dictation works |
-| Clipboard | Copy plain text, then an image/rich text; dictate; check the earlier clipboard content is preserved. Disable clipboard sync for sensitive test data. | Pending Tommy |
-| Different destination | Switch windows/documents while text is processing. Confirm detected changes hold insertion and Copy last text recovers it. | Pending Tommy |
-| Microphones | Pause/resume; unplug/reconnect available headset; switch Windows default; sleep/wake. Mark unavailable devices untested. | Tommy reported sleep/wake and microphone reconnection work; other device cases unconfirmed |
-| Startup | Turn Start with Windows off/on and verify after signing out/in in the test profile. | Tommy reported restart and retained settings work; explicit off/on test unconfirmed |
-| Approved update | Record starting version, choose Check for updates after approval is available, confirm new version/settings and a new dictation. | Pending Tommy; approval not published |
-| Busy update | Request an update while a harmless recording is processing. It must finish before restart. | Pending Tommy |
-| Internet failure | Disconnect during a harmless test; wait for the error, cancel or retry, reconnect. Check no canceled text arrives later. | Tommy reported offline/reconnect recovery works; cancellation/late-result cases unconfirmed |
-| Long recording | Try five minutes of synthetic/non-sensitive speech. A developer separately tests forced WAV fallback and size rejection. | Pending Tommy |
-| Recovery | Review developer's interruption/rollback results, then dictate using the recovered app in the test environment. | Automated evidence available; dictation pending |
-| Repair/removal | Repair from the full ZIP in a test profile; uninstall; check startup/shortcuts are removed and retained settings are explained. | Pending Tommy |
-| Support file | Export support information; confirm version and health facts are useful and there is no transcript/account/credential data. | Pending Tommy |
-
-If a Windows protection blocks something, record its exact name/message and the affected file. Stop there; do not disable the protection. Passing on one computer does not verify other Windows versions, ARM64, managed policies, elevated applications, Remote Desktop, or every headset. Elevated/remote text targets may refuse simulated typing; use Copy last text and paste deliberately where permitted.
-
-Record failures and untested configurations in [acceptance issue #74](https://github.com/mirabeltech/mirabel-voice/issues/74). Release remains Tommy's decision after the [service setup prerequisites](service-maintenance.md) have owners and agreed limits.
+Completed implementation issues #64–#72 are reconciled into this acceptance record. Their closure records implementation/release evidence, not a claim that all optional hardware or manual edge cases were tested.

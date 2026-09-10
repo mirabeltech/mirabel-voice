@@ -1,6 +1,6 @@
 # Service operation and release prerequisites
 
-Implementation does not enable cloud schedules, create tables, change production limits or authorize spending. The live relay has not been deployed as part of these local checks.
+Operations were activated on September 10, 2026. The live relay has per-person rate limits and reserved concurrency; health and spending schedules are enabled. Normal dictation and SNS test-email receipt were confirmed by Tommy. See [the activation evidence](service-operations-setup.md).
 
 ## Limits implemented
 
@@ -14,27 +14,27 @@ The table needs string partition key `pk` and TTL attribute `expires`. Grant onl
 
 ## Configured operating decision
 
-Tommy supplied 10 active users, up to 50 expected, a $200 monthly target and three private alert recipients. The tested setup and exact permission handoff are in [service operations setup](service-operations-setup.md). Activation is blocked by AWS permissions; the target is not a hard spending cap.
+Tommy supplied 10 active users, up to 50 expected, a $200 monthly target and three private alert recipients. The tested setup and exact permission handoff are in [service operations setup](service-operations-setup.md). Activation is complete with `--skip-aws-budget`; the target is not a hard spending cap. One confirmed recipient is sufficient for the current operating decision. Additional recipients remain in private configuration and require their own confirmation.
 
 ## Before production release
 
 | Decision or check | Current status |
 |---|---|
 | Expected users, concurrent dictations and requests/minute | 10 active / up to 50 expected; peak concurrency to be observed |
-| Per-person request budget; organization concurrency cap | Prepared: 20 provider requests/person/minute, 20 in-flight requests; AWS activation blocked |
+| Per-person request budget; organization concurrency cap | Active: 20 provider requests/person/minute, 20 in-flight requests |
 | Actual provider account/model quotas | Owner must record from the accounts; not inferred from public defaults |
 | Lambda memory, timeout, reserved/account concurrency, Function URL payload limit | Owner must record current deployed settings; client/relay budget uses conservative body margins |
-| Owner and backup for incidents, alerts and model changes | Three recipients supplied privately; subscription confirmation/delivery pending |
-| Monthly spend ceiling and warning thresholds | $200 target; prepared warning thresholds; AWS activation blocked |
-| Organization-owned provider keys | Existing issue #46; verify before rollout |
+| Owner and backup for incidents, alerts and model changes | Tommy is the current owner; one confirmed recipient received the test alert. Additional/backup recipients require their own confirmation; a formal backup assignment remains follow-up. |
+| Monthly spend ceiling and warning thresholds | $200 target; estimated AI cost plus $20 allowance warnings at $100/$150/$180/$200; active, not a cutoff |
+| Organization-owned provider keys | Issue #46 closed after owner confirmed company ownership of both provider accounts and keys |
 
 Use a mocked provider for simulated load first: concurrent requests must be denied cleanly when the shared counter's atomic condition fails. Then run a small agreed real-service check using synthetic speech. Never use employee recordings for a load test. Account-level throttling and overall concurrency still require owner configuration; a per-person limit alone does not cap total organizational spend.
 
 ## Routine checks and response
 
-The prepared command `.venv\Scripts\python.exe scripts\service_check.py` checks local imports/encoding without microphone or network. With `--live --audio <synthetic-speech.wav>`, it makes one transcription and one cleanup request using the configured relay. Supply a synthetic phrase of at most ten seconds. Output contains pass/fail category and latency, never transcripts, credentials or provider response bodies. Live checks incur normal provider charges. Run manually first; daily scheduling is pending approval of cost and alert destination.
+The prepared command `.venv\Scripts\python.exe scripts\service_check.py` checks local imports/encoding without microphone or network. With `--live --audio <synthetic-speech.wav>`, it makes one transcription and one cleanup request using the configured relay. Supply a synthetic phrase of at most ten seconds. Output contains pass/fail category and latency, never transcripts, credentials or provider response bodies. Live checks incur normal provider charges. The deployed monitor runs health checks every 15 minutes and spending checks hourly; these schedules were authorized and activated.
 
-At production setup, create alerts for failed service checks, sustained provider/relay 429 or 5xx, latency exceeding the agreed budget, Lambda errors/throttles, and actual versus forecast monthly spend. Test delivery to the named owner and backup. Record exact thresholds, destination and test time in private operations notes. A plan or script is not an active alert.
+Production setup created alerts for failed service checks, sustained provider/relay 429 or 5xx, latency exceeding the agreed budget, Lambda errors/throttles, and estimated monthly AI spend plus an infrastructure allowance. Actual account-wide AWS budget filtering is a separate administrator follow-up, not an activation blocker. The owner received the SNS delivery test; test a backup recipient after they confirm if a backup is designated. Record exact thresholds, destination and test time in private operations notes. A plan or script is not an active alert.
 
 For an outage: keep the working desktop release; inspect redacted status/usage metrics, provider status and credentials; stop rollout if errors began with a release. Re-endorse the previously tested source release when dependencies match, or restore the previous full ZIP for runtime changes. Make one synthetic check and verify a fresh dictation before resuming rollout. Do not repeatedly restart every client or ask people to disable security controls.
 

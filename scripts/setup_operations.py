@@ -119,18 +119,19 @@ def code(error):
     return getattr(error, "response", {}).get("Error", {}).get("Code", type(error).__name__)
 
 
-def preflight(session, account, config):
+def preflight(session, account, config, *, skip_aws_budget=False):
     """Read specific resources; fail before any writes when permissions are absent."""
     checks = [
         ("lambda:GetFunctionConfiguration", lambda: session.client("lambda").get_function_configuration(FunctionName=FUNCTION)),
         ("lambda:GetFunctionConcurrency", lambda: session.client("lambda").get_function_concurrency(FunctionName=FUNCTION)),
         ("lambda:GetAccountSettings", lambda: session.client("lambda").get_account_settings()),
         ("dynamodb:DescribeTable", lambda: session.client("dynamodb").describe_table(TableName=TABLE)),
-        ("cloudwatch:DescribeAlarms", lambda: session.client("cloudwatch").describe_alarms(AlarmNamePrefix="mirabel-voice-")),
+        ("cloudwatch:DescribeAlarms", lambda: session.client("cloudwatch").describe_alarms(
+            AlarmNames=[alarm["AlarmName"] for alarm in alarms(config, "preflight-topic")],
+            AlarmTypes=["MetricAlarm"])),
         ("sns:GetTopicAttributes", lambda: session.client("sns").get_topic_attributes(TopicArn=f"arn:aws:sns:{config['region']}:{account}:{TOPIC}")),
         ("events:DescribeRule", lambda: session.client("events").describe_rule(Name=MONITOR+"-health")),
         ("iam:GetRole", lambda: session.client("iam").get_role(RoleName=MONITOR+"-role")),
-        ("budgets:ViewBudget", lambda: session.client("budgets").describe_budget(AccountId=account, BudgetName="mirabel-voice-infrastructure")),
     ]
     errors = []
     for action, check in checks:
@@ -139,6 +140,11 @@ def preflight(session, account, config):
         except Exception as error:
             if code(error) not in {"ResourceNotFoundException", "NotFound", "NotFoundException", "NoSuchEntity"}:
                 errors.append({"action": action, "error": code(error)})
+    if not skip_aws_budget:
+        try:
+            check_budget_scope(session, account, config)
+        except Exception as error:
+            errors.append({"action": "budget:ProjectScope", "error": str(error) if isinstance(error, ValueError) else code(error)})
     if errors:
         return errors
     limits = session.client("lambda").get_account_settings()["AccountLimit"]
@@ -148,11 +154,39 @@ def preflight(session, account, config):
     return []
 
 
+def budget_filter(config):
+    tag = config.get("aws_budget_tag")
+    if (not isinstance(tag, dict) or set(tag) != {"key", "value"} or
+            any(not isinstance(v, str) or not v.strip() for v in tag.values())):
+        raise ValueError("Set aws_budget_tag with the administrator-verified cost allocation tag key and value; account-wide budgets are not permitted")
+    return {"Tags": {"Key": tag["key"], "Values": [tag["value"]], "MatchOptions": ["EQUALS"]}}
+
+
+def check_budget_scope(session, account, config):
+    expected = budget_filter(config)
+    client = session.client("budgets")
+    try:
+        existing = client.describe_budget(AccountId=account, BudgetName="mirabel-voice-infrastructure")["Budget"]
+    except client.exceptions.NotFoundException:
+        return
+    expression = existing.get("FilterExpression")
+    # AWS may omit the default equality match option in its response.
+    if isinstance(expression, dict) and set(expression) == {"Tags"}:
+        expression = {"Tags": {"MatchOptions": ["EQUALS"], **expression["Tags"]}}
+    if expression != expected:
+        raise ValueError("Existing infrastructure budget is unscoped or uses a different project filter; have the administrator correct it before activation")
+    if (existing.get("BudgetType") != "COST" or existing.get("TimeUnit") != "MONTHLY" or
+            existing.get("BudgetLimit", {}).get("Unit") != "USD" or
+            float(existing.get("BudgetLimit", {}).get("Amount", -1)) != config["aws_reserve_usd"]):
+        raise ValueError("Existing infrastructure budget differs; review before replacing it")
+
+
 def ensure_budget(session, account, config):
+    check_budget_scope(session, account, config)
     client = session.client("budgets")
     budget = dict(BudgetName="mirabel-voice-infrastructure", BudgetLimit={
         "Amount": str(config["aws_reserve_usd"]), "Unit": "USD"},
-        TimeUnit="MONTHLY", BudgetType="COST")
+        TimeUnit="MONTHLY", BudgetType="COST", FilterExpression=budget_filter(config))
     subscribers = [{"SubscriptionType": "EMAIL", "Address": email} for email in config["emails"]]
     notifications = [{"Notification": dict(NotificationType="ACTUAL",
         ComparisonOperator="GREATER_THAN", Threshold=n, ThresholdType="PERCENTAGE"),
@@ -182,7 +216,49 @@ def ensure_budget(session, account, config):
                                          Notification=notification, Subscriber=subscriber)
 
 
-def apply(session, account, config, audio, backup_dir):
+class RelayDeployment:
+    """Refresh settled revisions without overwriting another deployment."""
+    def __init__(self, client, previous):
+        from copy import deepcopy
+        self.client = client
+        self.expected_hash = previous["CodeSha256"]
+        self.expected_env = deepcopy(previous.get("Environment", {}).get("Variables", {}))
+        self.changed = False
+
+    def settled(self):
+        self.client.get_waiter("function_updated_v2").wait(FunctionName=FUNCTION)
+        current = self.client.get_function_configuration(FunctionName=FUNCTION)
+        if (current["CodeSha256"] != self.expected_hash or
+                current.get("Environment", {}).get("Variables", {}) != self.expected_env):
+            raise RuntimeError("Relay code or environment changed outside this activation; refusing to overwrite it.")
+        return current
+
+    def code(self, archive):
+        import base64
+        import hashlib
+        current = self.settled()
+        self.client.update_function_code(FunctionName=FUNCTION, ZipFile=archive,
+                                         RevisionId=current["RevisionId"])
+        self.changed = True
+        self.expected_hash = base64.b64encode(hashlib.sha256(archive).digest()).decode()
+        return self.settled()
+
+    def environment(self, variables):
+        current = self.settled()
+        self.client.update_function_configuration(FunctionName=FUNCTION,
+            Environment={"Variables": variables}, RevisionId=current["RevisionId"])
+        self.expected_env = dict(variables)
+        return self.settled()
+
+    def restore(self, archive, variables):
+        self.code(archive)
+        self.environment(variables)
+
+
+def apply(session, account, config, audio, backup_dir, *, skip_aws_budget=False):
+    # Guard direct callers as well as the CLI, before any AWS or backup writes.
+    if not skip_aws_budget:
+        check_budget_scope(session, account, config)
     import deploy_relay
     region = config["region"]
     lam, iam, sns = (session.client(n) for n in ("lambda", "iam", "sns"))
@@ -218,7 +294,8 @@ def apply(session, account, config, audio, backup_dir):
             sns.subscribe(TopicArn=topic, Protocol="email", Endpoint=email, ReturnSubscriptionArn=True)
     for alarm in alarms(config, topic):
         cw.put_metric_alarm(**alarm)
-    ensure_budget(session, account, config)
+    if not skip_aws_budget:
+        ensure_budget(session, account, config)
     role_name = MONITOR+"-role"
     try:
         monitor_role = iam.get_role(RoleName=role_name)["Role"]["Arn"]
@@ -254,21 +331,16 @@ def apply(session, account, config, audio, backup_dir):
         lam.get_waiter("function_updated_v2").wait(FunctionName=MONITOR)
         lam.update_function_configuration(FunctionName=MONITOR,Environment={"Variables":monitor_env})
         lam.get_waiter("function_updated_v2").wait(FunctionName=MONITOR)
-    changed = False
+    deployment = RelayDeployment(lam, previous)
+    concurrency_changed = False
     try:
-        deployed = lam.update_function_code(FunctionName=FUNCTION,ZipFile=deploy_relay.build_package(),
-                                            RevisionId=previous["RevisionId"])
-        changed = True
-        revision = deployed["RevisionId"]
-        lam.get_waiter("function_updated_v2").wait(FunctionName=FUNCTION)
+        deployment.code(deploy_relay.build_package())
         env = dict(previous.get("Environment",{}).get("Variables",{}))
         env.update(MIRABEL_RATE_LIMIT_TABLE=TABLE,
                    MIRABEL_REQUESTS_PER_MINUTE=str(config["requests_per_person_per_minute"]))
-        configured = lam.update_function_configuration(FunctionName=FUNCTION,Environment={"Variables":env},
-                                                       RevisionId=revision)
-        revision = configured["RevisionId"]
-        lam.get_waiter("function_updated_v2").wait(FunctionName=FUNCTION)
+        deployment.environment(env)
         lam.put_function_concurrency(FunctionName=FUNCTION,ReservedConcurrentExecutions=config["reserved_concurrency"])
+        concurrency_changed = True
         # Do not schedule recurring checks until both one-off checks pass.
         for kind in ("health","spend"):
             response = lam.invoke(FunctionName=MONITOR,Payload=json.dumps({"kind":kind}).encode())
@@ -289,22 +361,34 @@ def apply(session, account, config, audio, backup_dir):
             if result["FailedEntryCount"]:
                 raise RuntimeError("Could not attach schedule")
             events.put_rule(Name=name,ScheduleExpression=schedule,State="ENABLED")
-    except Exception:
+    except Exception as activation_error:
+        rollback_errors = []
         for kind in ("health","spend"):
-            try: events.disable_rule(Name=MONITOR+"-"+kind)
-            except events.exceptions.ResourceNotFoundException: pass
-        if changed:
-            restored = lam.update_function_code(FunctionName=FUNCTION,ZipFile=old_zip, RevisionId=revision)
-            lam.get_waiter("function_updated_v2").wait(FunctionName=FUNCTION)
-            lam.update_function_configuration(FunctionName=FUNCTION,Environment=previous.get("Environment",{"Variables":{}}),
-                                              RevisionId=restored["RevisionId"])
-            lam.get_waiter("function_updated_v2").wait(FunctionName=FUNCTION)
-            if "ReservedConcurrentExecutions" in previous_concurrency:
-                lam.put_function_concurrency(FunctionName=FUNCTION,ReservedConcurrentExecutions=previous_concurrency["ReservedConcurrentExecutions"])
-            else:
-                lam.delete_function_concurrency(FunctionName=FUNCTION)
+            try:
+                events.disable_rule(Name=MONITOR+"-"+kind)
+            except events.exceptions.ResourceNotFoundException:
+                pass
+            except Exception as error:
+                rollback_errors.append(type(error).__name__ + " disabling " + kind)
+        if deployment.changed:
+            try:
+                deployment.restore(old_zip, previous.get("Environment", {}).get("Variables", {}))
+                if concurrency_changed:
+                    current = lam.get_function_concurrency(FunctionName=FUNCTION).get("ReservedConcurrentExecutions")
+                    if current != config["reserved_concurrency"]:
+                        raise RuntimeError("Relay concurrency changed outside this activation; refusing to overwrite it.")
+                    if "ReservedConcurrentExecutions" in previous_concurrency:
+                        lam.put_function_concurrency(FunctionName=FUNCTION,ReservedConcurrentExecutions=previous_concurrency["ReservedConcurrentExecutions"])
+                    else:
+                        lam.delete_function_concurrency(FunctionName=FUNCTION)
+            except Exception as error:
+                rollback_errors.append(type(error).__name__ + " restoring relay: " + str(error))
+        if rollback_errors:
+            raise RuntimeError("Activation failed and rollback needs attention: " + "; ".join(rollback_errors) +
+                               ". Backup: " + str(backup_dir)) from activation_error
         raise
-    return {"configured":True,"email_confirmation_required":True,"backup_directory":str(backup_dir)}
+    return {"configured":True,"email_confirmation_required":True,"backup_directory":str(backup_dir),
+            "aws_budget": "skipped_existing_unchanged" if skip_aws_budget else "project_scoped"}
 
 
 def main():
@@ -313,6 +397,8 @@ def main():
     parser.add_argument("--audio",type=Path)
     parser.add_argument("--profile")
     parser.add_argument("--apply",action="store_true")
+    parser.add_argument("--skip-aws-budget", action="store_true",
+                        help="Activate operations without reading or changing AWS billing budgets; existing budget alerts remain unchanged")
     parser.add_argument("--output",type=Path,default=ROOT/"build_probe/operations-plan")
     args=parser.parse_args()
     import boto3
@@ -321,9 +407,10 @@ def main():
     account=session.client("sts").get_caller_identity()["Account"]
     args.output.mkdir(parents=True,exist_ok=True)
     (args.output/"administrator-permissions.json").write_text(json.dumps(required_permissions(account,config["region"]),indent=2))
-    failures=preflight(session,account,config)
+    failures=preflight(session,account,config,skip_aws_budget=args.skip_aws_budget)
     report={"ready":not failures,"missing_access":failures,"monthly_target":config["monthly_target_usd"],
-            "hard_spend_cap":False,"alert_count":len(alarms(config,"preview-topic"))}
+            "hard_spend_cap":False,"alert_count":len(alarms(config,"preview-topic")),
+            "aws_budget": "skipped_existing_unchanged" if args.skip_aws_budget else "project_scope_required"}
     (args.output/"preflight.json").write_text(json.dumps(report,indent=2))
     print(json.dumps(report))
     if not args.apply:
@@ -333,7 +420,8 @@ def main():
     if not args.audio:
         parser.error("--apply requires a synthetic speech --audio fixture")
     print(json.dumps(apply(session,account,config,args.audio,
-                           args.output/("backup-"+str(int(time.time()))))))
+                           args.output/("backup-"+str(int(time.time()))),
+                           skip_aws_budget=args.skip_aws_budget)))
     return 0
 
 
