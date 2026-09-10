@@ -477,16 +477,26 @@ def main(argv: list[str] | None = None) -> int:
     else:
         overlay = None
 
+    from .shutdown import ShutdownDeadline
+    from .config import config_dir
+
+    shutdown = ShutdownDeadline(config_dir() / "logs")
     tray = Tray(app, flyout=flyout)
+    tray.before_stop = shutdown.arm
+    if flyout is not None:
+        flyout.on_quit = tray._quit
+        flyout.on_check_updates = tray._check_updates
     if flyout is not None and not config.onboarding_complete:
         flyout.show()
     _start_update_watch(app, tray)
     try:
         tray.run()
     finally:
+        shutdown.arm()
         app.stop()
         if overlay is not None:
             overlay.stop()
+        shutdown.finish()
     return 0
 
 

@@ -32,11 +32,11 @@ try {
     & (Join-Path $unpacked 'Install.ps1') -Target $target -NoLaunch -SkipShortcuts
     if ($LASTEXITCODE -ne 0) { throw 'Isolated installation failed' }
     $py = Join-Path $target 'python\python.exe'
-    & $py -c "from mirabel_voice.config import Config;c=Config.load();c.hotkey='f13';c.custom_words=['Synthetic retained preference'];c.save()"
+    & $py -c "from mirabel_voice.config import Config;c=Config.load();assert c.language=='en';assert c.hotkey=='insert';print('Fresh install defaults: English and Insert');c.hotkey='f13';c.language=None;c.custom_words=['Synthetic retained preference'];c.save()"
     if ($LASTEXITCODE -ne 0) { throw 'Could not prepare test settings' }
     & (Join-Path $unpacked 'Install.ps1') -Target $target -NoLaunch -SkipShortcuts
     if ($LASTEXITCODE -ne 0) { throw 'Isolated repair failed' }
-    & $py -c "from mirabel_voice.config import Config;c=Config.load();assert c.hotkey=='f13';assert c.custom_words==['Synthetic retained preference'];print('Settings survived repair')"
+    & $py -c "from mirabel_voice.config import Config;c=Config.load();assert c.hotkey=='f13';assert c.language is None;assert c.custom_words==['Synthetic retained preference'];print('Settings survived repair')"
     if ($LASTEXITCODE -ne 0) { throw 'Settings were lost during repair' }
     # Simulate a power loss between runtime renames inside this disposable copy.
     [IO.Directory]::Delete(('\\?\' + (Join-Path $target 'python.previous')), $true)

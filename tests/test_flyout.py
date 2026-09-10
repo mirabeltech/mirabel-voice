@@ -28,6 +28,7 @@ class FakeApp:
             input_device=None,
             hotkey="insert",
             mode="toggle",
+            onboarding_complete=True,
         )
         self.signin = None
         self.state = "idle"
@@ -470,10 +471,51 @@ def test_settings_controls_and_focus_loss_do_not_close_native_window(monkeypatch
     root.report_callback_exception = lambda *args: errors.append(args)
     flyout = card.Flyout(SimpleNamespace(_root=root, _scale=1), FakeApp())
     flyout.app.set_language = lambda value: setattr(flyout.app.config, "language", value)
+    flyout.overlay.call = lambda action: action()
+    tray = Tray(flyout.app, flyout=flyout)
+    tray.coordinator = SimpleNamespace(request=lambda notify: notify("Already up to date."))
+    quit_called = threading.Event()
+    flyout.app.stop = quit_called.set
+    flyout.on_quit = tray._quit
+    flyout.on_check_updates = tray._check_updates
+    flyout.app.config.start_with_windows = True
+    flyout.app.set_translate = lambda value: setattr(flyout.app.config, "translate_to_english", value)
+    flyout.app.set_start_with_windows = lambda value: setattr(flyout.app.config, "start_with_windows", value)
+    copied = []
+    flyout.app.copy_last = lambda: copied.append(flyout.app.last_text)
+    flyout._capture_thread = lambda: None
     try:
         flyout._show()
         flyout._shown_at = 0
         top = flyout._top
+        actions = flyout._widgets["quit"].master.master
+        assert [button.cget("text") for frame in actions.winfo_children() for button in frame.winfo_children() if isinstance(button, tk.Button)] == ["Check for updates", "Quit"]
+        flyout._widgets["updates"].invoke()
+        root.update_idletasks()
+        assert flyout._widgets["update_status"].cget("text") == "Already up to date."
+        assert flyout._widgets["update_status"].winfo_ismapped()
+        flyout.app.recorder = SimpleNamespace(input_level=0.5)
+        flyout._show_state()
+        assert flyout._widgets["level"].cget("text") == "Microphone level: 50%"
+        assert str(flyout._widgets["copy"].cget("state")) == "disabled"
+        flyout.app.last_text = "Retained transcript"
+        flyout._show_state()
+        flyout._widgets["copy"].invoke()
+        assert copied == ["Retained transcript"]
+        flyout._widgets["translate"].invoke()
+        assert flyout.app.config.translate_to_english
+        flyout._widgets["startup"].invoke()
+        assert not flyout.app.config.start_with_windows
+        flyout._widgets["change"].invoke()
+        assert flyout._capturing
+        root.update_idletasks()
+        assert flyout._widgets["key_help"].winfo_ismapped()
+        assert str(flyout._widgets["change"].cget("state")) == "disabled"
+        flyout._end_capture("f13")
+        assert flyout._widgets["key"].cget("text") == "F13"
+        assert flyout._widgets["change"].cget("text") == "Change key…"
+        assert str(flyout._widgets["change"].cget("state")) == "normal"
+        assert not flyout._widgets["key_help"].winfo_ismapped()
         language = flyout._widgets["language"]
         chosen_code, chosen_label = LANGUAGES[-1]
         language.set(chosen_label)
@@ -494,14 +536,18 @@ def test_settings_controls_and_focus_loss_do_not_close_native_window(monkeypatch
         root.mainloop()
         assert top.state() == "normal"
         top.tk.call("ttk::combobox::Unpost", str(language))
-        flyout._widgets["scratch"].focus_force()
-        flyout._widgets["scratch"].insert("1.0", "Practice text")
-        top.event_generate("<FocusOut>")
-        root.after(250, root.quit)
-        root.mainloop()
-        assert top.state() == "normal"
+        assert not flyout._widgets["meter"].winfo_ismapped()
+        flyout._widgets["test_microphone"].invoke()
+        root.update_idletasks()
+        assert flyout._widgets["meter"].winfo_ismapped()
+        assert flyout._widgets["test_microphone"].cget("text") == "Done testing"
+        flyout._widgets["test_microphone"].invoke()
+        root.update_idletasks()
+        assert not flyout._widgets["meter"].winfo_ismapped()
+        assert "finish_setup" not in flyout._widgets
         assert not errors
-        flyout._hide()
+        flyout._widgets["quit"].invoke()
+        assert quit_called.wait(2)
         assert top.state() == "withdrawn"
     finally:
         flyout._discard()
@@ -546,3 +592,21 @@ def test_outside_mouse_press_closes_but_inside_click_and_release_do_not(monkeypa
     flyout._dismiss_outside_click(old_token)
     assert hidden == [True]
     flyout._stop_outside_clicks()
+
+
+def test_first_settings_open_is_remembered_without_a_setup_step(tmp_path):
+    from mirabel_voice.config import Config
+
+    flyout = card.Flyout(FakeOverlay(), FakeApp())
+    config = Config()
+    target = tmp_path / "config.json"
+    saves = []
+    def save():
+        saves.append(True)
+        Config.save(config, target)
+    config.save = save
+    flyout.app.config = config
+    flyout._remember_settings_opened()
+    assert Config.load(target).onboarding_complete
+    flyout._remember_settings_opened()
+    assert saves == [True]

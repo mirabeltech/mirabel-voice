@@ -124,7 +124,7 @@ def test_set_relay_keeps_every_other_setting(tmp_path, monkeypatch):
     monkeypatch.setenv("MIRABEL_VOICE_HOME", str(tmp_path))
     from mirabel_voice.config import Config
 
-    Config(hotkey="scroll_lock", custom_words=["Mirabel"], play_sounds=False).save(
+    Config(hotkey="scroll_lock", language=None, custom_words=["Mirabel"], play_sounds=False).save(
         tmp_path / "config.json"
     )
 
@@ -132,6 +132,7 @@ def test_set_relay_keeps_every_other_setting(tmp_path, monkeypatch):
 
     saved = Config.load(tmp_path / "config.json")
     assert saved.hotkey == "scroll_lock"
+    assert saved.language is None
     assert saved.custom_words == ["Mirabel"]
     assert saved.play_sounds is False
     assert saved.relay_token == "a-token"
@@ -299,3 +300,14 @@ def test_the_version_lives_in_pyproject_alone():
         (PACKAGING.parent / "pyproject.toml").read_text(encoding="utf-8")
     )["project"]["version"]
     assert prepare.project_version() == named
+
+
+def test_fresh_install_defaults_to_english_and_insert(tmp_path, monkeypatch):
+    monkeypatch.setenv("MIRABEL_VOICE_HOME", str(tmp_path))
+    from mirabel_voice.config import Config
+
+    assert entry.main(["--set-relay", "https://relay.example.on.aws"]) == 0
+    saved = Config.load()
+    assert saved.language == "en"
+    assert saved.hotkey == "insert"
+    assert not saved.onboarding_complete
