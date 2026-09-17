@@ -14,10 +14,16 @@ import json
 from .config import Config, config_path
 
 SUGGESTIONS = """Keys that are usually free:
-  scroll_lock    pause     insert     f13 to f24
-  right ctrl (ctrl_r)      right alt (alt_r)
+  insert         right ctrl (ctrl_r)      scroll_lock    pause
 
-Avoid: keys your laptop uses for volume, brightness, or screenshots."""
+On a laptop:
+  • Insert is the default. On some laptops it shares a key with
+    Print Screen or needs Fn; if so, choose right ctrl instead.
+  • Right ctrl is on nearly every laptop and no program uses it alone.
+  • Scroll Lock and Pause are often missing on laptops.
+
+Avoid: F1 to F12 (programs use them), Caps Lock, Print Screen, and
+keys your laptop uses for volume, brightness, or screenshots."""
 
 
 def name_of(key) -> str | None:  # noqa: ANN001
@@ -29,6 +35,11 @@ def name_of(key) -> str | None:  # noqa: ANN001
     if isinstance(key, KeyCode) and key.char:
         return key.char
     if isinstance(key, KeyCode) and key.vk:
+        # The hook often reports a special key as a bare key code. Give
+        # it the name the settings and the card understand, when it has one.
+        for named in Key:
+            if getattr(named.value, "vk", None) == key.vk:
+                return named.name
         return f"<{key.vk}>"
     return None
 

@@ -1,6 +1,7 @@
 import threading
 
 import numpy as np
+import pytest
 
 from fakes import FakeAnthropic, FakeOpenAI, text_response
 from mirabel_voice.app import (
@@ -590,3 +591,35 @@ def test_driver_error_has_recovery_instructions_and_stays_usable(monkeypatch, tm
     app.recorder.start = lambda: None
     assert app.start_recording() is True
     app.cancel_recording()
+
+
+# --- mode switching tests ---------------------------------------------------
+
+
+def test_switching_mode_updates_config_and_saves(monkeypatch, tmp_path):
+    app = language_app(monkeypatch, tmp_path)
+    app.set_mode("hold")
+    assert app.config.mode == "hold"
+    assert Config.load().mode == "hold"  # and the next start agrees
+    app.set_mode("toggle")
+    assert app.config.mode == "toggle"
+    assert Config.load().mode == "toggle"
+
+
+def test_switching_mode_tells_the_tray(monkeypatch, tmp_path):
+    app = language_app(monkeypatch, tmp_path)
+    told = []
+    app._on_state = lambda state, detail: told.append(detail)
+    app.set_mode("hold")
+    assert any("Dictation mode: hold" in detail for detail in told)
+    app.set_mode("toggle")
+    assert any("Dictation mode: toggle" in detail for detail in told)
+
+
+def test_invalid_mode_is_rejected(monkeypatch, tmp_path):
+    app = language_app(monkeypatch, tmp_path)
+    initial_mode = app.config.mode
+    with pytest.raises(ValueError, match="Invalid mode"):
+        app.set_mode("invalid_mode")
+    assert app.config.mode == initial_mode  # unchanged
+    assert Config.load().mode == initial_mode  # and nothing was saved

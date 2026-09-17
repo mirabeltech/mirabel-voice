@@ -159,6 +159,7 @@ class Flyout:
         self._tick_id = None
         self._outside_listener = None
         self._outside_token = None
+        self._mode_var = None
         # PortAudio's first enumeration costs hundreds of milliseconds.
         # Pay it here, in the background, so the first click on the tray
         # does not stall the Tk thread and the status pill with it.
@@ -248,6 +249,10 @@ class Flyout:
         self._stop_outside_clicks()
         top, self._top = self._top, None
         self._widgets = {}
+        # The mode variable holds the interpreter too. Dropped here, on
+        # the overlay thread, it can never be the last reference that a
+        # different thread frees.
+        self._mode_var = None
         self._built_pal = None
         self._hwnd = 0
         if top is not None:
@@ -274,6 +279,7 @@ class Flyout:
         self._built_pal = pal
         self._widgets = {}
         root = self.overlay._root  # noqa: SLF001 - the one Tk root
+        self._mode_var = tk.StringVar(value=self.app.config.mode)
         top = tk.Toplevel(root)
         self._top = top
         top.withdraw()
@@ -540,8 +546,27 @@ class Flyout:
                               font=caption, fg=accent, justify="left")
         w["key_help"].grid(row=1, column=0, columnspan=2, sticky="w", pady=(self._px(7), 0))
         w["key_help"].grid_remove()
+        label(preferences, text="Dictation mode", font=strong).grid(row=2, column=0, sticky="w", padx=(0, self._px(14)), pady=(self._px(12), 0))
+        mode_frame = tk.Frame(preferences, bg=section_bg)
+        mode_frame.grid(row=2, column=1, sticky="e", pady=(self._px(12), 0))
+        w["mode_toggle"] = tk.Radiobutton(
+            mode_frame, text="Toggle (press to start/stop)", variable=self._mode_var,
+            value="toggle", command=self._toggle_mode, bg=section_bg, fg=pal.foreground,
+            selectcolor=section_bg, activebackground=section_bg, activeforeground=pal.foreground,
+            font=body, anchor="w", takefocus=True, cursor="hand2", bd=0,
+            highlightthickness=1, highlightbackground=section_bg, highlightcolor=accent
+        )
+        w["mode_toggle"].pack(anchor="w", pady=(0, self._px(4)))
+        w["mode_hold"] = tk.Radiobutton(
+            mode_frame, text="Hold (hold to speak)", variable=self._mode_var,
+            value="hold", command=self._toggle_mode, bg=section_bg, fg=pal.foreground,
+            selectcolor=section_bg, activebackground=section_bg, activeforeground=pal.foreground,
+            font=body, anchor="w", takefocus=True, cursor="hand2", bd=0,
+            highlightthickness=1, highlightbackground=section_bg, highlightcolor=accent
+        )
+        w["mode_hold"].pack(anchor="w")
         w["startup"] = checkbox(preferences, "Start with Windows", self._toggle_startup)
-        w["startup"].grid(row=2, column=0, columnspan=2, sticky="w", pady=(self._px(9), 0))
+        w["startup"].grid(row=3, column=0, columnspan=2, sticky="w", pady=(self._px(9), 0))
 
         self._refresh_microphone_test()
 
@@ -593,6 +618,7 @@ class Flyout:
             self._cancel_capture()
             self._top = None
             self._widgets = {}
+            self._mode_var = None
             self._built_pal = None
             self._hwnd = 0
 
@@ -695,6 +721,8 @@ class Flyout:
             w["startup"].select()
         else:
             w["startup"].deselect()
+        if self._mode_var is not None:
+            self._mode_var.set(self.app.config.mode)
         self._show_state()
 
     def _remember_settings_opened(self) -> None:
@@ -907,6 +935,21 @@ class Flyout:
             self.app.set_start_with_windows(not self.app.config.start_with_windows)
         except Exception:
             self._widgets["hint"].configure(text="Could not change Windows startup. Check your user permissions.")
+
+    def _toggle_mode(self) -> None:
+        if self.app.state in (STATE_STARTING, STATE_RECORDING):
+            # The listener carries the only stop for a live recording.
+            # Rebuilding it now would lose the press or the release that
+            # the user is in the middle of.
+            self._mode_var.set(self.app.config.mode)
+            self._widgets["hint"].configure(text="Finish dictating first.")
+            return
+        try:
+            self.app.set_mode(self._mode_var.get())
+        except Exception:  # noqa: BLE001 - a refused mode keeps the old one
+            log.exception("The dictation mode did not change.")
+            self._widgets["hint"].configure(text="Could not change dictation mode.")
+            self._mode_var.set(self.app.config.mode)
 
     def _pick_microphone(self, _event) -> None:  # noqa: ANN001
         # Resolve against the same filtered list the box displayed. The

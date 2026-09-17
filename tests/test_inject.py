@@ -118,3 +118,23 @@ def test_keyboard_failure_still_restores_clipboard_and_does_not_repeat(monkeypat
     injector.flush_restore()
     assert clipboard.content == 'old content'
     assert keyboard.field == ''
+
+
+# --- typed newlines must not submit a chat message --------------------------
+
+
+def test_typed_newlines_go_out_as_shift_enter():
+    from pynput.keyboard import Key
+
+    keyboard = FakeKeyboard()
+    injector = TextInjector(method="type", keyboard=keyboard)
+    injector.send("First paragraph.\n\nSecond.\r\nThird.")
+    typed = [text for kind, text in keyboard.events if kind == "type"]
+    assert typed == ["First paragraph.", "Second.", "Third."]
+    assert all("\n" not in text for text in typed)
+    newline = [("press", Key.shift), ("press", Key.enter), ("release", Key.enter), ("release", Key.shift)]
+    joined = keyboard.events
+    assert joined == (
+        [("type", "First paragraph.")] + newline + newline
+        + [("type", "Second.")] + newline + [("type", "Third.")]
+    )

@@ -26,16 +26,22 @@ Click into the intended text box and keep it selected until your text arrives.
 
 | Action | Control |
 |---|---|
-| Start / finish dictation | Press Insert / press Insert again |
+| Start / finish dictation | Press Insert / press Insert again (toggle mode) |
+| Hold to dictate | Hold Insert (hold mode) |
 | Cancel recording or waiting for a result | Esc |
 | Insert the last completed text again | Shift+Alt+Z |
 | Choose microphone, language, key or translation | Click the microphone icon |
+| Switch between toggle and hold mode | **Dictation mode** in Settings |
 | Close the app and microphone | **Quit** in controls |
 | Start automatically after signing into Windows | **Start with Windows** checkbox |
 | Check for an approved update | **Check for Updates** in controls |
 | Copy the completed transcript yourself | **Copy last text** |
 
-A hold-mode configuration uses hold/release instead of two presses. The controls show the current mode. Choosing the system default microphone lets the app reopen it after Windows changes the default, once the current recording finishes. Explicitly selected microphones stay selected.
+**Dictation modes:**
+- **Toggle mode** (default): Press the key to start recording, press again to stop. Works hands-free.
+- **Hold mode**: Hold the key down while speaking, release to stop. More natural for some users.
+
+Switch between modes in Settings (click the microphone icon near the clock). The controls show the current mode. Choosing the system default microphone lets the app reopen it after Windows changes the default, once the current recording finishes. Explicitly selected microphones stay selected.
 
 The status panel shows listening, processing, completion or an error. One sound means start, a lower sound means captured, and a high sound means the text was sent to the selected application; check the result before sending your message. Two low sounds mean the action could not complete; check the displayed message. Processing time varies with recording length, connection and service availability.
 
@@ -62,6 +68,8 @@ Settings, custom words and application logs are stored in `%APPDATA%\MirabelVoic
 For help, right-click the icon and choose **Export support information**. It creates `support.json` in the settings folder containing version/platform information and an offline health result. It does **not** include raw logs, recordings, transcripts, credentials, your email or your custom words. Send that file and the visible error message to Tommy. Do not send the whole settings folder.
 
 If the microphone meter stays at zero, check the selected input and Windows **Settings → Privacy & security → Microphone**, including desktop-app permission. Try a different input if a headset was disconnected. After sleep, allow the microphone a few seconds to reconnect.
+
+If the dictation key doesn't work, choose a different key in Settings with **Change key**. Insert is the default, but on some laptops it shares a key with Print Screen or needs Fn. Right Ctrl is the best alternative: it is on nearly every laptop and no program uses it on its own. Avoid F1 to F12, Caps Lock, Print Screen, and keys your laptop uses for volume, brightness, or screenshots. Settings takes one key at a time; key combinations are not supported yet.
 
 ## Personal spellings
 

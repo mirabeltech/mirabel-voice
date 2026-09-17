@@ -34,12 +34,17 @@ class FakeApp:
         self.state = "idle"
         self.last_text = ""
         self.hotkeys = []
+        self.modes = []
         self.suspended = 0
         self.resumed = 0
 
     def set_hotkey(self, key):
         self.hotkeys.append(key)
         self.config.hotkey = key
+
+    def set_mode(self, mode):
+        self.modes.append(mode)
+        self.config.mode = mode
 
     def suspend_hotkeys(self):
         self.suspended += 1
@@ -243,6 +248,74 @@ def test_set_hotkey_restarts_the_listener_with_the_new_key(monkeypatch, tmp_path
     assert app._listener.running
 
 
+def test_set_mode_restarts_the_listener_with_the_new_mode(monkeypatch, tmp_path):
+    from mirabel_voice.app import VoiceApp
+    from mirabel_voice.config import Config
+
+    monkeypatch.setenv("MIRABEL_VOICE_HOME", str(tmp_path))
+
+    class FakeListener:
+        def __init__(self, mode):
+            self.mode = mode
+            self.running = False
+
+        def start(self):
+            self.running = True
+
+        def stop(self):
+            self.running = False
+
+    made = []
+    config = Config(play_sounds=False)
+    app = VoiceApp.__new__(VoiceApp)
+    app.config = config
+    app.state = "idle"
+    app._on_state = None
+    app.on_status = None
+    app._listener = None
+    app._hotkeys_suspended = False
+    app._listener_lock = threading.Lock()
+    app._stopped = False
+    app._cancel_work = threading.Event()
+
+    def make():
+        listener = FakeListener(config.mode)
+        made.append(listener)
+        return listener
+
+    app._make_listener = make
+
+    # Not started yet: the swap saves the mode and starts nothing.
+    app.set_mode("hold")
+    assert config.mode == "hold"
+    assert made == []
+    assert Config.load().mode == "hold"
+
+    # Running: the swap rebuilds the listener with the new mode.
+    app._listener = make()
+    app._listener.start()
+    old = app._listener
+    app.set_mode("toggle")
+    assert not old.running
+    assert app._listener is not old
+    assert app._listener.mode == "toggle"
+    assert app._listener.running
+
+    # Suspended for a key capture: the capture keeps the keyboard. The
+    # resume that ends the capture builds from the saved mode.
+    app._listener.stop()
+    app._listener = None
+    app._hotkeys_suspended = True
+    before = len(made)
+    app.set_mode("hold")
+    assert len(made) == before
+    assert app._listener is None
+    assert app._hotkeys_suspended
+    app.resume_hotkeys()
+    assert app._listener.mode == "hold"
+    assert app._listener.running
+
+
 def test_a_bad_key_is_refused_before_anything_changes(monkeypatch, tmp_path):
     from mirabel_voice.app import VoiceApp
     from mirabel_voice.config import Config
@@ -341,6 +414,42 @@ def test_capture_is_refused_while_a_recording_runs():
     assert not flyout._capturing
     assert flyout.app.suspended == 0
     assert hints  # the card said why
+
+
+def test_a_mode_switch_is_refused_while_a_recording_runs():
+    # Rebuilding the listener mid-recording would lose the press or the
+    # release the user is in the middle of.
+    flyout = card.Flyout(FakeOverlay(), FakeApp())
+    flyout.app.state = "recording"
+    hints, radio = [], []
+    flyout._mode_var = SimpleNamespace(get=lambda: "hold", set=radio.append)
+    flyout._widgets = {
+        "hint": SimpleNamespace(configure=lambda **kwargs: hints.append(kwargs)),
+    }
+    flyout._toggle_mode()
+    assert flyout.app.modes == []
+    assert radio == ["toggle"]  # the radio snaps back to the saved mode
+    assert hints  # the card said why
+
+
+def test_a_mode_switch_reaches_the_app_and_a_refusal_reverts_the_radio():
+    flyout = card.Flyout(FakeOverlay(), FakeApp())
+    hints, radio = [], []
+    flyout._mode_var = SimpleNamespace(get=lambda: "hold", set=radio.append)
+    flyout._widgets = {
+        "hint": SimpleNamespace(configure=lambda **kwargs: hints.append(kwargs)),
+    }
+    flyout._toggle_mode()
+    assert flyout.app.modes == ["hold"]
+    assert radio == [] and hints == []
+
+    def refuse(mode):
+        raise ValueError("Invalid mode")
+
+    flyout.app.set_mode = refuse
+    flyout._toggle_mode()
+    assert radio == ["hold"]  # back to what the app still has
+    assert hints and "Could not change dictation mode." in hints[-1]["text"]
 
 
 def test_a_dead_card_still_gives_the_keyboard_back():

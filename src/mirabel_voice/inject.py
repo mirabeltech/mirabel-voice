@@ -178,8 +178,26 @@ class TextInjector:
             controller.release(Key.ctrl)
 
     def _send_as_keystrokes(self, text: str) -> None:
-        """Send the text one character at a time."""
-        self.keyboard.type(text)
+        """Send the text one character at a time.
+
+        A newline goes out as Shift+Enter. pynput types "\n" as a plain
+        Enter, and in a chat box that submits the message: a long
+        dictation with "new paragraph" in it went out as several
+        messages, each sent on its own. Shift+Enter is a newline in every
+        chat tool and a line break everywhere else.
+        """
+        from pynput.keyboard import Key
+
+        for index, line in enumerate(text.replace("\r\n", "\n").split("\n")):
+            if index:
+                self.keyboard.press(Key.shift)
+                try:
+                    self.keyboard.press(Key.enter)
+                    self.keyboard.release(Key.enter)
+                finally:
+                    self.keyboard.release(Key.shift)
+            if line:
+                self.keyboard.type(line)
 
 
 def foreground_window() -> int:

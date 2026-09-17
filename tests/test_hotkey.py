@@ -379,3 +379,113 @@ def test_the_sweep_unlatches_a_binding_whose_release_was_lost(monkeypatch):
     listener.handle_press(Key.alt)
     listener.handle_press(KeyCode.from_char("z"))
     assert fired == ["paste", "paste"]
+
+
+# --- a sided modifier as the dictation key ---------------------------------
+
+
+class _Events:
+    def __init__(self):
+        self.starts = 0
+        self.stops = 0
+
+    def start(self):
+        self.starts += 1
+        return True
+
+    def stop(self):
+        self.stops += 1
+
+
+def _with_real_normalisation(listener):
+    """Attach an unstarted pynput listener, so presses take the same
+    canonical path they take in the running app. Without it the tests
+    skip the fold that killed right ctrl."""
+    from pynput import keyboard
+
+    listener._listener = keyboard.Listener()
+    return listener
+
+
+def test_right_ctrl_toggles_through_the_real_normalisation():
+    events = _Events()
+    listener = _with_real_normalisation(
+        HotkeyListener(hotkey="ctrl_r", mode="toggle", on_start=events.start, on_stop=events.stop)
+    )
+    listener.handle_press(Key.ctrl_r)
+    listener.handle_release(Key.ctrl_r)
+    assert (events.starts, events.stops) == (1, 0)
+    listener.handle_press(Key.ctrl_r)
+    listener.handle_release(Key.ctrl_r)
+    assert (events.starts, events.stops) == (1, 1)
+
+
+def test_right_ctrl_holds_through_the_real_normalisation():
+    events = _Events()
+    listener = _with_real_normalisation(
+        HotkeyListener(hotkey="ctrl_r", mode="hold", on_start=events.start, on_stop=events.stop)
+    )
+    listener.handle_press(Key.ctrl_r)
+    assert (events.starts, events.stops) == (1, 0)
+    listener.handle_release(Key.ctrl_r)
+    assert (events.starts, events.stops) == (1, 1)
+
+
+def test_left_ctrl_leaves_a_right_ctrl_hotkey_alone():
+    events = _Events()
+    listener = _with_real_normalisation(
+        HotkeyListener(hotkey="ctrl_r", mode="toggle", on_start=events.start, on_stop=events.stop)
+    )
+    listener.handle_press(Key.ctrl_l)
+    listener.handle_release(Key.ctrl_l)
+    assert (events.starts, events.stops) == (0, 0)
+
+
+def test_a_generic_modifier_name_accepts_either_side():
+    # Toggle mode, so the second tap switches instead of double-tap locking.
+    events = _Events()
+    listener = _with_real_normalisation(
+        HotkeyListener(hotkey="ctrl", mode="toggle", on_start=events.start, on_stop=events.stop)
+    )
+    listener.handle_press(Key.ctrl_r)
+    listener.handle_release(Key.ctrl_r)
+    assert (events.starts, events.stops) == (1, 0)
+    listener.handle_press(Key.ctrl_l)
+    listener.handle_release(Key.ctrl_l)
+    assert (events.starts, events.stops) == (1, 1)
+
+
+def test_the_generic_paste_binding_still_fires_from_sided_keys():
+    events = _Events()
+    fired = []
+    listener = _with_real_normalisation(
+        HotkeyListener(hotkey="insert", mode="toggle", on_start=events.start, on_stop=events.stop)
+    )
+    listener.add_binding("shift+alt+z", lambda: fired.append(True))
+    listener.handle_press(Key.shift_l)
+    listener.handle_press(Key.alt_r)
+    listener.handle_press(KeyCode.from_char("z"))
+    assert fired == [True]
+    listener.handle_release(KeyCode.from_char("z"))
+    listener.handle_release(Key.alt_r)
+    listener.handle_release(Key.shift_l)
+    listener.handle_press(Key.shift_l)
+    listener.handle_press(Key.alt_r)
+    listener.handle_press(KeyCode.from_char("z"))
+    assert fired == [True, True]  # unlatched by the release, so it fires again
+    assert events.starts == 0  # the binding never touched the dictation key
+
+
+def test_a_bare_key_code_from_the_picker_is_a_valid_hotkey():
+    # The picker saves "<vk>" for a key pynput cannot name. The settings
+    # must take it back, or Change key silently keeps the old key.
+    assert parse_hotkey("<163>") == frozenset({KeyCode.from_vk(163)})
+
+
+def test_the_picker_names_a_bare_key_code_when_it_can():
+    from mirabel_voice.picker import name_of
+
+    assert name_of(Key.ctrl_r) == "ctrl_r"
+    assert name_of(KeyCode.from_vk(163)) == "ctrl_r"
+    unnamed = max(k.value.vk for k in Key if getattr(k.value, "vk", None)) + 1
+    assert name_of(KeyCode.from_vk(unnamed)) == f"<{unnamed}>"
