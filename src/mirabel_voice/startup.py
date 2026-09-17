@@ -10,7 +10,9 @@ def set_enabled(enabled):
     root = Path(sys.executable).parent.parent
     launcher = root / 'Launch.ps1'
     if launcher.exists():
-        command = subprocess.list2cmdline(['powershell.exe', '-NoProfile', '-WindowStyle', 'Hidden', '-File', str(launcher)])
+        # Bypass is per process: the Windows default policy refuses the
+        # unsigned launch script, silently, under a hidden window.
+        command = subprocess.list2cmdline(['powershell.exe', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Hidden', '-File', str(launcher)])
     else:
         exe = str(Path(sys.executable).with_name('pythonw.exe')) if not getattr(sys, 'frozen', False) else sys.executable
         command = subprocess.list2cmdline([exe] + ([] if getattr(sys, 'frozen', False) else ['-m', 'mirabel_voice']))
