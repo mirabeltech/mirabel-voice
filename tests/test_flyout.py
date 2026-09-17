@@ -34,12 +34,17 @@ class FakeApp:
         self.state = "idle"
         self.last_text = ""
         self.hotkeys = []
+        self.modes = []
         self.suspended = 0
         self.resumed = 0
 
     def set_hotkey(self, key):
         self.hotkeys.append(key)
         self.config.hotkey = key
+
+    def set_mode(self, mode):
+        self.modes.append(mode)
+        self.config.mode = mode
 
     def suspend_hotkeys(self):
         self.suspended += 1
@@ -178,12 +183,12 @@ def test_clicking_open_controls_shows_the_card():
 
 def test_the_hint_says_tap_in_toggle_mode():
     config = SimpleNamespace(hotkey="insert", mode="toggle")
-    assert card.idle_hint(config) == "Tap insert to start and stop · Esc cancels"
+    assert card.idle_hint(config) == "Tap Insert to start and stop · Esc cancels"
 
 
 def test_the_hint_says_hold_in_hold_mode():
     config = SimpleNamespace(hotkey="f13", mode="hold")
-    assert card.idle_hint(config) == "Hold f13 to dictate · Esc cancels"
+    assert card.idle_hint(config) == "Hold F13 to dictate · Esc cancels"
 
 
 # --- the app side of the key swap ------------------------------------------
@@ -240,6 +245,74 @@ def test_set_hotkey_restarts_the_listener_with_the_new_key(monkeypatch, tmp_path
     assert not old.running
     assert app._listener is not old
     assert app._listener.hotkey == "scroll_lock"
+    assert app._listener.running
+
+
+def test_set_mode_restarts_the_listener_with_the_new_mode(monkeypatch, tmp_path):
+    from mirabel_voice.app import VoiceApp
+    from mirabel_voice.config import Config
+
+    monkeypatch.setenv("MIRABEL_VOICE_HOME", str(tmp_path))
+
+    class FakeListener:
+        def __init__(self, mode):
+            self.mode = mode
+            self.running = False
+
+        def start(self):
+            self.running = True
+
+        def stop(self):
+            self.running = False
+
+    made = []
+    config = Config(play_sounds=False)
+    app = VoiceApp.__new__(VoiceApp)
+    app.config = config
+    app.state = "idle"
+    app._on_state = None
+    app.on_status = None
+    app._listener = None
+    app._hotkeys_suspended = False
+    app._listener_lock = threading.Lock()
+    app._stopped = False
+    app._cancel_work = threading.Event()
+
+    def make():
+        listener = FakeListener(config.mode)
+        made.append(listener)
+        return listener
+
+    app._make_listener = make
+
+    # Not started yet: the swap saves the mode and starts nothing.
+    app.set_mode("hold")
+    assert config.mode == "hold"
+    assert made == []
+    assert Config.load().mode == "hold"
+
+    # Running: the swap rebuilds the listener with the new mode.
+    app._listener = make()
+    app._listener.start()
+    old = app._listener
+    app.set_mode("toggle")
+    assert not old.running
+    assert app._listener is not old
+    assert app._listener.mode == "toggle"
+    assert app._listener.running
+
+    # Suspended for a key capture: the capture keeps the keyboard. The
+    # resume that ends the capture builds from the saved mode.
+    app._listener.stop()
+    app._listener = None
+    app._hotkeys_suspended = True
+    before = len(made)
+    app.set_mode("hold")
+    assert len(made) == before
+    assert app._listener is None
+    assert app._hotkeys_suspended
+    app.resume_hotkeys()
+    assert app._listener.mode == "hold"
     assert app._listener.running
 
 
@@ -341,6 +414,42 @@ def test_capture_is_refused_while_a_recording_runs():
     assert not flyout._capturing
     assert flyout.app.suspended == 0
     assert hints  # the card said why
+
+
+def test_a_mode_switch_is_refused_while_a_recording_runs():
+    # Rebuilding the listener mid-recording would lose the press or the
+    # release the user is in the middle of.
+    flyout = card.Flyout(FakeOverlay(), FakeApp())
+    flyout.app.state = "recording"
+    hints, radio = [], []
+    flyout._mode_var = SimpleNamespace(get=lambda: "hold", set=radio.append)
+    flyout._widgets = {
+        "hint": SimpleNamespace(configure=lambda **kwargs: hints.append(kwargs)),
+    }
+    flyout._toggle_mode()
+    assert flyout.app.modes == []
+    assert radio == ["toggle"]  # the radio snaps back to the saved mode
+    assert hints  # the card said why
+
+
+def test_a_mode_switch_reaches_the_app_and_a_refusal_reverts_the_radio():
+    flyout = card.Flyout(FakeOverlay(), FakeApp())
+    hints, radio = [], []
+    flyout._mode_var = SimpleNamespace(get=lambda: "hold", set=radio.append)
+    flyout._widgets = {
+        "hint": SimpleNamespace(configure=lambda **kwargs: hints.append(kwargs)),
+    }
+    flyout._toggle_mode()
+    assert flyout.app.modes == ["hold"]
+    assert radio == [] and hints == []
+
+    def refuse(mode):
+        raise ValueError("Invalid mode")
+
+    flyout.app.set_mode = refuse
+    flyout._toggle_mode()
+    assert radio == ["hold"]  # back to what the app still has
+    assert hints and "Could not change dictation mode." in hints[-1]["text"]
 
 
 def test_a_dead_card_still_gives_the_keyboard_back():
@@ -509,13 +618,13 @@ def test_settings_controls_and_focus_loss_do_not_close_native_window(monkeypatch
         flyout._widgets["change"].invoke()
         assert flyout._capturing
         root.update_idletasks()
-        assert flyout._widgets["key_help"].winfo_ismapped()
+        assert flyout._widgets["key_help"].cget("text") == card.CAPTURE_HELP
         assert str(flyout._widgets["change"].cget("state")) == "disabled"
         flyout._end_capture("f13")
         assert flyout._widgets["key"].cget("text") == "F13"
         assert flyout._widgets["change"].cget("text") == "Change key…"
         assert str(flyout._widgets["change"].cget("state")) == "normal"
-        assert not flyout._widgets["key_help"].winfo_ismapped()
+        assert flyout._widgets["key_help"].cget("text") == "Your dictation key is now F13."
         language = flyout._widgets["language"]
         chosen_code, chosen_label = LANGUAGES[-1]
         language.set(chosen_label)
@@ -610,3 +719,44 @@ def test_first_settings_open_is_remembered_without_a_setup_step(tmp_path):
     assert Config.load(target).onboarding_complete
     flyout._remember_settings_opened()
     assert saves == [True]
+
+
+# --- the key is named the way people say it --------------------------------
+
+
+def test_keys_get_the_names_people_use():
+    assert card.friendly_key_name("ctrl_r") == "Right Ctrl"
+    assert card.friendly_key_name("insert") == "Insert"
+    assert card.friendly_key_name("scroll_lock") == "Scroll Lock"
+    assert card.friendly_key_name("f13") == "F13"
+    assert card.friendly_key_name("ctrl_r+alt_r") == "Right Ctrl + Right Alt"
+    assert card.friendly_key_name("<163>") == "Key 163"
+    assert card.friendly_key_name("z") == "Z"
+
+
+def test_the_caption_reports_how_the_capture_ended():
+    flyout = capture_flyout()
+    flyout._end_capture("ctrl_r")
+    assert flyout._key_outcome == "Your dictation key is now Right Ctrl."
+    assert flyout._key_help_text() == "Your dictation key is now Right Ctrl."
+
+    flyout = capture_flyout()
+    flyout._end_capture(None)
+    assert flyout._key_outcome == "No key was chosen. Your dictation key is still Insert."
+
+    flyout = capture_flyout()
+
+    def refuse(key):
+        raise ValueError("not a key")
+
+    flyout.app.set_hotkey = refuse
+    flyout._end_capture("<9999>")
+    assert flyout._key_outcome == "That key can't be used. Your dictation key is still Insert."
+    assert flyout.app.resumed == 1
+
+
+def test_the_caption_gives_advice_when_nothing_is_happening():
+    flyout = card.Flyout(FakeOverlay(), FakeApp())
+    assert flyout._key_help_text() == card.KEY_NOTE
+    flyout._capturing = True
+    assert flyout._key_help_text() == card.CAPTURE_HELP

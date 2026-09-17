@@ -60,6 +60,9 @@ def parse_hotkey(spec: str):  # noqa: ANN201 - returns a frozenset of pynput key
             keys.add(getattr(Key, name))
         elif len(name) == 1:
             keys.add(KeyCode.from_char(name))
+        elif name.startswith("<") and name.endswith(">") and name[1:-1].isdigit():
+            # The picker saves a key pynput has no name for as "<vk>".
+            keys.add(KeyCode.from_vk(int(name[1:-1])))
         else:
             raise UnknownHotkeyError(
                 f"'{name}' is not a key name. Use a name such as ctrl_r, "
@@ -96,6 +99,28 @@ def esc_id():  # noqa: ANN201
     from pynput.keyboard import Key
 
     return key_id(Key.esc)
+
+
+def generic_modifier_ids() -> dict:
+    """Map each sided modifier id to the id of its generic name.
+
+    A settings file may say "ctrl_r" (that key only) or "ctrl" (either
+    side). The keyboard always reports the side it saw, so a match must
+    accept a sided press for a generic name, and only that side for a
+    sided name.
+    """
+    from pynput.keyboard import Key
+
+    table = {}
+    for generic, sides in (
+        (Key.ctrl, (Key.ctrl_l, Key.ctrl_r)),
+        (Key.shift, (Key.shift_l, Key.shift_r)),
+        (Key.alt, (Key.alt_l, Key.alt_r, getattr(Key, "alt_gr", Key.alt_r))),
+        (Key.cmd, (Key.cmd_l, Key.cmd_r)),
+    ):
+        for side in sides:
+            table[key_id(side)] = key_id(generic)
+    return table
 
 
 def key_is_down(resolved):  # noqa: ANN001, ANN201
@@ -161,6 +186,7 @@ class HotkeyListener:
         self._last_tap_release = float("-inf")
         self._bindings: list[dict] = []
         self._pressed: set = set()
+        self._generic = generic_modifier_ids()
         self._listener = None
         # The hook thread and the watchdog both touch the key memory.
         self._memory_lock = threading.Lock()
@@ -194,7 +220,16 @@ class HotkeyListener:
         return self._locked
 
     def _canonical(self, key):  # noqa: ANN001, ANN202
-        """Return the key in the form that matches the parsed hotkey."""
+        """Return the key in the form that matches the parsed hotkey.
+
+        A sided modifier keeps its side. pynput's canonical form folds
+        right ctrl into plain ctrl, and a hotkey saved as "ctrl_r" then
+        never matched a single press. The match helpers below accept a
+        sided press for a generic name, so "shift+alt+z" still works.
+        """
+        specific = key_id(key)
+        if specific in self._generic:
+            return specific
         resolved = key
         if self._listener is not None:
             try:
@@ -202,6 +237,16 @@ class HotkeyListener:
             except Exception:  # noqa: BLE001 - some keys have no canonical form
                 resolved = key
         return key_id(resolved)
+
+    def _names(self, resolved, wanted) -> bool:  # noqa: ANN001
+        """Return True when the pressed key satisfies one of the wanted ids."""
+        return resolved in wanted or self._generic.get(resolved) in wanted
+
+    def _covers(self, wanted, held) -> bool:  # noqa: ANN001
+        """Return True when every wanted id is satisfied by the held keys."""
+        satisfied = set(held)
+        satisfied.update(self._generic[h] for h in held if h in self._generic)
+        return set(wanted) <= satisfied
 
     def handle_press(self, key) -> None:  # noqa: ANN001
         """Process one key-down event."""
@@ -213,13 +258,13 @@ class HotkeyListener:
         if resolved not in self._pressed:
             self._pressed.add(resolved)
             self._fire_bindings()
-        if resolved not in self.keys:
+        if not self._names(resolved, self.keys):
             self._handle_other_key(resolved)
             return
         if resolved in self._down:
             return  # Windows repeats a held key. Ignore the repeats.
         self._down.add(resolved)
-        if self._down >= set(self.keys):
+        if self._covers(self.keys, self._down):
             self._engage()
 
     def handle_release(self, key) -> None:  # noqa: ANN001
@@ -231,11 +276,11 @@ class HotkeyListener:
         """Apply one key-up, given in comparable form. Hold the lock."""
         self._pressed.discard(resolved)
         for binding in self._bindings:
-            if resolved in binding["keys"]:
+            if self._names(resolved, binding["keys"]):
                 binding["latched"] = False
-        if resolved not in self.keys:
+        if not self._names(resolved, self.keys):
             return
-        was_complete = self._down >= set(self.keys)
+        was_complete = self._covers(self.keys, self._down)
         self._down.discard(resolved)
         if self.mode != MODE_HOLD or not was_complete or not self._active:
             return
@@ -249,7 +294,7 @@ class HotkeyListener:
     def _fire_bindings(self) -> None:
         """Run the callback of every extra combination that is now down."""
         for binding in self._bindings:
-            if binding["latched"] or not binding["keys"] <= self._pressed:
+            if binding["latched"] or not self._covers(binding["keys"], self._pressed):
                 continue
             binding["latched"] = True
             self._safe(binding["callback"])

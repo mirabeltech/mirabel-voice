@@ -271,6 +271,36 @@ class VoiceApp:
         log.info("The dictation key is now %s.", key)
         self._set_state(self.state, f"Dictation key: {key}.")
 
+    def set_mode(self, mode: str) -> None:
+        """Switch between toggle and hold dictation modes.
+
+        Toggle mode: press to start, press again to stop.
+        Hold mode: hold the key to speak, release to stop.
+
+        The listener parses its mode at start, so the swap rebuilds it.
+        An invalid mode leaves the old one in place. Suspended hotkeys
+        stay suspended: the key capture that suspended them still owns
+        the keyboard, and resume_hotkeys builds from the saved mode.
+
+        Args:
+            mode: Either "toggle" or "hold".
+
+        Raises:
+            ValueError: If mode is not "toggle" or "hold".
+        """
+        from .hotkey import MODE_HOLD, MODE_TOGGLE
+
+        if mode not in (MODE_TOGGLE, MODE_HOLD):
+            raise ValueError(f"Invalid mode: {mode}. Must be 'toggle' or 'hold'.")
+        self.config.mode = mode
+        self.config.save()
+        with self._listener_lock:
+            if not self._stopped and self._listener is not None:
+                self._stop_listener()
+                self._start_listener()
+        log.info("The dictation mode is now %s.", mode)
+        self._set_state(self.state, f"Dictation mode: {mode}.")
+
     def suspend_hotkeys(self) -> None:
         """Stop watching the keyboard, so another listener can have it.
 
