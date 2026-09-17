@@ -86,7 +86,11 @@ try {
         foreach ($folder in @([Environment]::GetFolderPath('Desktop'), [Environment]::GetFolderPath('Programs'))) {
             $link = $shell.CreateShortcut((Join-Path $folder 'Mirabel Voice.lnk'))
             $link.TargetPath = "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe"
-            $link.Arguments = '-NoProfile -WindowStyle Hidden -File "' + (Join-Path $target 'Launch.ps1') + '"'
+            # Bypass is per process. Without it a computer on the Windows default
+            # policy (Restricted) refuses the unsigned launch script, and the
+            # hidden window shows nothing: the app works once, from the
+            # installer's own session, then never again from a shortcut.
+            $link.Arguments = '-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "' + (Join-Path $target 'Launch.ps1') + '"'
             $link.WorkingDirectory = $target
             $link.IconLocation = (Join-Path $runtime 'MirabelVoice.ico') + ',0'
             $link.Save()
@@ -102,7 +106,7 @@ try {
         $version = (Get-Content (Join-Path $runtime 'Lib\site-packages\mirabel_voice\_version.txt') -Raw).Trim()
         New-ItemProperty $reg DisplayName -Value 'Mirabel Voice' -Force | Out-Null
         New-ItemProperty $reg DisplayVersion -Value $version -Force | Out-Null
-        New-ItemProperty $reg UninstallString -Value ('powershell.exe -NoProfile -File "' + (Join-Path $target 'Uninstall.ps1') + '"') -Force | Out-Null
+        New-ItemProperty $reg UninstallString -Value ('powershell.exe -NoProfile -ExecutionPolicy Bypass -File "' + (Join-Path $target 'Uninstall.ps1') + '"') -Force | Out-Null
     }
     Write-Host 'Installed. Start Mirabel Voice from the Start menu. Your settings have been kept.'
 } finally {

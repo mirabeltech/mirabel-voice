@@ -489,6 +489,13 @@ def main(argv: list[str] | None = None) -> int:
     if flyout is not None and not config.onboarding_complete:
         flyout.show()
     _start_update_watch(app, tray)
+    # Shortcuts written before 0.9.4 lack the execution-policy bypass and
+    # do nothing on a default Windows computer. Off the main thread: it
+    # runs PowerShell once and must not delay the tray.
+    import threading
+    from .startup import repair_launch_entries
+
+    threading.Thread(target=repair_launch_entries, name="mirabel-launch-repair", daemon=True).start()
     try:
         tray.run()
     finally:

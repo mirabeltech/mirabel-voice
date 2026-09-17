@@ -311,3 +311,19 @@ def test_fresh_install_defaults_to_english_and_insert(tmp_path, monkeypatch):
     assert saved.language == "en"
     assert saved.hotkey == "insert"
     assert not saved.onboarding_complete
+
+
+# --- every launch path must survive the Windows default execution policy ---
+
+
+def test_the_shortcuts_bypass_the_execution_policy_per_process():
+    """Restricted is the Windows default. Without a per-process bypass the
+    unsigned launch script is refused and the hidden window shows nothing,
+    so the app works once from the installer's session and never again."""
+    shortcut = ZIP_INSTALLER[ZIP_INSTALLER.index("$link.Arguments"):]
+    shortcut = shortcut[: shortcut.index("\n")]
+    assert "-ExecutionPolicy Bypass" in shortcut
+    assert "Launch.ps1" in shortcut
+    uninstall = ZIP_INSTALLER[ZIP_INSTALLER.index("UninstallString"):]
+    uninstall = uninstall[: uninstall.index("\n")]
+    assert "-ExecutionPolicy Bypass" in uninstall
