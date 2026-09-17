@@ -183,12 +183,12 @@ def test_clicking_open_controls_shows_the_card():
 
 def test_the_hint_says_tap_in_toggle_mode():
     config = SimpleNamespace(hotkey="insert", mode="toggle")
-    assert card.idle_hint(config) == "Tap insert to start and stop · Esc cancels"
+    assert card.idle_hint(config) == "Tap Insert to start and stop · Esc cancels"
 
 
 def test_the_hint_says_hold_in_hold_mode():
     config = SimpleNamespace(hotkey="f13", mode="hold")
-    assert card.idle_hint(config) == "Hold f13 to dictate · Esc cancels"
+    assert card.idle_hint(config) == "Hold F13 to dictate · Esc cancels"
 
 
 # --- the app side of the key swap ------------------------------------------
@@ -618,13 +618,13 @@ def test_settings_controls_and_focus_loss_do_not_close_native_window(monkeypatch
         flyout._widgets["change"].invoke()
         assert flyout._capturing
         root.update_idletasks()
-        assert flyout._widgets["key_help"].winfo_ismapped()
+        assert flyout._widgets["key_help"].cget("text") == card.CAPTURE_HELP
         assert str(flyout._widgets["change"].cget("state")) == "disabled"
         flyout._end_capture("f13")
         assert flyout._widgets["key"].cget("text") == "F13"
         assert flyout._widgets["change"].cget("text") == "Change key…"
         assert str(flyout._widgets["change"].cget("state")) == "normal"
-        assert not flyout._widgets["key_help"].winfo_ismapped()
+        assert flyout._widgets["key_help"].cget("text") == "Your dictation key is now F13."
         language = flyout._widgets["language"]
         chosen_code, chosen_label = LANGUAGES[-1]
         language.set(chosen_label)
@@ -719,3 +719,44 @@ def test_first_settings_open_is_remembered_without_a_setup_step(tmp_path):
     assert Config.load(target).onboarding_complete
     flyout._remember_settings_opened()
     assert saves == [True]
+
+
+# --- the key is named the way people say it --------------------------------
+
+
+def test_keys_get_the_names_people_use():
+    assert card.friendly_key_name("ctrl_r") == "Right Ctrl"
+    assert card.friendly_key_name("insert") == "Insert"
+    assert card.friendly_key_name("scroll_lock") == "Scroll Lock"
+    assert card.friendly_key_name("f13") == "F13"
+    assert card.friendly_key_name("ctrl_r+alt_r") == "Right Ctrl + Right Alt"
+    assert card.friendly_key_name("<163>") == "Key 163"
+    assert card.friendly_key_name("z") == "Z"
+
+
+def test_the_caption_reports_how_the_capture_ended():
+    flyout = capture_flyout()
+    flyout._end_capture("ctrl_r")
+    assert flyout._key_outcome == "Your dictation key is now Right Ctrl."
+    assert flyout._key_help_text() == "Your dictation key is now Right Ctrl."
+
+    flyout = capture_flyout()
+    flyout._end_capture(None)
+    assert flyout._key_outcome == "No key was chosen. Your dictation key is still Insert."
+
+    flyout = capture_flyout()
+
+    def refuse(key):
+        raise ValueError("not a key")
+
+    flyout.app.set_hotkey = refuse
+    flyout._end_capture("<9999>")
+    assert flyout._key_outcome == "That key can't be used. Your dictation key is still Insert."
+    assert flyout.app.resumed == 1
+
+
+def test_the_caption_gives_advice_when_nothing_is_happening():
+    flyout = card.Flyout(FakeOverlay(), FakeApp())
+    assert flyout._key_help_text() == card.KEY_NOTE
+    flyout._capturing = True
+    assert flyout._key_help_text() == card.CAPTURE_HELP

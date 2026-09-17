@@ -37,6 +37,44 @@ AUTO_DETECT = "Detect automatically"
 SYSTEM_DEFAULT = "System default"
 CAPTURE_PROMPT = "Press a key…"
 CHANGE_KEY = "Change key…"
+# The one line of advice under the key. It lives here, not in the console
+# picker, because the installed app never shows the console picker.
+KEY_NOTE = "Insert is the default. Right Ctrl is a good alternative, especially on a laptop."
+CAPTURE_HELP = "Press your new key. Esc cancels."
+
+# The names people use for the keys pynput names.
+KEY_NAMES = {
+    "ctrl": "Ctrl", "ctrl_l": "Left Ctrl", "ctrl_r": "Right Ctrl",
+    "alt": "Alt", "alt_l": "Left Alt", "alt_r": "Right Alt", "alt_gr": "AltGr",
+    "shift": "Shift", "shift_l": "Left Shift", "shift_r": "Right Shift",
+    "cmd": "Windows", "cmd_l": "Left Windows", "cmd_r": "Right Windows",
+    "win": "Windows", "windows": "Windows", "super": "Windows",
+    "scroll_lock": "Scroll Lock", "caps_lock": "Caps Lock", "num_lock": "Num Lock",
+    "print_screen": "Print Screen", "page_up": "Page Up", "page_down": "Page Down",
+    "space": "Space", "enter": "Enter", "tab": "Tab", "esc": "Esc",
+    "backspace": "Backspace", "delete": "Delete", "insert": "Insert",
+    "home": "Home", "end": "End", "pause": "Pause", "menu": "Menu",
+}
+
+
+def friendly_key_name(spec: str) -> str:
+    """Turn a settings key name into the name on the keycap.
+
+    "ctrl_r" is what the settings store; "Right Ctrl" is what the person
+    pressed. A combination keeps its parts, joined with plus signs.
+    """
+    parts = []
+    for part in spec.lower().split("+"):
+        name = part.strip()
+        if not name:
+            continue
+        if name in KEY_NAMES:
+            parts.append(KEY_NAMES[name])
+        elif name.startswith("<") and name.endswith(">"):
+            parts.append(f"Key {name[1:-1]}")
+        else:
+            parts.append(name.replace("_", " ").upper() if len(name) <= 3 else name.replace("_", " ").title())
+    return " + ".join(parts)
 
 
 def version_from_markers(site) -> str:  # noqa: ANN001 - a Path
@@ -101,9 +139,10 @@ def idle_hint(config) -> str:  # noqa: ANN001 - a Config
     """
     from .hotkey import MODE_TOGGLE
 
+    key = friendly_key_name(config.hotkey)
     if config.mode == MODE_TOGGLE:
-        return f"Tap {config.hotkey} to start and stop · Esc cancels"
-    return f"Hold {config.hotkey} to dictate · Esc cancels"
+        return f"Tap {key} to start and stop · Esc cancels"
+    return f"Hold {key} to dictate · Esc cancels"
 
 
 def language_code(name: str) -> str | None:
@@ -160,6 +199,8 @@ class Flyout:
         self._outside_listener = None
         self._outside_token = None
         self._mode_var = None
+        # What the last Change key ended with, shown until the card closes.
+        self._key_outcome: str | None = None
         # PortAudio's first enumeration costs hundreds of milliseconds.
         # Pay it here, in the background, so the first click on the tray
         # does not stall the Tk thread and the status pill with it.
@@ -235,6 +276,7 @@ class Flyout:
 
     def _hide(self) -> None:
         self._stop_outside_clicks()
+        self._key_outcome = None
         if self._capturing:
             self._cancel_capture()
         if self._top is None:
@@ -542,10 +584,9 @@ class Flyout:
         w["key"].pack(pady=(0, self._px(2)))
         w["change"] = action(shortcut, CHANGE_KEY, self._begin_capture, icon="edit")
         w["change"].master.pack(side="right")
-        w["key_help"] = label(preferences, text="Press your new key. Esc cancels.",
-                              font=caption, fg=accent, justify="left")
+        w["key_help"] = label(preferences, text=KEY_NOTE, font=caption, fg=pal.hint,
+                              justify="left", wraplength=self._px(296))
         w["key_help"].grid(row=1, column=0, columnspan=2, sticky="w", pady=(self._px(7), 0))
-        w["key_help"].grid_remove()
         label(preferences, text="Dictation mode", font=strong).grid(row=2, column=0, sticky="w", padx=(0, self._px(14)), pady=(self._px(12), 0))
         mode_frame = tk.Frame(preferences, bg=section_bg)
         mode_frame.grid(row=2, column=1, sticky="e", pady=(self._px(12), 0))
@@ -768,7 +809,15 @@ class Flyout:
         return SYSTEM_DEFAULT
 
     def _key_label(self) -> str:
-        return self.app.config.hotkey.replace("_", " ").replace("+", " + ").title()
+        return friendly_key_name(self.app.config.hotkey)
+
+    def _key_help_text(self) -> str:
+        """The caption under the key: the prompt, the outcome, or the advice."""
+        if self._capturing:
+            return CAPTURE_HELP
+        if self._key_outcome:
+            return self._key_outcome
+        return KEY_NOTE
 
     def _show_state(self) -> None:
         """The status row: dot colour, state word, and the key hint."""
@@ -787,10 +836,7 @@ class Flyout:
         if "key" in w:
             w["key"].configure(text=self._key_label())
         if "key_help" in w:
-            if self._capturing:
-                w["key_help"].grid()
-            else:
-                w["key_help"].grid_remove()
+            w["key_help"].configure(text=self._key_help_text())
         w["dot"].delete("all")
         size = self._px(10)
         w["dot"].create_oval(
@@ -1008,6 +1054,7 @@ class Flyout:
             self._widgets["hint"].configure(text="Finish dictating first.")
             return
         self._capturing = True
+        self._key_outcome = None
         self.app.suspend_hotkeys()
         self._widgets["change"].configure(text=CAPTURE_PROMPT, state="disabled")
         self._show_state()
@@ -1093,14 +1140,18 @@ class Flyout:
             return  # already ended by an earlier delivery
         self._capturing = False
         self._capture_listener = None
+        old_key = friendly_key_name(self.app.config.hotkey)
         if label is None:
             self.app.resume_hotkeys()
+            self._key_outcome = f"No key was chosen. Your dictation key is still {old_key}."
         else:
             try:
                 self.app.set_hotkey(label)
+                self._key_outcome = f"Your dictation key is now {friendly_key_name(label)}."
             except Exception:  # noqa: BLE001 - a refused key keeps the old one
                 log.exception("pynput refused the key name.")
                 self.app.resume_hotkeys()
+                self._key_outcome = f"That key can't be used. Your dictation key is still {old_key}."
         change = self._widgets.get("change")
         if change is not None:
             change.configure(text=CHANGE_KEY, state="normal")
