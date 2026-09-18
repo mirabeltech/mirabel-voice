@@ -10,7 +10,7 @@ The model list includes the configured GPT-4o transcription models, whisper-1, a
 
 Optional per-person limits use a **shared DynamoDB atomic counter**, not a separate count in each Lambda container. Configure both `MIRABEL_RATE_LIMIT_TABLE` and `MIRABEL_REQUESTS_PER_MINUTE`; deployments preserve existing values. Missing both leaves request validation enabled but **does not enforce a per-person rate limit**. Half a configuration prevents startup. Exceeding a configured budget returns 429; a counter outage returns 503 before contacting a provider.
 
-The table needs string partition key `pk` and TTL attribute `expires`. Grant only `dynamodb:UpdateItem` on that table to the relay role. Keys contain a hash of authenticated identity plus minute, never the credential. Each transcription and cleanup is a separate request. This fixed-minute budget limits bursts within a minute; it is not a monthly spending cap. Table/alert resources may have costs, so provision them only after the owner agrees thresholds and spending.
+The table needs string partition key `pk` and TTL attribute `expires`. Grant only `dynamodb:UpdateItem` on that table to the relay role. The spending monitor keeps its monthly ledger in the same table under `spend-ledger#` keys; its role can reach only those keys. Keys contain a hash of authenticated identity plus minute, never the credential. Each transcription and cleanup is a separate request. This fixed-minute budget limits bursts within a minute; it is not a monthly spending cap. Table/alert resources may have costs, so provision them only after the owner agrees thresholds and spending.
 
 ## Configured operating decision
 

@@ -1,6 +1,11 @@
 # Activate usage limits and monitoring
 
-## Daily spending cadence — September 15, 2026
+## Resumable spending ledger and plain-language alerts — September 18, 2026
+
+The daily spending check timed out on September 16 and 18 (84 s and 80 s against a 75 s scan limit), because every run rescanned the month from the 1st. It now keeps a running total and counts only new logs; see [How the spending check works](#how-the-spending-check-works). All 11 alarm descriptions now say in plain words what ALARM and OK mean; see [Responding to alerts](#responding-to-alerts).
+
+Deployed at 22:30 UTC by Tommy with a narrow script that changed only the monitor Lambda (code plus `SPEND_LEDGER_TABLE`), the monitor role's inline policy (ledger keys only), and the alarm descriptions. The previous state was saved privately under `build_probe/spend-ledger-backup-20260918T223029Z/`. The relay was not changed. After deployment, the health check passed. Two spending runs overlapped, because a second invocation started 61 seconds after the first. The first run counted 64 windows, then stopped at its time limit with its progress saved. The second run finished the remaining 8 windows. Month-to-date coverage reached 22:16 UTC. Each window's total is saved with a conditional write, so overlapping runs cannot count it twice. The alarm descriptions were read back and verified. `mirabel-voice-spend-monitor` stays in ALARM until that day's 20:46 UTC failure leaves its 24-hour window, which should be after the next daily run on September 19.
+
 
 At Tommy's request, the live spending rule was changed from `rate(1 hour)` to
 `rate(1 day)`. All seven spending-related alarms now use a 86,400-second period
@@ -41,11 +46,39 @@ The scheduled monitor runs in AWS independently of Tommy's computer:
 
 - Every 15 minutes, transcribe a short synthetic phrase through the public relay URL and ask the cleanup service for a known response. No employee recording is used. Two consecutive failed/missing checks trigger an alert; successful checks restore the alarm to OK and send recovery notification.
 - Combined synthetic check latency of 15 seconds or more in two consecutive periods raises a slow-service alert.
-- Once per day, calculate approximate AI spending for the current UTC calendar month from existing redacted usage logs. Include synthetic checks, deduplicate paginated events, and refuse to report a completed total when the scan exceeds its deadline or page budget.
+- Once per day, bring the month's approximate AI spending up to date from the redacted usage logs (see [How the spending check works](#how-the-spending-check-works)). Synthetic checks are included.
 - Raise alerts for failed/missing spending checks, unpriced requests, price data older than 30 days, sustained Lambda errors and throttling.
 - Budget alerts do not shut down dictation. No employee transcript, account identifier or credential appears in monitor output or alerts.
 
-Price checks and spending scans require periodic maintenance. The month-to-date scan is bounded to 500 pages and 75 seconds; if usage grows beyond that, migrate to an incremental cost ledger. CloudWatch alarms, Lambda, log reads, DynamoDB, SNS and synthetic provider requests can have running costs; check those against the infrastructure allowance after activation.
+Price checks require periodic maintenance. CloudWatch alarms, Lambda, log reads, DynamoDB, SNS and synthetic provider requests can have running costs; check those against the infrastructure allowance after activation.
+
+## Responding to alerts
+
+Every alert email names the alarm and repeats its one-line meaning. "ALARM" means the problem started and "OK" means it cleared. The number in "Reason for State Change" is the measured value, not dollars (except for spending warnings). The date in brackets is the *start* of the measured period and is written day/month/year.
+
+| Alarm | What it means | What to do |
+|---|---|---|
+| `health` | Test dictations through the relay failed twice in a row (every 15 minutes). Users are probably affected. | Try a dictation. Check the relay's logs in CloudWatch (`/aws/lambda/mirabel-voice-relay`) and the provider status pages. An OK email follows when it recovers. |
+| `slow` | Test dictations took 15 s or more twice in a row. | Usually a provider slowdown. Act only if users complain or it lasts hours. |
+| `spend-monitor` | The daily spending calculation did not finish. **Not an overspend.** Dictation is unaffected. Budget warnings use the last completed figure until it catches up. | Nothing, if the next day's run sends OK. It resumes where it stopped. If it stays in ALARM for several days, read the monitor's `"check": "spend"` log line (`/aws/lambda/mirabel-voice-monitor`): `stage` and `category` say where it stopped, and `covered_until` shows how far it got. |
+| `unpriced-usage` | Some requests this month could not be priced, so the estimate is low by an unknown amount. | Find the model or missing field and update `docs/pricing.json`. It clears at the start of the next month. |
+| `stale-prices` | `docs/pricing.json` was last checked over 30 days ago. | Compare it with the provider bills, update `checked`, and redeploy the monitor. |
+| `estimated-budget-N` | The month's estimate (AI usage plus the $20 AWS allowance) reached $N. A warning, not a cutoff. | Check the provider bills. Each threshold emails once per month. |
+| `relay-errors` | The relay had 3+ errors in 5 minutes. Some dictations failed. | Check the relay's logs. It clears on its own if the cause was brief. |
+| `relay-throttles` | AWS turned away 3+ requests in 5 minutes because 20 were already running. | If it recurs, raise `reserved_concurrency` in the private configuration and rerun setup. |
+
+## How the spending check works
+
+The monitor keeps a running total per UTC month in the rate-limit DynamoDB table, under keys starting with `spend-ledger#` (for example `spend-ledger#2026-09`). The monitor's role can reach only those keys. Each item holds the month's total, the unpriced-request count, and `covered`: the time up to which the logs have been counted.
+
+Each daily run counts the logs after `covered` in six-hour windows. Each window's cost is added in the same conditional write that advances `covered`, so a crash, a timeout, or two overlapping runs cannot count a window twice. When a run runs out of time, the finished windows are kept and the next run continues from there. The run stops reading logs 35 seconds before the Lambda timeout, so it has time to save progress and publish its metrics. Every spending metric, including `SpendFailed`, goes out in one request.
+
+- **Month end:** each run finishes last month before starting this month, so usage near midnight on the 1st is counted in the right month.
+- **Late logs:** only logs at least 15 minutes old are counted. A log that arrives in CloudWatch more than 15 minutes after its timestamp would be missed. Lambda logs normally arrive within seconds.
+- **Price changes** apply only to windows counted after the monitor is redeployed. To recount a month with new prices, delete its `spend-ledger#YYYY-MM` item. The next run rebuilds it from the 1st, as long as the relay's logs for that month still exist. Only the current month is recreated automatically.
+- **Partial totals:** a run that stops early still publishes the total so far. That figure is correct up to `covered_until`. It can be low but never high, so it cannot set off a spending warning early.
+
+A trial against the live logs on September 18, 2026 (read-only) built September from the 1st in 72 windows and 55 seconds. Its total matched a single full-month scan exactly ($0.8998, 7 unpriced). A normal daily run is about four windows.
 
 ## Administrator handoff
 

@@ -35,27 +35,191 @@ def test_estimate_uses_counts_and_marks_unknown_charges():
     assert monitor.estimate(line, PRICES) is None
 
 
-def test_calendar_month_scan_paginates_deduplicates_and_includes_smoke_checks():
-    event = dict(eventId="a", message='INFO usage '+json.dumps(dict(
-        route="transcribe", outcome="ok", model="whisper-1",
-        audio_seconds=60, token="Smoke test")))
+def usage(route="transcribe", seconds=60, **extra):
+    return "INFO usage " + json.dumps({"route": route, "outcome": "ok", "model": "whisper-1",
+                                       "audio_seconds": seconds, **extra})
+
+
+def test_window_scan_paginates_deduplicates_and_includes_smoke_checks():
+    event = dict(eventId="a", message=usage(token="Smoke test"))
     calls = []
     pages = iter([{"events":[event],"nextToken":"second"},{"events":[event]}])
     def read(**kwargs):
         calls.append(kwargs)
         return next(pages)
-    now=dt.datetime(2026,9,8,tzinfo=dt.timezone.utc)
-    total, unknown=monitor.spend(SimpleNamespace(filter_log_events=read), PRICES, now)
+    total, unknown, count = monitor.scan_window(SimpleNamespace(filter_log_events=read), PRICES,
+                                                1000, 2000, deadline=float("inf"))
     assert total == pytest.approx(.006)
-    assert unknown == 0
-    assert calls[0]["startTime"] == int(dt.datetime(2026,9,1,tzinfo=dt.timezone.utc).timestamp()*1000)
+    assert (unknown, count) == (0, 2)
+    assert (calls[0]["startTime"], calls[0]["endTime"]) == (1000, 1999)
     assert calls[1]["nextToken"] == "second"
 
 
-def test_incomplete_spend_scan_cannot_report_a_false_zero():
+def test_incomplete_window_cannot_report_a_false_zero():
     logs=SimpleNamespace(filter_log_events=lambda **kwargs:{"events":[],"nextToken":"stuck"})
     with pytest.raises(RuntimeError, match="did not complete"):
-        monitor.spend(logs, PRICES)
+        monitor.scan_window(logs, PRICES, 0, 1, deadline=float("inf"))
+
+
+class FakeLogs:
+    """FilterLogEvents over timestamped events, two per page, inclusive bounds."""
+    def __init__(self, events):
+        self.events = sorted(events, key=lambda e: e["timestamp"])
+        self.calls = 0
+
+    def filter_log_events(self, startTime, endTime, nextToken=None, **kwargs):
+        self.calls += 1
+        hits = [e for e in self.events if startTime <= e["timestamp"] <= endTime]
+        offset = int(nextToken or 0)
+        page = {"events": hits[offset:offset + 2]}
+        if offset + 2 < len(hits):
+            page["nextToken"] = str(offset + 2)
+        return page
+
+
+class FakeTable:
+    """Just enough DynamoDB for the ledger's conditional writes."""
+    class Conflict(Exception):
+        response = {"Error": {"Code": "ConditionalCheckFailedException"}}
+
+    def __init__(self):
+        self.items = {}
+
+    def get_item(self, TableName, Key, ConsistentRead):
+        item = self.items.get(Key["pk"]["S"])
+        return {"Item": json.loads(json.dumps(item))} if item else {}
+
+    def put_item(self, TableName, Item, ConditionExpression):
+        if Item["pk"]["S"] in self.items:
+            raise self.Conflict()
+        self.items[Item["pk"]["S"]] = Item
+
+    def update_item(self, TableName, Key, ExpressionAttributeValues, **kwargs):
+        item, values = self.items[Key["pk"]["S"]], ExpressionAttributeValues
+        if item["covered"]["N"] != values[":start"]["N"]:
+            raise self.Conflict()
+        item["covered"] = values[":end"]
+        item["total"] = {"N": str(float(item["total"]["N"]) + float(values[":cost"]["N"]))}
+        item["unpriced"] = {"N": str(int(item["unpriced"]["N"]) + int(values[":unpriced"]["N"]))}
+
+
+def at(*args):
+    return dt.datetime(*args, tzinfo=dt.timezone.utc)
+
+
+def logged(moment, n, message=None):
+    return dict(eventId=str(n), timestamp=monitor.ms(moment), message=message or usage())
+
+
+def run(logs, table, now, budget=float("inf")):
+    """One scheduled run; `budget` is how many log reads it has time for."""
+    progress = {"windows": 0, "pages": 0}
+    reads = iter(range(10**6))
+    clock = lambda: next(reads) if budget != float("inf") else 0
+    try:
+        monitor.spend(logs, monitor.Ledger(table, "t"), PRICES, now, budget, progress, clock)
+        return True
+    except TimeoutError:
+        return False
+
+
+def month(table, *args):
+    return monitor.Ledger(table, "t").get(at(*args))
+
+
+def test_interrupted_runs_resume_without_recounting():
+    events = [logged(at(2026, 9, 1) + dt.timedelta(hours=h, minutes=30), h) for h in range(40)]
+    table, logs = FakeTable(), FakeLogs(events)
+    now = at(2026, 9, 2, 20)
+    assert run(logs, table, now, budget=10) is False
+    partial = month(table, 2026, 9, 1)
+    assert 0 < partial["total"] < 40 * .006
+    reads = logs.calls
+    assert run(logs, table, now) is True
+    assert month(table, 2026, 9, 1)["total"] == pytest.approx(40 * .006)
+    # The second run starts where the first stopped rather than at the 1st.
+    fresh = FakeLogs(events)
+    assert run(fresh, FakeTable(), now) is True
+    assert logs.calls - reads < fresh.calls
+    assert run(logs, table, now) is True
+    assert month(table, 2026, 9, 1)["total"] == pytest.approx(40 * .006)
+
+
+def test_overlapping_runs_cannot_double_count():
+    table = FakeTable()
+    logs = FakeLogs([logged(at(2026, 9, 1, 0, 30), 1)])
+    ledger = monitor.Ledger(table, "t")
+    ledger.open(at(2026, 9, 1))
+    start = monitor.ms(at(2026, 9, 1))
+    assert ledger.commit(at(2026, 9, 1), start, start + monitor.WINDOW_MS, .006, 0)
+    assert not ledger.commit(at(2026, 9, 1), start, start + monitor.WINDOW_MS, .006, 0)
+    assert run(logs, table, at(2026, 9, 1, 3)) is True
+    assert month(table, 2026, 9, 1)["total"] == pytest.approx(.006)
+
+
+def test_month_rollover_finishes_last_month_first():
+    late = logged(at(2026, 9, 30, 23, 50), 1)
+    early = logged(at(2026, 10, 1, 0, 10), 2, usage(seconds=120))
+    table, logs = FakeTable(), FakeLogs([late, early])
+    assert run(logs, table, at(2026, 9, 30, 23, 25)) is True
+    assert month(table, 2026, 9, 1)["total"] == 0
+    assert run(logs, table, at(2026, 10, 1, 0, 25)) is True
+    # 00:10 is still settling, so October waits; September is complete.
+    assert month(table, 2026, 9, 1)["total"] == pytest.approx(.006)
+    assert month(table, 2026, 10, 1)["total"] == 0
+    assert run(logs, table, at(2026, 10, 2)) is True
+    assert month(table, 2026, 10, 1)["total"] == pytest.approx(.012)
+    assert month(table, 2026, 9, 1)["covered"] == monitor.ms(at(2026, 10, 1))
+
+
+def test_unpriced_usage_is_counted_separately():
+    table = FakeTable()
+    logs = FakeLogs([logged(at(2026, 9, 1, 1), 1, usage(outcome="timeout")),
+                     logged(at(2026, 9, 1, 2), 2, "INFO usage {not json")])
+    assert run(logs, table, at(2026, 9, 1, 5)) is True
+    assert month(table, 2026, 9, 1)["unpriced"] == 2
+    assert month(table, 2026, 9, 1)["total"] == 0
+
+
+def handler_run(monkeypatch, logs, table, remaining_ms=120_000):
+    published = []
+    cloudwatch = SimpleNamespace(put_metric_data=lambda **kwargs: published.append(kwargs["MetricData"]))
+    clients = {"logs": logs, "dynamodb": table, "cloudwatch": cloudwatch}
+    monkeypatch.setattr(monitor, "bounded", clients.__getitem__)
+    monkeypatch.setattr(monitor, "__file__", str(ROOT / "docs/pricing.json"))  # packaged beside it
+    monkeypatch.setenv("SPEND_LEDGER_TABLE", "t")
+    monkeypatch.setenv("AWS_RESERVE_USD", "20")
+    context = SimpleNamespace(get_remaining_time_in_millis=lambda: remaining_ms)
+    result = monitor.lambda_handler({"kind": "spend"}, context)
+    assert len(published) == 1, "every spending metric goes in one request"
+    return result, {m["MetricName"]: m["Value"] for m in published[0]}
+
+
+def test_caught_up_run_publishes_estimate_and_clears_failure(monkeypatch):
+    now = dt.datetime.now(dt.timezone.utc) - dt.timedelta(hours=1)
+    result, values = handler_run(monkeypatch, FakeLogs([logged(now, 1)]), FakeTable())
+    assert result == {"check": "spend", "ok": True}
+    assert values["SpendFailed"] == 0
+    assert values["AIEstimatedUSD"] == pytest.approx(.006)
+    assert values["EstimatedUSDWithAWSReserve"] == pytest.approx(20.006)
+
+
+def test_run_out_of_time_keeps_progress_and_flags_failure(monkeypatch, capsys):
+    result, values = handler_run(monkeypatch, FakeLogs([]), FakeTable(), remaining_ms=1_000)
+    assert result == {"check": "spend", "ok": False}
+    assert values["SpendFailed"] == 1
+    assert values["AIEstimatedUSD"] == 0
+    report = json.loads(capsys.readouterr().out)
+    assert (report["result"], report["category"], report["stage"]) == ("incomplete", "TimeoutError", "scan")
+
+
+def test_ledger_outage_still_flags_failure(monkeypatch):
+    class Down:
+        def __getattr__(self, name):
+            raise RuntimeError("unavailable")
+    result, values = handler_run(monkeypatch, FakeLogs([]), Down())
+    assert result["ok"] is False
+    assert values == {"SpendFailed": 1}
 
 
 def test_synthetic_check_requires_both_transcription_and_cleanup():
@@ -92,6 +256,22 @@ def test_daily_spend_alarms_allow_daily_samples_and_report_one_failed_day():
     assert failed["TreatMissingData"] == "breaching"
     health = next(a for a in alarms if a["MetricName"] == "HealthFailed")
     assert health["Period"] == 900
+
+
+def test_every_alarm_explains_itself_in_plain_language():
+    alarms = setup.alarms(CONFIG, "test-topic")
+    descriptions = [a["AlarmDescription"] for a in alarms]
+    assert len(set(descriptions)) == len(alarms)
+    assert all("Responding to alerts" in d and len(d) <= 1024 for d in descriptions)
+    spending = next(a for a in alarms if a["MetricName"] == "SpendFailed")["AlarmDescription"]
+    assert "NOT an overspend" in spending
+    assert "$150 of the $200" in next(a for a in alarms if a["AlarmName"].endswith("-150"))["AlarmDescription"]
+
+
+def test_monitor_reaches_only_spending_ledger_keys():
+    access = setup.monitor_ledger_access("arn:aws:dynamodb:us-east-2:123:table/t")
+    assert set(access["Action"]) == {"dynamodb:GetItem", "dynamodb:PutItem", "dynamodb:UpdateItem"}
+    assert access["Condition"]["ForAllValues:StringLike"]["dynamodb:LeadingKeys"] == ["spend-ledger#*"]
 
 
 def test_preflight_reports_access_denial_without_mutations():
@@ -240,6 +420,11 @@ def test_apply_skip_budget_still_activates_limits_alarms_and_schedules(tmp_path,
                for c in clients["events"].put_rule.call_args_list if c.kwargs["State"] == "ENABLED"}
     assert enabled[setup.MONITOR + "-spend"] == "rate(1 day)"
     assert enabled[setup.MONITOR + "-health"] == "rate(15 minutes)"
+    role = next(c.kwargs for c in clients["iam"].put_role_policy.call_args_list
+                if c.kwargs["RoleName"] == setup.MONITOR + "-role")
+    assert "spend-ledger#*" in role["PolicyDocument"]
+    monitor_env = lam.create_function.call_args or lam.update_function_configuration.call_args
+    assert monitor_env.kwargs["Environment"]["Variables"]["SPEND_LEDGER_TABLE"] == setup.TABLE
 
 
 def test_permission_request_cannot_edit_operator_permissions_or_other_functions():
