@@ -101,3 +101,5 @@ At the owner's explicit request, a test was published to `mirabel-voice-alerts` 
 
 
 Activation acceptance is complete: normal dictation works, usage limits and scheduled monitoring are enabled, and the owner received the test alert through the one required confirmed subscription. The seven historical requests with unknown costs remain flagged; the spending target is not a hard cutoff.
+
+Owner maintenance decision: Surya Prakash is backup owner. Provider-key rotation is annual, with replacement keys stored in AWS; automatic rotation was not configured. Provider-quota review is explicitly deferred for current use, and actual provider limits have not been verified or changed. A separate live rotation/revocation acceptance exercise is not a release requirement. These decisions close #73; remaining release acceptance is tracked in #74 under parent #63.
