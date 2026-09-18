@@ -266,6 +266,9 @@ def test_every_alarm_explains_itself_in_plain_language():
     spending = next(a for a in alarms if a["MetricName"] == "SpendFailed")["AlarmDescription"]
     assert "NOT an overspend" in spending
     assert "$150 of the $200" in next(a for a in alarms if a["AlarmName"].endswith("-150"))["AlarmDescription"]
+    throttles = setup.alarms(dict(CONFIG, reserved_concurrency=35), "t")[-1]
+    assert throttles["AlarmName"].endswith("relay-throttles") and "because 35 were" in throttles["AlarmDescription"]
+    assert all("two 5-minute periods" in a["AlarmDescription"] for a in alarms if a["Period"] == 300)
 
 
 def test_monitor_reaches_only_spending_ledger_keys():
