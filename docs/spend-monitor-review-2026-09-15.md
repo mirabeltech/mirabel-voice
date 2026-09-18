@@ -1,5 +1,7 @@
 # Spending monitor reliability review — September 15, 2026
 
+> **Update, September 18, 2026:** findings 1–4 and 6 are addressed by the resumable spending ledger described in [How the spending check works](service-operations-setup.md#how-the-spending-check-works). Finding 5 is partly addressed: each run now logs its stage, windows, pages, elapsed time and `covered_until`, but not per-call API latency or SDK retry counts. The review below describes the code as it was on September 15.
+
 ## Conclusion
 
 Use resumable processing of bounded time windows with durable, deduplicated usage records and explicit freshness/completeness tracking. Increasing the timeout alone does not address the verified recovery and month-boundary problems. First add safe scan diagnostics and explicit network/retry budgets so live measurements can size the worker and distinguish slow API responses from excess pagination.

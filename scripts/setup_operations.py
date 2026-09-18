@@ -72,12 +72,45 @@ def required_permissions(account, region):
     ])
 
 
+RUNBOOK = "Runbook: 'Responding to alerts' in docs/service-operations-setup.md."
+MEANINGS = {
+    "health": "Dictation may be down. ALARM: the 15-minute test dictation through the relay "
+              "failed or did not run twice in a row, so users are probably seeing errors. "
+              "OK: test dictations work again.",
+    "slow": "Dictation is slow. ALARM: the test dictation took 15 seconds or longer twice in a "
+            "row (normally under 10). Usually a provider slowdown; act only if users complain or "
+            "it lasts hours. OK: speed is back to normal.",
+    "spend-monitor": "Spending figure out of date. NOT an overspend warning; dictation is "
+                     "unaffected. ALARM: the daily spending calculation did not finish, so the "
+                     "budget warnings are using an older figure. It resumes where it stopped on "
+                     "the next daily run. OK: the calculation caught up.",
+    "unpriced-usage": "Spending estimate is too low. ALARM: some requests this month could not "
+                      "be priced (unknown model or missing usage counts), so they are not in "
+                      "the spending figure. Not an outage. OK: this month has no unpriced requests.",
+    "stale-prices": "Price list needs review. ALARM: the prices used to estimate spending were "
+                    "last checked over 30 days ago. Compare them with the provider bills and "
+                    "update docs/pricing.json. No OK email is sent.",
+    "relay-errors": "Some dictations failed. ALARM: the relay had 3 or more errors in 5 minutes. "
+                    "OK: no errors in the last 5 minutes.",
+    "relay-throttles": "Relay at capacity. ALARM: AWS turned away 3 or more dictation requests in "
+                       "5 minutes because 20 were already in progress; those dictations failed. "
+                       "OK: nothing turned away in the last 5 minutes.",
+}
+
+
+def budget_meaning(threshold, config):
+    return (f"Spending warning: ${threshold} of the ${config['monthly_target_usd']} monthly target. "
+            f"The estimate (AI usage plus a ${config['aws_reserve_usd']} AWS allowance) reached "
+            f"${threshold} this month. A warning, not a cutoff: dictation keeps working. "
+            "Check the provider bills for actual charges. No OK email is sent; it resets next month.")
+
+
 def alarms(config, topic):
     def alarm(suffix, metric, threshold, *, namespace=NAMESPACE, period=900,
               evaluation=2, datapoints=2, stat="Maximum", missing="breaching",
-              recovery=True, dimensions=None):
+              recovery=True, dimensions=None, meaning=None):
         return dict(AlarmName="mirabel-voice-" + suffix,
-            AlarmDescription="Mirabel Voice: " + suffix + ". See the operations runbook.",
+            AlarmDescription=(meaning or MEANINGS[suffix]) + " " + RUNBOOK,
             Namespace=namespace, MetricName=metric, Statistic=stat,
             Dimensions=dimensions or [], Period=period, EvaluationPeriods=evaluation,
             DatapointsToAlarm=datapoints, Threshold=threshold,
@@ -93,12 +126,19 @@ def alarms(config, topic):
     for threshold in config["warning_usd"]:
         out.append(alarm("estimated-budget-" + str(threshold), "EstimatedUSDWithAWSReserve",
                          threshold, period=86400, evaluation=1, datapoints=1,
-                         recovery=False, missing="notBreaching"))
+                         recovery=False, missing="notBreaching",
+                         meaning=budget_meaning(threshold, config)))
     dims = [{"Name": "FunctionName", "Value": FUNCTION}]
     for suffix, metric in [("relay-errors", "Errors"), ("relay-throttles", "Throttles")]:
         out.append(alarm(suffix, metric, 3, namespace="AWS/Lambda", period=300,
                          stat="Sum", missing="notBreaching", dimensions=dims))
     return out
+
+
+def monitor_ledger_access(table_arn):
+    """The spending ledger shares the rate-limit table but only its own keys."""
+    return allow(["dynamodb:GetItem", "dynamodb:PutItem", "dynamodb:UpdateItem"], table_arn,
+                 Condition={"ForAllValues:StringLike": {"dynamodb:LeadingKeys": ["spend-ledger#*"]}})
 
 
 def package_monitor(audio):
@@ -308,6 +348,7 @@ def apply(session, account, config, audio, backup_dir, *, skip_aws_budget=False)
         allow(["logs:FilterLogEvents"],f"arn:aws:logs:{region}:{account}:log-group:/aws/lambda/{FUNCTION}:*"),
         allow(["secretsmanager:GetSecretValue"],f"arn:aws:secretsmanager:{region}:{account}:secret:{token_secret}-*"),
         allow(["cloudwatch:PutMetricData"],"*",Condition={"StringEquals":{"cloudwatch:namespace":NAMESPACE}}),
+        monitor_ledger_access(table_arn),
     ])))
     logs = session.client("logs")
     try:
@@ -316,7 +357,8 @@ def apply(session, account, config, audio, backup_dir, *, skip_aws_budget=False)
         pass
     logs.put_retention_policy(logGroupName="/aws/lambda/"+MONITOR, retentionInDays=30)
     relay_url = lam.get_function_url_config(FunctionName=FUNCTION)["FunctionUrl"].rstrip("/")
-    monitor_env = {"RELAY_URL":relay_url,"TOKENS_SECRET":token_secret,"AWS_RESERVE_USD":str(config["aws_reserve_usd"])}
+    monitor_env = {"RELAY_URL":relay_url,"TOKENS_SECRET":token_secret,"AWS_RESERVE_USD":str(config["aws_reserve_usd"]),
+                   "SPEND_LEDGER_TABLE":TABLE}
     package = package_monitor(audio)
     try:
         lam.get_function(FunctionName=MONITOR)
