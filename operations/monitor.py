@@ -51,8 +51,9 @@ RELAY_LOGS = "/aws/lambda/mirabel-voice-relay"
 WINDOW_MS = 6 * 3_600_000
 # Only count logs at least this old, so each window is final when committed.
 SETTLE_MS = 15 * 60_000
-# Kept free after the last log read starts: one bounded read plus saving progress.
-RESERVE_MS = 35_000
+# Kept free after the last log read starts: that read (two 13 s attempts at most),
+# then saving the window, reading the total and publishing (each also bounded).
+RESERVE_MS = 45_000
 WINDOW_PAGES = 500
 
 

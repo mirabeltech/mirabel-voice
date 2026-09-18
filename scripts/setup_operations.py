@@ -82,20 +82,23 @@ MEANINGS = {
             "it lasts hours. OK: speed is back to normal.",
     "spend-monitor": "Spending figure out of date. NOT an overspend warning; dictation is "
                      "unaffected. ALARM: the daily spending calculation did not finish, so the "
-                     "budget warnings are using an older figure. It resumes where it stopped on "
-                     "the next daily run. OK: the calculation caught up.",
+                     "spending figure covers only part of the month so far. It resumes where it "
+                     "stopped on the next daily run. OK: the calculation caught up.",
     "unpriced-usage": "Spending estimate is too low. ALARM: some requests this month could not "
                       "be priced (unknown model or missing usage counts), so they are not in "
                       "the spending figure. Not an outage. OK: this month has no unpriced requests.",
     "stale-prices": "Price list needs review. ALARM: the prices used to estimate spending were "
                     "last checked over 30 days ago. Compare them with the provider bills and "
                     "update docs/pricing.json. No OK email is sent.",
-    "relay-errors": "Some dictations failed. ALARM: the relay had 3 or more errors in 5 minutes. "
-                    "OK: no errors in the last 5 minutes.",
-    "relay-throttles": "Relay at capacity. ALARM: AWS turned away 3 or more dictation requests in "
-                       "5 minutes because 20 were already in progress; those dictations failed. "
-                       "OK: nothing turned away in the last 5 minutes.",
+    "relay-errors": "Some dictations failed. ALARM: the relay had 3 or more errors in each of two "
+                    "5-minute periods in a row. OK: fewer than 3 errors in the latest 5 minutes.",
 }
+
+
+def throttle_meaning(config):
+    return ("Relay at capacity. ALARM: in each of two 5-minute periods in a row, AWS turned away 3 "
+            f"or more dictation requests because {config['reserved_concurrency']} were already in "
+            "progress; those dictations failed. OK: fewer than 3 turned away in the latest 5 minutes.")
 
 
 def budget_meaning(threshold, config):
@@ -129,9 +132,10 @@ def alarms(config, topic):
                          recovery=False, missing="notBreaching",
                          meaning=budget_meaning(threshold, config)))
     dims = [{"Name": "FunctionName", "Value": FUNCTION}]
-    for suffix, metric in [("relay-errors", "Errors"), ("relay-throttles", "Throttles")]:
+    for suffix, metric, meaning in [("relay-errors", "Errors", None),
+                                    ("relay-throttles", "Throttles", throttle_meaning(config))]:
         out.append(alarm(suffix, metric, 3, namespace="AWS/Lambda", period=300,
-                         stat="Sum", missing="notBreaching", dimensions=dims))
+                         stat="Sum", missing="notBreaching", dimensions=dims, meaning=meaning))
     return out
 
 
