@@ -86,13 +86,13 @@ def alarms(config, topic):
     out = [
         alarm("health", "HealthFailed", 1),
         alarm("slow", "SyntheticLatency", 15000, missing="notBreaching"),
-        alarm("spend-monitor", "SpendFailed", 1, period=3600),
-        alarm("unpriced-usage", "UnpricedRequests", 1, period=3600),
-        alarm("stale-prices", "PricingAgeDays", 30, period=3600, recovery=False),
+        alarm("spend-monitor", "SpendFailed", 1, period=86400, evaluation=1, datapoints=1),
+        alarm("unpriced-usage", "UnpricedRequests", 1, period=86400, evaluation=1, datapoints=1),
+        alarm("stale-prices", "PricingAgeDays", 30, period=86400, evaluation=1, datapoints=1, recovery=False),
     ]
     for threshold in config["warning_usd"]:
         out.append(alarm("estimated-budget-" + str(threshold), "EstimatedUSDWithAWSReserve",
-                         threshold, period=3600, evaluation=1, datapoints=1,
+                         threshold, period=86400, evaluation=1, datapoints=1,
                          recovery=False, missing="notBreaching"))
     dims = [{"Name": "FunctionName", "Value": FUNCTION}]
     for suffix, metric in [("relay-errors", "Errors"), ("relay-throttles", "Throttles")]:
@@ -347,7 +347,7 @@ def apply(session, account, config, audio, backup_dir, *, skip_aws_budget=False)
             result = json.loads(response["Payload"].read())
             if response.get("FunctionError") or result.get("ok") is not True:
                 raise RuntimeError("Deployed monitor check failed: "+kind)
-        for kind, schedule in (("health","rate(15 minutes)"),("spend","rate(1 hour)")):
+        for kind, schedule in (("health","rate(15 minutes)"),("spend","rate(1 day)")):
             name = MONITOR+"-"+kind
             rule = events.put_rule(Name=name,ScheduleExpression=schedule,State="DISABLED")["RuleArn"]
             try:
