@@ -81,6 +81,19 @@ def test_missing_checks_alarm_and_budget_alarms_do_not_claim_hard_cap():
     assert all(a["OKActions"] == [] for a in budgets)
 
 
+def test_daily_spend_alarms_allow_daily_samples_and_report_one_failed_day():
+    alarms = setup.alarms(CONFIG, "test-topic")
+    spending = [a for a in alarms if a["MetricName"] in {
+        "SpendFailed", "UnpricedRequests", "PricingAgeDays", "EstimatedUSDWithAWSReserve"}]
+    assert len(spending) == 7
+    assert all((a["Period"], a["EvaluationPeriods"], a["DatapointsToAlarm"])
+               == (86400, 1, 1) for a in spending)
+    failed = next(a for a in spending if a["MetricName"] == "SpendFailed")
+    assert failed["TreatMissingData"] == "breaching"
+    health = next(a for a in alarms if a["MetricName"] == "HealthFailed")
+    assert health["Period"] == 900
+
+
 def test_preflight_reports_access_denial_without_mutations():
     class Denied(Exception):
         response={"Error":{"Code":"AccessDenied"}}
@@ -223,6 +236,10 @@ def test_apply_skip_budget_still_activates_limits_alarms_and_schedules(tmp_path,
     assert clients["cloudwatch"].put_metric_alarm.call_count == 11
     assert [json.loads(c.kwargs["Payload"])["kind"] for c in lam.invoke.call_args_list] == ["health", "spend"]
     assert len([c for c in clients["events"].put_rule.call_args_list if c.kwargs["State"] == "ENABLED"]) == 2
+    enabled = {c.kwargs["Name"]: c.kwargs["ScheduleExpression"]
+               for c in clients["events"].put_rule.call_args_list if c.kwargs["State"] == "ENABLED"}
+    assert enabled[setup.MONITOR + "-spend"] == "rate(1 day)"
+    assert enabled[setup.MONITOR + "-health"] == "rate(15 minutes)"
 
 
 def test_permission_request_cannot_edit_operator_permissions_or_other_functions():

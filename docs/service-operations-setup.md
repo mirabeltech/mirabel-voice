@@ -1,5 +1,24 @@
 # Activate usage limits and monitoring
 
+## Daily spending cadence — September 15, 2026
+
+At Tommy's request, the live spending rule was changed from `rate(1 hour)` to
+`rate(1 day)`. All seven spending-related alarms now use a 86,400-second period
+with one evaluation period and one datapoint to alarm. Failed/missing checks
+remain alertable; spending estimates and warnings now have daily cadence.
+Health checks remain every 15 minutes.
+
+The live rule and all seven alarm configurations were read back and verified.
+The operations suite passes 28 tests. Previous rule/alarm settings were saved
+privately under `build_probe/daily-spend-backup-20260915T204439Z.json`.
+Only the schedule and alarm timing were updated; no Lambda deployment occurred.
+This reduces scan frequency but does not repair the full-month scan timeout or
+month-end accounting gaps documented in [the reliability review](spend-monitor-review-2026-09-15.md).
+Recovery was verified on September 17, 2026: the daily scan completed and
+`mirabel-voice-spend-monitor` moved from ALARM to OK at 20:47 UTC, sending the
+recovery email. `mirabel-voice-unpriced-usage` remains in ALARM for the seven
+historical unknown-cost requests, as intended.
+
 Status: **operations activated on September 10, 2026** with `--skip-aws-budget`. Live checks confirm the rate-limit table is active with TTL enabled, the relay is configured for 20 requests per person per minute and concurrency 20, and both monitoring schedules are enabled. One email subscription is confirmed, which the owner has accepted as sufficient; the other two may remain pending. The owner confirmed receipt of the SNS test alert; email delivery is verified. The existing account-wide billing budget remains unchanged and is a separate administrator follow-up that the owner does not consider a blocker.
 
 ## Agreed operating target
@@ -22,7 +41,7 @@ The scheduled monitor runs in AWS independently of Tommy's computer:
 
 - Every 15 minutes, transcribe a short synthetic phrase through the public relay URL and ask the cleanup service for a known response. No employee recording is used. Two consecutive failed/missing checks trigger an alert; successful checks restore the alarm to OK and send recovery notification.
 - Combined synthetic check latency of 15 seconds or more in two consecutive periods raises a slow-service alert.
-- Every hour, calculate approximate AI spending for the current UTC calendar month from existing redacted usage logs. Include synthetic checks, deduplicate paginated events, and refuse to report a completed total when the scan exceeds its deadline or page budget.
+- Once per day, calculate approximate AI spending for the current UTC calendar month from existing redacted usage logs. Include synthetic checks, deduplicate paginated events, and refuse to report a completed total when the scan exceeds its deadline or page budget.
 - Raise alerts for failed/missing spending checks, unpriced requests, price data older than 30 days, sustained Lambda errors and throttling.
 - Budget alerts do not shut down dictation. No employee transcript, account identifier or credential appears in monitor output or alerts.
 
