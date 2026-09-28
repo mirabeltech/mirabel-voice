@@ -91,6 +91,24 @@ def test_a_repaired_or_absent_entry_is_left_alone(monkeypatch, tmp_path):
     assert written["Mirabel Voice"] == good
 
 
+def test_start_with_windows_never_writes_a_long_path_prefix(monkeypatch, tmp_path):
+    # A copy started by the updater can see its own path as \\?\C:\...
+    # Windows PowerShell 5.1 cannot run a script from such a path.
+    written = {}
+    root = installed_app(monkeypatch, tmp_path, written)
+    monkeypatch.setattr(sys, "executable", "\\\\?\\" + str(root / "python" / "python.exe"))
+    startup.set_enabled(True)
+    assert written["Mirabel Voice"].endswith(f'-File "{root / "Launch.ps1"}"')
+
+
+def test_a_long_path_start_with_windows_entry_is_rewritten_on_start(monkeypatch, tmp_path):
+    written = {}
+    root = installed_app(monkeypatch, tmp_path, written)
+    written["Mirabel Voice"] = f'powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "\\\\?\\{root / "Launch.ps1"}"'
+    assert startup.repair_launch_entries(run=no_shortcuts) == ["Start with Windows"]
+    assert written["Mirabel Voice"].endswith(f'-File "{root / "Launch.ps1"}"')
+
+
 def test_a_developer_checkout_repairs_nothing(monkeypatch, tmp_path):
     calls = []
     monkeypatch.setattr(sys, "executable", str(tmp_path / "venv" / "python.exe"))

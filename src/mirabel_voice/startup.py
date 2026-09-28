@@ -11,6 +11,17 @@ log = logging.getLogger(__name__)
 BYPASS = '-ExecutionPolicy Bypass'
 RUN_KEY = r'Software\Microsoft\Windows\CurrentVersion\Run'
 CREATE_NO_WINDOW = 0x08000000
+# The bundle's sitecustomize adds this to import paths, so a copy the
+# updater restarts can see its own path with it. Windows PowerShell 5.1
+# cannot run a script from such a path, so launch entries never carry it.
+LONG_PATH_PREFIX = '\\\\?\\'
+
+
+def _install_root():
+    executable = sys.executable
+    if executable.startswith(LONG_PATH_PREFIX) and not executable.startswith(LONG_PATH_PREFIX + 'UNC\\'):
+        executable = executable[len(LONG_PATH_PREFIX):]
+    return Path(executable).parent.parent
 
 # Rewrites a shortcut that runs Launch.ps1 without the bypass. Given no
 # folders it looks where the installer writes: the Start menu and the
@@ -37,8 +48,7 @@ foreach ($folder in $Folders) {
 def set_enabled(enabled):
     import winreg
     key_path = RUN_KEY
-    root = Path(sys.executable).parent.parent
-    launcher = root / 'Launch.ps1'
+    launcher = _install_root() / 'Launch.ps1'
     if launcher.exists():
         # Bypass is per process: the Windows default policy refuses the
         # unsigned launch script, silently, under a hidden window.
@@ -78,15 +88,17 @@ def repair_launch_entries(folders=None, run=subprocess.run):
     without the per-process bypass. On a computer with the Windows default
     execution policy those entries silently do nothing, and a source
     update cannot reach them, so the running app repairs them itself.
+    It also rewrites a Start with Windows entry that carries the long-path
+    prefix, which Windows PowerShell 5.1 cannot start.
     Best effort: nothing here may stop the app from starting.
     """
     changed = []
     try:
-        launcher = Path(sys.executable).parent.parent / 'Launch.ps1'
+        launcher = _install_root() / 'Launch.ps1'
         if not launcher.exists():
             return changed  # a developer checkout has no launch script
         value = _run_key_value()
-        if value and 'Launch.ps1' in value and BYPASS not in value:
+        if value and 'Launch.ps1' in value and (BYPASS not in value or LONG_PATH_PREFIX in value):
             set_enabled(True)
             changed.append('Start with Windows')
         with tempfile.NamedTemporaryFile('w', suffix='.ps1', delete=False, encoding='utf-8') as script:

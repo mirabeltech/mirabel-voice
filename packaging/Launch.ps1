@@ -1,7 +1,9 @@
 # Stable current-user entry point. Never downloads or changes Windows security.
 param([switch]$CheckOnly)
 $ErrorActionPreference = 'Stop'
-$root = $PSScriptRoot
+# A \\?\ long-path prefix makes Join-Path throw in Windows PowerShell 5.1.
+# The install folder is short, so the plain path is safe.
+$root = $PSScriptRoot -replace '^\\\\\?\\(?=[A-Za-z]:)', ''
 try {
     $lock = [IO.File]::Open((Join-Path $root '.update.lock'), 'OpenOrCreate', 'ReadWrite', 'None')
     try {
