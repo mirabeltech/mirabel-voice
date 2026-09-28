@@ -82,7 +82,7 @@ def _run_key_value():
 
 
 def repair_launch_entries(folders=None, run=subprocess.run):
-    """Rewrite launch entries written before the bypass. Return what changed.
+    """Rewrite launch entries that cannot start the app. Return what changed.
 
     Installs before 0.9.4 wrote shortcuts and the Start with Windows entry
     without the per-process bypass. On a computer with the Windows default
@@ -113,7 +113,7 @@ def repair_launch_entries(folders=None, run=subprocess.run):
         finally:
             Path(script.name).unlink(missing_ok=True)
         if changed:
-            log.info('Repaired launch entries written before the bypass: %s.', ', '.join(changed))
+            log.info('Repaired launch entries that could not start the app: %s.', ', '.join(changed))
     except Exception:  # noqa: BLE001 - a repair must never block the start
         log.exception('The launch entry repair failed.')
     return changed
