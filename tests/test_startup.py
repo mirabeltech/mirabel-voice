@@ -64,7 +64,7 @@ def test_start_with_windows_bypasses_the_execution_policy(monkeypatch, tmp_path)
     assert "Mirabel Voice" not in written
 
 
-# --- the running app repairs entries written before the bypass -------------
+# --- the running app repairs entries that cannot start it ------------------
 
 
 def no_shortcuts(command, **kwargs):
