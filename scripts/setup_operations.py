@@ -16,6 +16,9 @@ MONITOR = "mirabel-voice-monitor"
 TABLE = "mirabel-voice-rate-limits"
 TOPIC = "mirabel-voice-alerts"
 NAMESPACE = "MirabelVoice/Operations"
+RETIRED_ALARMS = ["mirabel-voice-" + suffix for suffix in (
+    "slow", "relay-errors", "relay-throttles", "spend-monitor", "unpriced-usage", "stale-prices",
+    "estimated-budget-100", "estimated-budget-150", "estimated-budget-180", "estimated-budget-200")]
 
 
 def validate(config):
@@ -23,11 +26,8 @@ def validate(config):
         raise ValueError("Invalid request limit")
     if type(config["reserved_concurrency"]) is not int or not 1 <= config["reserved_concurrency"] <= 100:
         raise ValueError("Invalid concurrency limit")
-    if not 0 < config["aws_reserve_usd"] < config["monthly_target_usd"]:
-        raise ValueError("AWS reserve must be below the total target")
-    warnings = config["warning_usd"]
-    if not warnings or warnings != sorted(set(warnings)) or warnings[-1] != config["monthly_target_usd"]:
-        raise ValueError("Warnings must increase to the monthly target")
+    if not 0 < config["aws_reserve_usd"]:
+        raise ValueError("AWS reserve must be positive")
     if not config["emails"] or len(config["emails"]) > 10 or any("@" not in e for e in config["emails"]):
         raise ValueError("Supply alert recipients")
     return config
@@ -58,6 +58,8 @@ def required_permissions(account, region):
               f"{base}:sns:{region}:{account}:{TOPIC}"),
         allow(["cloudwatch:PutMetricAlarm", "cloudwatch:DescribeAlarms"],
               f"{base}:cloudwatch:{region}:{account}:alarm:mirabel-voice-*"),
+        allow(["cloudwatch:DeleteAlarms"],
+              [f"{base}:cloudwatch:{region}:{account}:alarm:{name}" for name in RETIRED_ALARMS]),
         allow(["events:PutRule", "events:DescribeRule", "events:PutTargets", "events:DisableRule"],
               f"{base}:events:{region}:{account}:rule/mirabel-voice-*"),
         allow(["iam:CreateRole", "iam:GetRole", "iam:PutRolePolicy", "iam:GetRolePolicy"],
@@ -67,45 +69,15 @@ def required_permissions(account, region):
         allow(["logs:CreateLogGroup", "logs:PutRetentionPolicy"],
               [f"{base}:logs:{region}:{account}:log-group:/aws/lambda/{MONITOR}",
                f"{base}:logs:{region}:{account}:log-group:/aws/lambda/{MONITOR}:*"]),
-        allow(["budgets:ViewBudget", "budgets:ModifyBudget"],
-              f"{base}:budgets::{account}:budget/mirabel-voice-infrastructure"),
     ])
 
 
-RUNBOOK = "Runbook: 'Responding to alerts' in docs/service-operations-setup.md."
 MEANINGS = {
-    "health": "Dictation may be down. ALARM: the 15-minute test dictation through the relay "
-              "failed or did not run twice in a row, so users are probably seeing errors. "
-              "OK: test dictations work again.",
-    "slow": "Dictation is slow. ALARM: the test dictation took 15 seconds or longer twice in a "
-            "row (normally under 10). Usually a provider slowdown; act only if users complain or "
-            "it lasts hours. OK: speed is back to normal.",
-    "spend-monitor": "Spending figure out of date. NOT an overspend warning; dictation is "
-                     "unaffected. ALARM: the daily spending calculation did not finish, so the "
-                     "spending figure covers only part of the month so far. It resumes where it "
-                     "stopped on the next daily run. OK: the calculation caught up.",
-    "unpriced-usage": "Spending estimate is too low. ALARM: some requests this month could not "
-                      "be priced (unknown model or missing usage counts), so they are not in "
-                      "the spending figure. Not an outage. OK: this month has no unpriced requests.",
-    "stale-prices": "Price list needs review. ALARM: the prices used to estimate spending were "
-                    "last checked over 30 days ago. Compare them with the provider bills and "
-                    "update docs/pricing.json. No OK email is sent.",
-    "relay-errors": "Some dictations failed. ALARM: the relay had 3 or more errors in each of two "
-                    "5-minute periods in a row. OK: fewer than 3 errors in the latest 5 minutes.",
+    "health": "Dictation may not be working.\n"
+              "ALARM: Two checks failed or were missed. Checks run every 15 minutes.\n"
+              "What to do: Try a dictation. If it fails, ask the support owner to check the service.\n"
+              "OK: Dictation checks are passing again.",
 }
-
-
-def throttle_meaning(config):
-    return ("Relay at capacity. ALARM: in each of two 5-minute periods in a row, AWS turned away 3 "
-            f"or more dictation requests because {config['reserved_concurrency']} were already in "
-            "progress; those dictations failed. OK: fewer than 3 turned away in the latest 5 minutes.")
-
-
-def budget_meaning(threshold, config):
-    return (f"Spending warning: ${threshold} of the ${config['monthly_target_usd']} monthly target. "
-            f"The estimate (AI usage plus a ${config['aws_reserve_usd']} AWS allowance) reached "
-            f"${threshold} this month. A warning, not a cutoff: dictation keeps working. "
-            "Check the provider bills for actual charges. No OK email is sent; it resets next month.")
 
 
 def alarms(config, topic):
@@ -113,30 +85,34 @@ def alarms(config, topic):
               evaluation=2, datapoints=2, stat="Maximum", missing="breaching",
               recovery=True, dimensions=None, meaning=None):
         return dict(AlarmName="mirabel-voice-" + suffix,
-            AlarmDescription=(meaning or MEANINGS[suffix]) + " " + RUNBOOK,
+            AlarmDescription=meaning or MEANINGS[suffix],
             Namespace=namespace, MetricName=metric, Statistic=stat,
             Dimensions=dimensions or [], Period=period, EvaluationPeriods=evaluation,
             DatapointsToAlarm=datapoints, Threshold=threshold,
             ComparisonOperator="GreaterThanOrEqualToThreshold", TreatMissingData=missing,
             AlarmActions=[topic], OKActions=[topic] if recovery else [])
-    out = [
-        alarm("health", "HealthFailed", 1),
-        alarm("slow", "SyntheticLatency", 15000, missing="notBreaching"),
-        alarm("spend-monitor", "SpendFailed", 1, period=86400, evaluation=1, datapoints=1),
-        alarm("unpriced-usage", "UnpricedRequests", 1, period=86400, evaluation=1, datapoints=1),
-        alarm("stale-prices", "PricingAgeDays", 30, period=86400, evaluation=1, datapoints=1, recovery=False),
-    ]
-    for threshold in config["warning_usd"]:
-        out.append(alarm("estimated-budget-" + str(threshold), "EstimatedUSDWithAWSReserve",
-                         threshold, period=86400, evaluation=1, datapoints=1,
-                         recovery=False, missing="notBreaching",
-                         meaning=budget_meaning(threshold, config)))
-    dims = [{"Name": "FunctionName", "Value": FUNCTION}]
-    for suffix, metric, meaning in [("relay-errors", "Errors", None),
-                                    ("relay-throttles", "Throttles", throttle_meaning(config))]:
-        out.append(alarm(suffix, metric, 3, namespace="AWS/Lambda", period=300,
-                         stat="Sum", missing="notBreaching", dimensions=dims, meaning=meaning))
-    return out
+    return [alarm("health", "HealthFailed", 1)]
+
+
+def retire_alarms(cw):
+    """Delete retired alarms that still exist, or silence them when AWS denies deletion."""
+    present = cw.describe_alarms(AlarmNames=RETIRED_ALARMS)["MetricAlarms"]
+    if any(alarm["AlarmName"] not in RETIRED_ALARMS for alarm in present):
+        raise ValueError("AWS returned an unexpected alarm during retirement")
+    if not present:
+        return "absent"
+    try:
+        cw.delete_alarms(AlarmNames=[alarm["AlarmName"] for alarm in present])
+        return "deleted"
+    except Exception as error:
+        if code(error) not in {"AccessDenied", "AccessDeniedException"}:
+            raise
+    allowed = set(cw.meta.service_model.operation_model("PutMetricAlarm").input_shape.members)
+    for alarm in present:
+        retired = {key: value for key, value in alarm.items() if key in allowed}
+        retired.update(ActionsEnabled=False, AlarmActions=[], OKActions=[], InsufficientDataActions=[])
+        cw.put_metric_alarm(**retired)
+    return "notifications_disabled"
 
 
 def monitor_ledger_access(table_arn):
@@ -163,7 +139,7 @@ def code(error):
     return getattr(error, "response", {}).get("Error", {}).get("Code", type(error).__name__)
 
 
-def preflight(session, account, config, *, skip_aws_budget=False):
+def preflight(session, account, config):
     """Read specific resources; fail before any writes when permissions are absent."""
     checks = [
         ("lambda:GetFunctionConfiguration", lambda: session.client("lambda").get_function_configuration(FunctionName=FUNCTION)),
@@ -184,11 +160,6 @@ def preflight(session, account, config, *, skip_aws_budget=False):
         except Exception as error:
             if code(error) not in {"ResourceNotFoundException", "NotFound", "NotFoundException", "NoSuchEntity"}:
                 errors.append({"action": action, "error": code(error)})
-    if not skip_aws_budget:
-        try:
-            check_budget_scope(session, account, config)
-        except Exception as error:
-            errors.append({"action": "budget:ProjectScope", "error": str(error) if isinstance(error, ValueError) else code(error)})
     if errors:
         return errors
     limits = session.client("lambda").get_account_settings()["AccountLimit"]
@@ -196,68 +167,6 @@ def preflight(session, account, config, *, skip_aws_budget=False):
     if config["reserved_concurrency"] > limits["UnreservedConcurrentExecutions"] + old - 100:
         raise ValueError("AWS concurrency quota cannot accommodate this reservation")
     return []
-
-
-def budget_filter(config):
-    tag = config.get("aws_budget_tag")
-    if (not isinstance(tag, dict) or set(tag) != {"key", "value"} or
-            any(not isinstance(v, str) or not v.strip() for v in tag.values())):
-        raise ValueError("Set aws_budget_tag with the administrator-verified cost allocation tag key and value; account-wide budgets are not permitted")
-    return {"Tags": {"Key": tag["key"], "Values": [tag["value"]], "MatchOptions": ["EQUALS"]}}
-
-
-def check_budget_scope(session, account, config):
-    expected = budget_filter(config)
-    client = session.client("budgets")
-    try:
-        existing = client.describe_budget(AccountId=account, BudgetName="mirabel-voice-infrastructure")["Budget"]
-    except client.exceptions.NotFoundException:
-        return
-    expression = existing.get("FilterExpression")
-    # AWS may omit the default equality match option in its response.
-    if isinstance(expression, dict) and set(expression) == {"Tags"}:
-        expression = {"Tags": {"MatchOptions": ["EQUALS"], **expression["Tags"]}}
-    if expression != expected:
-        raise ValueError("Existing infrastructure budget is unscoped or uses a different project filter; have the administrator correct it before activation")
-    if (existing.get("BudgetType") != "COST" or existing.get("TimeUnit") != "MONTHLY" or
-            existing.get("BudgetLimit", {}).get("Unit") != "USD" or
-            float(existing.get("BudgetLimit", {}).get("Amount", -1)) != config["aws_reserve_usd"]):
-        raise ValueError("Existing infrastructure budget differs; review before replacing it")
-
-
-def ensure_budget(session, account, config):
-    check_budget_scope(session, account, config)
-    client = session.client("budgets")
-    budget = dict(BudgetName="mirabel-voice-infrastructure", BudgetLimit={
-        "Amount": str(config["aws_reserve_usd"]), "Unit": "USD"},
-        TimeUnit="MONTHLY", BudgetType="COST", FilterExpression=budget_filter(config))
-    subscribers = [{"SubscriptionType": "EMAIL", "Address": email} for email in config["emails"]]
-    notifications = [{"Notification": dict(NotificationType="ACTUAL",
-        ComparisonOperator="GREATER_THAN", Threshold=n, ThresholdType="PERCENTAGE"),
-        "Subscribers": subscribers} for n in (50, 80, 100)]
-    try:
-        client.describe_budget(AccountId=account, BudgetName=budget["BudgetName"])
-    except client.exceptions.NotFoundException:
-        client.create_budget(AccountId=account, Budget=budget, NotificationsWithSubscribers=notifications)
-        return
-    # Preserve additional existing recipients, but ensure every requested one is present.
-    existing = client.describe_budget(AccountId=account, BudgetName=budget["BudgetName"])["Budget"]
-    if float(existing["BudgetLimit"]["Amount"]) != config["aws_reserve_usd"]:
-        raise ValueError("Existing infrastructure budget differs; review before replacing it")
-    current = client.describe_notifications_for_budget(AccountId=account, BudgetName=budget["BudgetName"])["Notifications"]
-    for desired in notifications:
-        notification = desired["Notification"]
-        found = next((n for n in current if all(n.get(k) == v for k, v in notification.items())), None)
-        if found is None:
-            client.create_notification(AccountId=account, BudgetName=budget["BudgetName"], **desired)
-            continue
-        subscribed = client.describe_subscribers_for_notification(
-            AccountId=account, BudgetName=budget["BudgetName"], Notification=notification)["Subscribers"]
-        addresses = {s["Address"] for s in subscribed if s["SubscriptionType"] == "EMAIL"}
-        for subscriber in subscribers:
-            if subscriber["Address"] not in addresses:
-                client.create_subscriber(AccountId=account, BudgetName=budget["BudgetName"],
-                                         Notification=notification, Subscriber=subscriber)
 
 
 class RelayDeployment:
@@ -299,10 +208,7 @@ class RelayDeployment:
         self.environment(variables)
 
 
-def apply(session, account, config, audio, backup_dir, *, skip_aws_budget=False):
-    # Guard direct callers as well as the CLI, before any AWS or backup writes.
-    if not skip_aws_budget:
-        check_budget_scope(session, account, config)
+def apply(session, account, config, audio, backup_dir):
     import deploy_relay
     region = config["region"]
     lam, iam, sns = (session.client(n) for n in ("lambda", "iam", "sns"))
@@ -338,8 +244,7 @@ def apply(session, account, config, audio, backup_dir, *, skip_aws_budget=False)
             sns.subscribe(TopicArn=topic, Protocol="email", Endpoint=email, ReturnSubscriptionArn=True)
     for alarm in alarms(config, topic):
         cw.put_metric_alarm(**alarm)
-    if not skip_aws_budget:
-        ensure_budget(session, account, config)
+    retired_status = retire_alarms(cw)
     role_name = MONITOR+"-role"
     try:
         monitor_role = iam.get_role(RoleName=role_name)["Role"]["Arn"]
@@ -434,7 +339,7 @@ def apply(session, account, config, audio, backup_dir, *, skip_aws_budget=False)
                                ". Backup: " + str(backup_dir)) from activation_error
         raise
     return {"configured":True,"email_confirmation_required":True,"backup_directory":str(backup_dir),
-            "aws_budget": "skipped_existing_unchanged" if skip_aws_budget else "project_scoped"}
+            "retired_alarms": retired_status}
 
 
 def main():
@@ -443,8 +348,6 @@ def main():
     parser.add_argument("--audio",type=Path)
     parser.add_argument("--profile")
     parser.add_argument("--apply",action="store_true")
-    parser.add_argument("--skip-aws-budget", action="store_true",
-                        help="Activate operations without reading or changing AWS billing budgets; existing budget alerts remain unchanged")
     parser.add_argument("--output",type=Path,default=ROOT/"build_probe/operations-plan")
     args=parser.parse_args()
     import boto3
@@ -453,10 +356,8 @@ def main():
     account=session.client("sts").get_caller_identity()["Account"]
     args.output.mkdir(parents=True,exist_ok=True)
     (args.output/"administrator-permissions.json").write_text(json.dumps(required_permissions(account,config["region"]),indent=2))
-    failures=preflight(session,account,config,skip_aws_budget=args.skip_aws_budget)
-    report={"ready":not failures,"missing_access":failures,"monthly_target":config["monthly_target_usd"],
-            "hard_spend_cap":False,"alert_count":len(alarms(config,"preview-topic")),
-            "aws_budget": "skipped_existing_unchanged" if args.skip_aws_budget else "project_scope_required"}
+    failures=preflight(session,account,config)
+    report={"ready":not failures,"missing_access":failures,"alert_count":len(alarms(config,"preview-topic"))}
     (args.output/"preflight.json").write_text(json.dumps(report,indent=2))
     print(json.dumps(report))
     if not args.apply:
@@ -466,8 +367,7 @@ def main():
     if not args.audio:
         parser.error("--apply requires a synthetic speech --audio fixture")
     print(json.dumps(apply(session,account,config,args.audio,
-                           args.output/("backup-"+str(int(time.time()))),
-                           skip_aws_budget=args.skip_aws_budget)))
+                           args.output/("backup-"+str(int(time.time()))))))
     return 0
 
 

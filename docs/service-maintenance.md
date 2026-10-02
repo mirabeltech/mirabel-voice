@@ -14,7 +14,7 @@ The table needs string partition key `pk` and TTL attribute `expires`. Grant onl
 
 ## Configured operating decision
 
-Tommy supplied 10 active users, up to 50 expected, a $200 monthly target and three private alert recipients. The tested setup and exact permission handoff are in [service operations setup](service-operations-setup.md). Activation is complete with `--skip-aws-budget`; the target is not a hard spending cap. One confirmed recipient is sufficient for the current operating decision. Additional recipients remain in private configuration and require their own confirmation.
+Tommy supplied 10 active users, up to 50 expected, a $200 monthly target and three private alert recipients. The tested setup and exact permission handoff are in [service operations setup](service-operations-setup.md). Activation is complete; the target is not a hard spending cap, and since October 2, 2026 no alert watches it. One confirmed recipient is sufficient for the current operating decision. Additional recipients remain in private configuration and require their own confirmation.
 
 ## Before production release
 
@@ -25,7 +25,7 @@ Tommy supplied 10 active users, up to 50 expected, a $200 monthly target and thr
 | Actual provider account/model quotas | Owner must record from the accounts; not inferred from public defaults |
 | Lambda memory, timeout, reserved/account concurrency, Function URL payload limit | Owner must record current deployed settings; client/relay budget uses conservative body margins |
 | Owner and backup for incidents, alerts and model changes | Tommy is the current owner; one confirmed recipient received the test alert. Additional/backup recipients require their own confirmation; a formal backup assignment remains follow-up. |
-| Monthly spend ceiling and warning thresholds | $200 target; estimated AI cost plus $20 allowance warnings at $100/$150/$180/$200; active, not a cutoff |
+| Monthly spend ceiling and warning thresholds | $200 target, not a cutoff. Spending alerts and the AWS budget were removed on October 2, 2026; the daily estimate is still published to CloudWatch |
 | Organization-owned provider keys | Issue #46 closed after owner confirmed company ownership of both provider accounts and keys |
 
 Use a mocked provider for simulated load first: concurrent requests must be denied cleanly when the shared counter's atomic condition fails. Then run a small agreed real-service check using synthetic speech. Never use employee recordings for a load test. Account-level throttling and overall concurrency still require owner configuration; a per-person limit alone does not cap total organizational spend.

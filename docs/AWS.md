@@ -25,7 +25,6 @@ get billed through keys that live in AWS instead of on laptops.
 | The account | A home for the function and the keys |
 | An admin sign-in | So daily work never uses the all-powerful root login |
 | Two secrets | The OpenAI and Anthropic keys, stored where only the relay can read them |
-| A budget alarm | An email if the AWS bill ever exceeds a few dollars |
 | Command-line access | So the deploy script can create and update the function |
 
 You also put the two provider keys into the account (step 5), because
@@ -112,14 +111,11 @@ The names matter: the relay looks these two up by name. The deploy
 verifies both keys with a live test call, so a paste error is caught
 before anyone dictates.
 
-## Step 6: Budget alarm
+## Step 6: No budget alarm
 
-1. Search for **Budgets** (under Billing and Cost Management).
-2. Create a budget: monthly, fixed, **$10**.
-3. Add an email alert at 50% and at 100%, to the shared mailbox.
-
-The expected bill is around zero, so any alert from this is a signal
-worth reading, not noise.
+Skip this. Mirabel Voice does not use an AWS budget. Its own AWS bill
+is a few dollars a month. In an account shared with other projects,
+an account-wide budget measures their spend, not this app's.
 
 ## Step 7: Permissions for the deploy user
 
@@ -199,7 +195,6 @@ A second run updates what is there. It never creates a duplicate.
 | Secrets Manager | The two provider keys, and the token list |
 | Lambda | The relay function and its URL |
 | CloudWatch Logs | One usage line per dictation: who, how much, how long. Never any speech or text |
-| Budgets | The $10 alarm |
 
 ## Questions you may have
 

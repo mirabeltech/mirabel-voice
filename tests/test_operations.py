@@ -19,9 +19,7 @@ def load(name, path):
 monitor = load("operations_monitor", "operations/monitor.py")
 setup = load("operations_setup", "scripts/setup_operations.py")
 PRICES = json.loads((ROOT / "docs/pricing.json").read_text())
-CONFIG = dict(requests_per_person_per_minute=20, reserved_concurrency=20,
-              monthly_target_usd=200, aws_reserve_usd=20, warning_usd=[100,150,180,200],
-              aws_budget_tag={"key": "Project", "value": "mirabel-voice"},
+CONFIG = dict(requests_per_person_per_minute=20, reserved_concurrency=20, aws_reserve_usd=20,
               emails=["test@example.invalid"], region="us-east-2")
 
 
@@ -235,46 +233,69 @@ def test_synthetic_check_requires_both_transcription_and_cleanup():
         monitor.health("https://relay.invalid","synthetic",b"fixture",lambda *a:{"text":""})
 
 
-def test_missing_checks_alarm_and_budget_alarms_do_not_claim_hard_cap():
+def test_only_the_health_check_alarms():
     alarms=setup.alarms(CONFIG,"test-topic")
-    health=next(a for a in alarms if a["AlarmName"].endswith("-health"))
+    assert [a["AlarmName"] for a in alarms] == ["mirabel-voice-health"]
+    health=alarms[0]
     assert health["TreatMissingData"] == "breaching"
     assert health["OKActions"] == ["test-topic"]
-    budgets=[a for a in alarms if "estimated-budget" in a["AlarmName"]]
-    assert [a["Threshold"] for a in budgets] == [100,150,180,200]
-    assert all(a["OKActions"] == [] for a in budgets)
-
-
-def test_daily_spend_alarms_allow_daily_samples_and_report_one_failed_day():
-    alarms = setup.alarms(CONFIG, "test-topic")
-    spending = [a for a in alarms if a["MetricName"] in {
-        "SpendFailed", "UnpricedRequests", "PricingAgeDays", "EstimatedUSDWithAWSReserve"}]
-    assert len(spending) == 7
-    assert all((a["Period"], a["EvaluationPeriods"], a["DatapointsToAlarm"])
-               == (86400, 1, 1) for a in spending)
-    failed = next(a for a in spending if a["MetricName"] == "SpendFailed")
-    assert failed["TreatMissingData"] == "breaching"
-    health = next(a for a in alarms if a["MetricName"] == "HealthFailed")
     assert health["Period"] == 900
-
-
-def test_every_alarm_explains_itself_in_plain_language():
-    alarms = setup.alarms(CONFIG, "test-topic")
-    descriptions = [a["AlarmDescription"] for a in alarms]
-    assert len(set(descriptions)) == len(alarms)
-    assert all("Responding to alerts" in d and len(d) <= 1024 for d in descriptions)
-    spending = next(a for a in alarms if a["MetricName"] == "SpendFailed")["AlarmDescription"]
-    assert "NOT an overspend" in spending
-    assert "$150 of the $200" in next(a for a in alarms if a["AlarmName"].endswith("-150"))["AlarmDescription"]
-    throttles = setup.alarms(dict(CONFIG, reserved_concurrency=35), "t")[-1]
-    assert throttles["AlarmName"].endswith("relay-throttles") and "because 35 were" in throttles["AlarmDescription"]
-    assert all("two 5-minute periods" in a["AlarmDescription"] for a in alarms if a["Period"] == 300)
+    assert "\nWhat to do: " in health["AlarmDescription"]
+    assert not set(setup.RETIRED_ALARMS) & {a["AlarmName"] for a in alarms}
 
 
 def test_monitor_reaches_only_spending_ledger_keys():
     access = setup.monitor_ledger_access("arn:aws:dynamodb:us-east-2:123:table/t")
     assert set(access["Action"]) == {"dynamodb:GetItem", "dynamodb:PutItem", "dynamodb:UpdateItem"}
     assert access["Condition"]["ForAllValues:StringLike"]["dynamodb:LeadingKeys"] == ["spend-ledger#*"]
+
+
+def test_retired_alarms_stop_sending_when_aws_denies_deletion():
+    from unittest.mock import MagicMock
+    from botocore.exceptions import ClientError
+    cw = MagicMock()
+    cw.delete_alarms.side_effect = ClientError({"Error": {"Code": "AccessDenied"}}, "DeleteAlarms")
+    original = dict(AlarmName="mirabel-voice-slow", MetricName="SyntheticLatency",
+                    Threshold=15000, ActionsEnabled=True, AlarmActions=["topic"],
+                    OKActions=["topic"], InsufficientDataActions=["topic"])
+    cw.describe_alarms.return_value = {"MetricAlarms": [dict(original, StateValue="OK")]}
+    cw.meta.service_model.operation_model.return_value.input_shape.members = dict.fromkeys(original)
+    assert setup.retire_alarms(cw) == "notifications_disabled"
+    cw.describe_alarms.assert_called_once_with(AlarmNames=setup.RETIRED_ALARMS)
+    cw.put_metric_alarm.assert_called_once_with(**dict(
+        original, ActionsEnabled=False, AlarmActions=[], OKActions=[], InsufficientDataActions=[]))
+
+
+def test_retirement_deletes_only_alarms_that_still_exist():
+    from unittest.mock import MagicMock
+    cw = MagicMock()
+    cw.describe_alarms.return_value = {"MetricAlarms": [{"AlarmName": "mirabel-voice-estimated-budget-100"}]}
+    assert setup.retire_alarms(cw) == "deleted"
+    cw.delete_alarms.assert_called_once_with(AlarmNames=["mirabel-voice-estimated-budget-100"])
+    cw.describe_alarms.return_value = {"MetricAlarms": []}
+    cw.delete_alarms.reset_mock()
+    assert setup.retire_alarms(cw) == "absent"
+    cw.delete_alarms.assert_not_called()
+
+
+def test_retirement_refuses_alarms_it_did_not_ask_for():
+    from unittest.mock import MagicMock
+    cw = MagicMock()
+    cw.describe_alarms.return_value = {"MetricAlarms": [{"AlarmName": "mirabel-voice-health"}]}
+    with pytest.raises(ValueError, match="unexpected alarm"):
+        setup.retire_alarms(cw)
+    cw.delete_alarms.assert_not_called()
+
+
+def test_retirement_reports_unexpected_aws_errors():
+    from unittest.mock import MagicMock
+    from botocore.exceptions import ClientError
+    cw = MagicMock()
+    cw.describe_alarms.return_value = {"MetricAlarms": [{"AlarmName": "mirabel-voice-slow"}]}
+    cw.delete_alarms.side_effect = ClientError({"Error": {"Code": "InternalServiceError"}}, "DeleteAlarms")
+    with pytest.raises(ClientError):
+        setup.retire_alarms(cw)
+    cw.put_metric_alarm.assert_not_called()
 
 
 def test_preflight_reports_access_denial_without_mutations():
@@ -304,8 +325,6 @@ def test_preflight_reads_only_named_metric_alarms():
                     assert all(n.startswith("mirabel-voice-") for n in kwargs["AlarmNames"])
                 if name == "get_account_settings":
                     return {"AccountLimit": {"UnreservedConcurrentExecutions": 1000}}
-                if name == "describe_budget":
-                    return {"Budget": scoped_budget()}
                 return {}
             return call
     assert setup.preflight(SimpleNamespace(client=lambda name: Client()), "123", CONFIG) == []
@@ -313,78 +332,7 @@ def test_preflight_reads_only_named_metric_alarms():
     assert len(requests[0]["AlarmNames"]) == len(setup.alarms(CONFIG, "test-topic"))
 
 
-def scoped_budget():
-    return {"BudgetType": "COST", "TimeUnit": "MONTHLY",
-            "BudgetLimit": {"Amount": "20", "Unit": "USD"},
-            "FilterExpression": setup.budget_filter(CONFIG)}
-
-
-class BudgetClient:
-    class exceptions:
-        class NotFoundException(Exception):
-            pass
-
-    def __init__(self, budget):
-        self.budget = budget
-        self.writes = []
-
-    def describe_budget(self, **kwargs):
-        if self.budget is None:
-            raise self.exceptions.NotFoundException()
-        return {"Budget": self.budget}
-
-    def create_budget(self, **kwargs):
-        self.writes.append(kwargs)
-
-
-@pytest.mark.parametrize("tag", [None, {}, {"key": "Project", "value": ""}])
-def test_missing_project_tag_prevents_budget_creation(tag):
-    client = BudgetClient(None)
-    with pytest.raises(ValueError, match="administrator-verified"):
-        setup.ensure_budget(SimpleNamespace(client=lambda _: client), "123", dict(CONFIG, aws_budget_tag=tag))
-    assert client.writes == []
-
-
-@pytest.mark.parametrize("expression", [None, {"Tags": {"Key": "Project", "Values": ["other"]}},
-                                       {"Not": {"Tags": {"Key": "Project", "Values": ["mirabel-voice"]}}}])
-def test_wrong_budget_scope_blocks_apply_before_any_writes(tmp_path, expression):
-    client = BudgetClient(dict(scoped_budget(), FilterExpression=expression))
-    backup = tmp_path / "backup"
-    with pytest.raises(ValueError, match="project filter"):
-        setup.apply(SimpleNamespace(client=lambda _: client), "123", CONFIG, None, backup)
-    assert client.writes == []
-    assert not backup.exists()
-
-
-def test_new_budget_is_project_filtered():
-    client = BudgetClient(None)
-    setup.ensure_budget(SimpleNamespace(client=lambda _: client), "123", CONFIG)
-    assert client.writes[0]["Budget"]["FilterExpression"] == setup.budget_filter(CONFIG)
-    assert len(client.writes[0]["NotificationsWithSubscribers"]) == 3
-
-
-def test_existing_project_filter_accepts_default_equality():
-    budget = scoped_budget()
-    del budget["FilterExpression"]["Tags"]["MatchOptions"]
-    setup.check_budget_scope(SimpleNamespace(client=lambda _: BudgetClient(budget)), "123", CONFIG)
-
-
-def test_preflight_without_billing_access_can_skip_budget():
-    config = {k: v for k, v in CONFIG.items() if k != "aws_budget_tag"}
-    class Client:
-        def __getattr__(self, name):
-            def call(**kwargs):
-                if name == "get_account_settings":
-                    return {"AccountLimit": {"UnreservedConcurrentExecutions": 1000}}
-                return {}
-            return call
-    def client(name):
-        assert name != "budgets", "Skipped budget must not require billing access"
-        return Client()
-    assert setup.preflight(SimpleNamespace(client=client), "123", config, skip_aws_budget=True) == []
-
-
-def test_apply_skip_budget_still_activates_limits_alarms_and_schedules(tmp_path, monkeypatch):
+def test_apply_activates_limits_alarms_and_schedules_without_billing_access(tmp_path, monkeypatch):
     import io
     import sys
     from unittest.mock import MagicMock
@@ -401,6 +349,8 @@ def test_apply_skip_budget_still_activates_limits_alarms_and_schedules(tmp_path,
     clients["iam"].get_role.return_value = {"Role": {"Arn": "test-role"}}
     clients["events"].put_rule.return_value = {"RuleArn": "test-rule"}
     clients["events"].put_targets.return_value = {"FailedEntryCount": 0}
+    clients["cloudwatch"].describe_alarms.return_value = {"MetricAlarms": [
+        {"AlarmName": name} for name in setup.RETIRED_ALARMS]}
     response = MagicMock()
     response.__enter__.return_value.read.return_value = b"old-zip"
     monkeypatch.setattr(setup.urllib.request, "urlopen", lambda *a, **kw: response)
@@ -409,14 +359,18 @@ def test_apply_skip_budget_still_activates_limits_alarms_and_schedules(tmp_path,
     deployment = MagicMock()
     monkeypatch.setattr(setup, "RelayDeployment", lambda *a: deployment)
     # No budgets client exists: any billing read/write fails this test.
-    config = {k: v for k, v in CONFIG.items() if k != "aws_budget_tag"}
-    result = setup.apply(SimpleNamespace(client=clients.__getitem__), "123", config, None,
-                         tmp_path / "backup", skip_aws_budget=True)
+    result = setup.apply(SimpleNamespace(client=clients.__getitem__), "123", CONFIG, None,
+                         tmp_path / "backup")
     assert result["configured"] is True
-    assert result["aws_budget"] == "skipped_existing_unchanged"
+    assert result["retired_alarms"] == "deleted"
     assert deployment.environment.call_args.args[0]["MIRABEL_REQUESTS_PER_MINUTE"] == "20"
     lam.put_function_concurrency.assert_called_once_with(FunctionName=setup.FUNCTION, ReservedConcurrentExecutions=20)
-    assert clients["cloudwatch"].put_metric_alarm.call_count == 11
+    assert clients["cloudwatch"].put_metric_alarm.call_count == 1
+    clients["cloudwatch"].delete_alarms.assert_called_once_with(AlarmNames=[
+        "mirabel-voice-slow", "mirabel-voice-relay-errors", "mirabel-voice-relay-throttles",
+        "mirabel-voice-spend-monitor", "mirabel-voice-unpriced-usage", "mirabel-voice-stale-prices",
+        "mirabel-voice-estimated-budget-100", "mirabel-voice-estimated-budget-150",
+        "mirabel-voice-estimated-budget-180", "mirabel-voice-estimated-budget-200"])
     assert [json.loads(c.kwargs["Payload"])["kind"] for c in lam.invoke.call_args_list] == ["health", "spend"]
     assert len([c for c in clients["events"].put_rule.call_args_list if c.kwargs["State"] == "ENABLED"]) == 2
     enabled = {c.kwargs["Name"]: c.kwargs["ScheduleExpression"]
@@ -437,11 +391,12 @@ def test_permission_request_cannot_edit_operator_permissions_or_other_functions(
     assert "iam:AttachUserPolicy" not in serialized
     assert "function:*" not in serialized
     assert "iam:PassRole" in serialized
+    assert "budgets:" not in serialized
 
 
 @pytest.mark.parametrize("changes", [
     {"reserved_concurrency":0}, {"requests_per_person_per_minute":0},
-    {"aws_reserve_usd":200}, {"warning_usd":[100,50,200]},
+    {"aws_reserve_usd":0},
 ])
 def test_invalid_controls_are_rejected(changes):
     with pytest.raises(ValueError):
