@@ -176,7 +176,7 @@ more audio and never says so, which shows up as a slow first second.
 
 ## Watching the cost
 
-Two things watch the spend now. The AWS budget alarm mails the shared mailbox at $5 and $10 a month, and `scripts/usage_report.py` says who the spend belongs to. Neither is a cap: nothing stops the app spending, so the alarm is a thing to read rather than ignore.
+Nothing alerts on spend anymore. The AWS budget and the spending alarms were removed on October 2, 2026, because the budget was measuring the whole shared AWS account rather than this app. `scripts/usage_report.py` says what the spend is and who it belongs to, and the provider dashboards show the bills. Nothing caps the app's spending either, so check one of them now and then.
 
 The table below is the estimate the pilot started with. Once a month of real use is in the log, the report is the better number.
 

@@ -1,5 +1,29 @@
 # Activate usage limits and monitoring
 
+## Spending alerts removed, October 2, 2026
+
+Tommy decided that Mirabel Voice's spending is too small to monitor. The service does spend money, mostly OpenAI and Anthropic usage (about $0.90 of AI usage in September), but nothing alerts on it any more. These were deleted with an administrator sign-in:
+
+- The `mirabel-voice-infrastructure` AWS budget. It had been created account-wide by mistake, so its $20 limit was compared with the whole shared account (about $6,760 in September, almost all of it other projects' servers). It emailed Tommy, Surya Prakash and Mark at every threshold. Mirabel Voice's own AWS charges in September were under $5.
+- The four `estimated-budget-100/150/180/200` CloudWatch alarms. None of them had ever fired.
+- The `spend-monitor`, `unpriced-usage` and `stale-prices` alarms, which only kept the estimate accurate for those warnings. `stale-prices` was in ALARM when it was deleted.
+
+Every deletion was read back from AWS. The previous settings, including the budget's notifications and recipients, are saved privately under `build_probe/budget-alerts-backup-20261002T161943Z/`.
+
+`health` is now the only alarm that emails. Setup creates only that one, and all the deleted alarm names are in `RETIRED_ALARMS`, so a rerun deletes them if they reappear. The `--skip-aws-budget` option, the `aws_budget_tag` setting and the billing permission are gone.
+
+The daily spending run still keeps the ledger and publishes `AIEstimatedUSD` and `EstimatedUSDWithAWSReserve` to CloudWatch. Anyone who wants the number can look there or run `scripts/usage_report.py`. Runaway provider usage would show up only on the OpenAI and Anthropic bills. Sections below dated before October 2 describe alarms that no longer exist.
+
+## Fewer alerts and simpler emails, September 29, 2026
+
+Eight alarms remain enabled. The `slow`, `relay-errors`, and `relay-throttles` alarms no longer send emails. AWS denied deletion with the deployment account, so their actions are disabled and all notification destinations are empty. An AWS administrator can delete those three inactive entries later.
+
+Each remaining email description uses short lines for the problem, what to do, and what recovery means. AWS still adds its standard technical fields. The updated descriptions and disabled notifications were read back from AWS and verified. The monitoring schedule and remaining thresholds are unchanged. Existing account-wide AWS billing-budget emails are separate and unchanged.
+
+Setup now creates only the eight wanted alarms. It deletes the three retired alarms when permitted, or disables their notifications if AWS denies deletion. Its generated permission request limits deletion to those three names. The operations tests cover removal, notification disabling, and unexpected AWS failures.
+
+Private backups of the previous alarm settings are under `build_probe/alerts-backup-20260929T*.json`. The earliest backup contains the original descriptions and notification settings. An operator can restore an alarm by passing its saved configuration to CloudWatch `PutMetricAlarm`.
+
 ## Resumable spending ledger and plain-language alerts — September 18, 2026
 
 The daily spending check timed out on September 16 and 18 (84 s and 80 s against a 75 s scan limit), because every run rescanned the month from the 1st. It now keeps a running total and counts only new logs; see [How the spending check works](#how-the-spending-check-works). All 11 alarm descriptions now say in plain words what ALARM and OK mean; see [Responding to alerts](#responding-to-alerts).
@@ -32,11 +56,10 @@ Status: **operations activated on September 10, 2026** with `--skip-aws-budget`.
 - $200 monthly target, not an exact bill or an automatic spending cutoff.
 - Initial per-person limit: 20 provider requests per UTC minute. A normal dictation uses transcription and cleanup, so this permits about 10 complete dictations per minute per person.
 - Initial relay concurrency reservation: 20 in-flight requests. This is a starting capacity control, not a limit of 20 registered users. AWS must have enough unreserved concurrency quota.
-- Reserve $20 of the target for infrastructure and monitoring. AI usage warnings compare estimated AI charges plus that allowance with $100, $150, $180 and $200.
-- A separate $20 AWS infrastructure budget warns at 50%, 80% and 100%. The existing budget was mistakenly created account-wide and needs a separate administrator follow-up to correct its scope; this does not block operations activation with `--skip-aws-budget`. Its billed-cost alerts can lag; tagged costs may omit shared or untaggable charges.
+- Reserve $20 of the target for infrastructure and monitoring. The daily estimate adds that allowance to estimated AI charges. No alert compares it with the target since October 2, 2026.
 - Alert recipients are stored in the private deployment configuration, not this public repository.
 
-The price file contains estimates, including an inferred audio-token rate. Compare actual provider bills and revise rates routinely; unpriced requests raise an alert rather than silently counting as free. Direct provider usage outside the relay is not included. Failed requests can still incur charges. These controls do not guarantee a $200 ceiling.
+The price file contains estimates, including an inferred audio-token rate. Unpriced requests are counted in the ledger rather than silently counting as free, but nothing alerts on them. Direct provider usage outside the relay is not included. Failed requests can still incur charges. These controls do not guarantee a $200 ceiling.
 
 Official references: [OpenAI pricing](https://developers.openai.com/api/docs/pricing), [Anthropic pricing](https://platform.claude.com/docs/en/about-claude/pricing), [AWS budget notification delays](https://docs.aws.amazon.com/cost-management/latest/userguide/budgets-managing-costs.html).
 
@@ -45,27 +68,19 @@ Official references: [OpenAI pricing](https://developers.openai.com/api/docs/pri
 The scheduled monitor runs in AWS independently of Tommy's computer:
 
 - Every 15 minutes, transcribe a short synthetic phrase through the public relay URL and ask the cleanup service for a known response. No employee recording is used. Two consecutive failed/missing checks trigger an alert; successful checks restore the alarm to OK and send recovery notification.
-- Combined synthetic check latency of 15 seconds or more in two consecutive periods raises a slow-service alert.
-- Once per day, bring the month's approximate AI spending up to date from the redacted usage logs (see [How the spending check works](#how-the-spending-check-works)). Synthetic checks are included.
-- Raise alerts for failed/missing spending checks, unpriced requests, price data older than 30 days, sustained Lambda errors and throttling.
-- Budget alerts do not shut down dictation. No employee transcript, account identifier or credential appears in monitor output or alerts.
+- The monitor records synthetic check latency without sending a slow-service alert.
+- Once per day, bring the month's approximate AI spending up to date from the redacted usage logs (see [How the spending check works](#how-the-spending-check-works)). Synthetic checks are included. The result is published to CloudWatch; no alert watches it.
+- No employee transcript, account identifier or credential appears in monitor output or alerts.
 
 Price checks require periodic maintenance. CloudWatch alarms, Lambda, log reads, DynamoDB, SNS and synthetic provider requests can have running costs; check those against the infrastructure allowance after activation.
 
 ## Responding to alerts
 
-Every alert email names the alarm and repeats its one-line meaning. "ALARM" means the problem started and "OK" means it cleared. The number in "Reason for State Change" is the measured value, not dollars (except for spending warnings). The date in brackets is the *start* of the measured period and is written day/month/year.
+`health` is the only alarm that sends email. The email names the alarm and includes a short explanation and a next step. "ALARM" means the condition triggered and "OK" means it cleared. The number in AWS's "Reason for State Change" is the measured value. The date in brackets is the start of the measured period, written day/month/year.
 
 | Alarm | What it means | What to do |
 |---|---|---|
-| `health` | Test dictations through the relay failed twice in a row (every 15 minutes). Users are probably affected. | Try a dictation. Check the relay's logs in CloudWatch (`/aws/lambda/mirabel-voice-relay`) and the provider status pages. An OK email follows when it recovers. |
-| `slow` | Test dictations took 15 s or more twice in a row. | Usually a provider slowdown. Act only if users complain or it lasts hours. |
-| `spend-monitor` | The daily spending calculation did not finish. **Not an overspend.** Dictation is unaffected. The spending figure covers only part of the month until it catches up. | Nothing, if the next day's run sends OK. It resumes where it stopped. If it stays in ALARM for several days, read the monitor's `"check": "spend"` log line (`/aws/lambda/mirabel-voice-monitor`): `stage` and `category` say where it stopped, and `covered_until` shows how far it got. |
-| `unpriced-usage` | Some requests this month could not be priced, so the estimate is low by an unknown amount. | Find the model or missing field and update `docs/pricing.json`. It clears at the start of the next month. |
-| `stale-prices` | `docs/pricing.json` was last checked over 30 days ago. | Compare it with the provider bills, update `checked`, and redeploy the monitor. |
-| `estimated-budget-N` | The month's estimate (AI usage plus the $20 AWS allowance) reached $N. A warning, not a cutoff. | Check the provider bills. Each threshold emails once per month. |
-| `relay-errors` | The relay had 3+ errors in each of two 5-minute periods in a row. Some dictations failed. | Check the relay's logs. It clears on its own if the cause was brief. |
-| `relay-throttles` | AWS turned away 3+ requests in each of two 5-minute periods in a row because the reserved concurrency (currently 20) was in use. | If it recurs, raise `reserved_concurrency` in the private configuration and rerun setup. |
+| `health` | Two consecutive dictation checks failed or were missed. Checks run every 15 minutes. | Try a dictation. If it fails, ask the support owner to check the service. An OK email follows recovery. |
 
 ## How the spending check works
 
@@ -84,7 +99,7 @@ A trial against the live logs on September 18, 2026 (read-only) built September 
 
 Run preparation using the existing deployment account:
 
-    build_probe\venv313\Scripts\python.exe scripts\setup_operations.py --config build_probe\operations-config.json --skip-aws-budget
+    build_probe\venv313\Scripts\python.exe scripts\setup_operations.py --config build_probe\operations-config.json
 
 It makes read-only permission checks and writes:
 
@@ -96,9 +111,7 @@ An AWS administrator should review the generated policy, create it as a **custom
 
 After permission is granted, rerun preparation. It must pass before applying:
 
-If managing the AWS billing budget as part of activation (omitting `--skip-aws-budget`), first complete the billing handoff and add `aws_budget_tag` to the private configuration with the verified `key` and `value`. Setup refuses to create an account-wide budget or reuse an existing budget with a different filter. A passing guard verifies the filter definition, not the completeness of resource tagging or billing data.
-
-    build_probe\venv313\Scripts\python.exe scripts\setup_operations.py --config build_probe\operations-config.json --audio build_probe\synthetic.wav --skip-aws-budget --apply
+    build_probe\venv313\Scripts\python.exe scripts\setup_operations.py --config build_probe\operations-config.json --audio build_probe\synthetic.wav --apply
 
 The WAV is an offline, synthetic recording saying “This is a routine service check,” no longer than ten seconds. It was generated with Windows text-to-speech; the microphone was not used.
 
