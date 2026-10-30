@@ -18,7 +18,7 @@ Press **Insert**, speak, then press **Insert** again. Mirabel Voice turns your s
 
 This distribution method needs no Microsoft 365 subscription, developer account, Store registration or signing purchase. AI processing and the existing relay still have running costs.
 
-The candidate bundle is for **Windows x64**. Other architectures and managed security policies require separate verification. If **Smart App Control**, your company's security software or PowerShell policy blocks it, stop and send Tommy the exact message. Do not turn off Windows protection. ZIP approval and unblocking cannot override all Windows policies. There is no promise that it will run on every Windows computer.
+The candidate bundle is for **Windows x64**. It also installs on **Windows 11 on ARM**, where Windows runs it under x64 emulation; that route has not been fully tested yet. Other architectures and managed security policies require separate verification. If **Smart App Control**, your company's security software or PowerShell policy blocks it, stop and send Tommy the exact message. Do not turn off Windows protection. ZIP approval and unblocking cannot override all Windows policies. There is no promise that it will run on every Windows computer.
 
 ## Everyday use
 

@@ -280,6 +280,21 @@ def test_old_updater_config_probe_rejects_incompatible_runtime(monkeypatch, caps
     assert 'Full Python ZIP required' in capsys.readouterr().out
 
 
+@pytest.mark.parametrize('build, rejected', [('win-amd64', False), ('win-arm64', True)])
+def test_runtime_contract_checks_the_python_build_not_the_cpu(tmp_path, monkeypatch, build, rejected):
+    # On Windows 11 on ARM the x64 bundle runs emulated while the CPU reports ARM64.
+    from mirabel_voice import runtime
+    package = tmp_path / 'python' / 'Lib' / 'site-packages' / 'mirabel_voice'
+    package.mkdir(parents=True)
+    (tmp_path / 'python' / 'python313._pth').write_text('')
+    (tmp_path / 'python' / 'bundle-format.txt').write_text(str(runtime.CONTRACT['bundle_format']))
+    monkeypatch.setattr(runtime, '__file__', str(package / 'runtime.py'))
+    monkeypatch.setattr(runtime.platform, 'python_version', lambda: runtime.CONTRACT['python'])
+    monkeypatch.setattr(runtime.platform, 'machine', lambda: 'ARM64')
+    monkeypatch.setattr(runtime.sysconfig, 'get_platform', lambda: build)
+    assert bool(runtime.bundle_problem()) is rejected
+
+
 def test_relay_overload_simulation_limits_forwarding():
     from concurrent.futures import ThreadPoolExecutor
     class SharedCounter:

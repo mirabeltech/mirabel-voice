@@ -3,7 +3,9 @@ param([string]$Token = '', [string]$Target = '', [switch]$NoLaunch, [switch]$Ski
 $ErrorActionPreference = 'Stop'
 $here = $PSScriptRoot
 $architecture = if ($env:PROCESSOR_ARCHITEW6432) { $env:PROCESSOR_ARCHITEW6432 } else { $env:PROCESSOR_ARCHITECTURE }
-if ($architecture -ne 'AMD64') { throw 'This download supports Windows x64. Ask Tommy about a compatible download for this computer; nothing was installed.' }
+# Windows 11 on ARM runs this x64 bundle under emulation; Windows 10 on ARM cannot.
+$emulatesX64 = $architecture -eq 'ARM64' -and [Environment]::OSVersion.Version.Build -ge 22000
+if ($architecture -ne 'AMD64' -and -not $emulatesX64) { throw 'This download supports Windows x64 and Windows 11 on ARM. Ask Tommy about a compatible download for this computer; nothing was installed.' }
 $relayUrl = '__RELAY_URL__'
 $googleClientId = '__GOOGLE_CLIENT_ID__'
 $googleClientSecret = '__GOOGLE_CLIENT_SECRET__'
