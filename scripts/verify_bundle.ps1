@@ -5,6 +5,19 @@ $base = Join-Path $env:TEMP ('MirabelBundleCheck-' + [guid]::NewGuid().ToString(
 $previousHome = $env:MIRABEL_VOICE_HOME
 $unpacked = Join-Path $base 'download'
 $target = Join-Path $base 'installed app'
+# Windows on ARM refused to delete an emulated runtime's DLLs right after Python exited.
+function Remove-Runtime([string]$Path) {
+    $started = Get-Date
+    while ($true) {
+        try { [IO.Directory]::Delete(('\\?\' + $Path), $true); break }
+        catch {
+            if (((Get-Date) - $started).TotalSeconds -ge 120) { throw }
+            Start-Sleep -Seconds 1
+        }
+    }
+    $waited = [int]((Get-Date) - $started).TotalSeconds
+    if ($waited) { Write-Host "Removing $(Split-Path $Path -Leaf) took $waited seconds" }
+}
 try {
     New-Item -ItemType Directory $base | Out-Null
     $env:MIRABEL_VOICE_HOME = Join-Path $base 'isolated-settings'
@@ -39,7 +52,7 @@ try {
     & $py -c "from mirabel_voice.config import Config;c=Config.load();assert c.hotkey=='f13';assert c.language is None;assert c.custom_words==['Synthetic retained preference'];print('Settings survived repair')"
     if ($LASTEXITCODE -ne 0) { throw 'Settings were lost during repair' }
     # Simulate a power loss between runtime renames inside this disposable copy.
-    [IO.Directory]::Delete(('\\?\' + (Join-Path $target 'python.previous')), $true)
+    Remove-Runtime (Join-Path $target 'python.previous')
     Move-Item (Join-Path $target 'python') (Join-Path $target 'python.previous')
     Set-Content (Join-Path $target '.install-pending') 'pending'
     & (Join-Path $target 'Launch.ps1') -CheckOnly
@@ -55,5 +68,5 @@ try {
     Write-Host 'PASS: produced ZIP installation, repair, settings retention, runtime and source recovery. No microphone/network/registration used.'
 } finally {
     $env:MIRABEL_VOICE_HOME = $previousHome
-    if (Test-Path $base) { [IO.Directory]::Delete(('\\?\' + $base), $true) }
+    if (Test-Path $base) { Remove-Runtime $base }
 }
