@@ -52,3 +52,34 @@ jobs:
             dist/MirabelVoice-*-python.zip*
             dist/*inventory.json
           if-no-files-found: error
+  hardware:
+    needs: bundle
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # ARM runs the x64 bundle under emulation; x64 shows what a runner can do.
+          - runner: windows-11-arm
+            cpu: ARM64
+          - runner: windows-latest
+            cpu: AMD64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: python-bundle-test-only
+          path: dist
+      - name: Verify installation, repair and recovery on this CPU
+        shell: powershell
+        run: |
+          $zip = Get-ChildItem dist/MirabelVoice-*-python.zip | Select-Object -First 1
+          scripts/verify_bundle.ps1 -Bundle $zip.FullName
+      - name: Check the shortcut, injection and native libraries on this CPU
+        shell: powershell
+        run: |
+          $zip = Get-ChildItem dist/MirabelVoice-*-python.zip | Select-Object -First 1
+          $unpacked = Join-Path $env:RUNNER_TEMP 'mv'
+          Expand-Archive -LiteralPath $zip.FullName -DestinationPath $unpacked
+          & (Join-Path $unpacked 'python\python.exe') scripts/check_bundle_hardware.py --cpu ${{ matrix.cpu }}
+          if ($LASTEXITCODE -ne 0) { throw 'Hardware checks failed' }
