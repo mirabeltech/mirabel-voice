@@ -21,6 +21,9 @@ TIMEOUT_SECONDS = 5
 TEXT = 'Mirabel Voice café'
 EARLIER_CLIPBOARD = 'already on the clipboard'
 MACHINES = {0x8664: 'AMD64', 0xAA64: 'ARM64'}
+WINDOW_TITLE = 'Mirabel Voice hardware check'
+SIGN_IN_PROMPT = 'Microsoft account'
+WM_CLOSE = 0x0010
 
 
 def native_machine():
@@ -44,17 +47,28 @@ def foreground_title():
 
 
 def take_focus(root, box):
-    # Windows lets a background process take the foreground right after a key press.
     from pynput.keyboard import Controller, Key
     keyboard = Controller()
-    keyboard.press(Key.alt)
-    keyboard.release(Key.alt)
     user32 = ctypes.WinDLL('user32')
     user32.SetForegroundWindow.argtypes = (wintypes.HWND,)
-    user32.SetForegroundWindow(int(root.wm_frame(), 16))
-    root.update()
-    box.focus_force()
-    root.update()
+    user32.GetForegroundWindow.restype = wintypes.HWND
+    user32.PostMessageW.argtypes = (wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM)
+    for _ in range(5):
+        # Windows lets a background process take the foreground right after a key press.
+        keyboard.press(Key.alt)
+        keyboard.release(Key.alt)
+        user32.SetForegroundWindow(int(root.wm_frame(), 16))
+        root.update()
+        box.focus_force()
+        root.update()
+        time.sleep(0.2)
+        if foreground_title() == WINDOW_TITLE:
+            return
+        # The windows-11-arm image opens this sign-in prompt over everything.
+        if foreground_title() == SIGN_IN_PROMPT:
+            user32.PostMessageW(user32.GetForegroundWindow(), WM_CLOSE, 0, 0)
+        time.sleep(1)
+    raise AssertionError(f'The check window never got the foreground; {foreground_title()!r} has it')
 
 
 def wait_until(condition, root):
@@ -145,7 +159,7 @@ def main():
         ('secure connection', check_secure_connection),
     ]
     root = tkinter.Tk()
-    root.title('Mirabel Voice hardware check')
+    root.title(WINDOW_TITLE)
     root.attributes('-topmost', True)
     box = tkinter.Entry(root, width=40)
     box.pack()
