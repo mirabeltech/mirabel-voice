@@ -34,6 +34,29 @@ def native_machine():
     return MACHINES.get(native.value, hex(native.value))
 
 
+def foreground_title():
+    user32 = ctypes.WinDLL('user32')
+    user32.GetForegroundWindow.restype = wintypes.HWND
+    user32.GetWindowTextW.argtypes = (wintypes.HWND, wintypes.LPWSTR, ctypes.c_int)
+    title = ctypes.create_unicode_buffer(256)
+    user32.GetWindowTextW(user32.GetForegroundWindow(), title, 256)
+    return title.value
+
+
+def take_focus(root, box):
+    # Windows lets a background process take the foreground right after a key press.
+    from pynput.keyboard import Controller, Key
+    keyboard = Controller()
+    keyboard.press(Key.alt)
+    keyboard.release(Key.alt)
+    user32 = ctypes.WinDLL('user32')
+    user32.SetForegroundWindow.argtypes = (wintypes.HWND,)
+    user32.SetForegroundWindow(int(root.wm_frame(), 16))
+    root.update()
+    box.focus_force()
+    root.update()
+
+
 def wait_until(condition, root):
     deadline = time.monotonic() + TIMEOUT_SECONDS
     while time.monotonic() < deadline:
@@ -88,13 +111,24 @@ def check_shortcut(root, box):
 
 def check_injection(root, box, method):
     import pyperclip
+    from pynput import keyboard
     from mirabel_voice.inject import CLIPBOARD_RESTORE_SECONDS, TextInjector
     pyperclip.copy(EARLIER_CLIPBOARD)
     box.delete(0, 'end')
-    root.update()
+    take_focus(root, box)
+    # Counting presses separates input that was never made from input sent elsewhere.
+    presses = []
+    listener = keyboard.Listener(on_press=presses.append)
+    listener.start()
+    time.sleep(0.5)
     injector = TextInjector(method=method)
-    injector.send(TEXT)
-    assert wait_until(lambda: box.get() == TEXT, root), f'The text box holds {box.get()!r}'
+    try:
+        injector.send(TEXT)
+        arrived = wait_until(lambda: box.get() == TEXT, root)
+    finally:
+        listener.stop()
+    assert arrived, (f'The text box holds {box.get()!r}. {len(presses)} key presses were seen. '
+                     f'The foreground window is {foreground_title()!r}, Tk focus is {root.focus_get()}.')
     injector.flush_restore(CLIPBOARD_RESTORE_SECONDS + 2)
     assert pyperclip.paste() == EARLIER_CLIPBOARD, 'The clipboard was not restored'
     return f'{method} put the text in a real window'
@@ -111,6 +145,7 @@ def main():
         ('secure connection', check_secure_connection),
     ]
     root = tkinter.Tk()
+    root.title('Mirabel Voice hardware check')
     root.attributes('-topmost', True)
     box = tkinter.Entry(root, width=40)
     box.pack()
