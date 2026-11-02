@@ -175,8 +175,8 @@ def main():
     root.focus_force()
     box.focus_force()
     root.update()
-    # The windows-11-arm image keeps Windows Search in the foreground, so text can't
-    # reach this window there. It still proves the keys are made. x64 must deliver.
+    # On some windows-11-arm runs Windows Search keeps the foreground, and text can't
+    # reach this window. Those runs still prove the keys are made. x64 must deliver.
     require_delivery = args.cpu == 'AMD64'
     checks += [
         ('global shortcut', lambda: check_shortcut(root, box)),
