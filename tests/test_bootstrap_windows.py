@@ -66,6 +66,21 @@ def test_rejected_zip_never_executes_its_installer(tmp_path, options):
     assert not list(tmp_path.glob('MirabelVoiceInstall-*'))
 
 
+@pytest.mark.parametrize('architecture, reaches_bundle_check', [('AMD64', True), ('ARM64', True), ('x86', False)])
+def test_installer_architecture_check(tmp_path, architecture, reaches_bundle_check):
+    # No python folder sits beside this Install.ps1, so an accepted computer
+    # stops at the next check and nothing is installed either way.
+    env = {k: v for k, v in os.environ.items() if k.upper() != 'PROCESSOR_ARCHITEW6432'}
+    env['PROCESSOR_ARCHITECTURE'] = architecture
+    installer = BOOTSTRAP.parent / 'packaging' / 'Install.ps1'
+    result = subprocess.run([shutil.which('powershell.exe'), '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', str(installer), '-Target', str(tmp_path / 'target'), '-NoLaunch'], capture_output=True, timeout=30, env=env)
+    output = ''.join(result.stderr.decode(errors='replace').split())
+    assert result.returncode != 0
+    assert ('GetthePythonZIP' in output) is reaches_bundle_check
+    assert ('Thisdownloadsupports' in output) is not reaches_bundle_check
+    assert not (tmp_path / 'target').exists()
+
+
 def test_mixed_zip_separators_and_long_paths_from_system32(tmp_path):
     result, target = run_bootstrap(tmp_path, nested=True)
     assert result.returncode == 0, result.stderr.decode(errors='replace')
