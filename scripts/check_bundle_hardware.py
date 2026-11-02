@@ -47,21 +47,21 @@ def foreground_title():
 
 
 def take_focus(root, box):
-    from pynput.keyboard import Controller, Key
-    keyboard = Controller()
+    from pynput.mouse import Button, Controller
+    mouse = Controller()
     user32 = ctypes.WinDLL('user32')
-    user32.SetForegroundWindow.argtypes = (wintypes.HWND,)
     user32.GetForegroundWindow.restype = wintypes.HWND
     user32.PostMessageW.argtypes = (wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM)
     for _ in range(5):
-        # Windows lets a background process take the foreground right after a key press.
-        keyboard.press(Key.alt)
-        keyboard.release(Key.alt)
-        user32.SetForegroundWindow(int(root.wm_frame(), 16))
+        # Windows can refuse a background process the foreground, but it follows a click.
+        root.lift()
+        root.update()
+        mouse.position = (box.winfo_rootx() + box.winfo_width() // 2, box.winfo_rooty() + box.winfo_height() // 2)
+        mouse.click(Button.left)
+        time.sleep(0.2)
         root.update()
         box.focus_force()
         root.update()
-        time.sleep(0.2)
         if foreground_title() == WINDOW_TITLE:
             return
         # The windows-11-arm image opens this sign-in prompt over everything.
