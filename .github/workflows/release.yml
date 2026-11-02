@@ -76,6 +76,7 @@ jobs:
           $zip = Get-ChildItem dist/MirabelVoice-*-python.zip | Select-Object -First 1
           scripts/verify_bundle.ps1 -Bundle $zip.FullName
       - name: Check the shortcut, injection and native libraries on this CPU
+        if: ${{ !cancelled() }}
         shell: powershell
         run: |
           $zip = Get-ChildItem dist/MirabelVoice-*-python.zip | Select-Object -First 1
