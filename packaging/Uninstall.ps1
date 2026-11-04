@@ -4,6 +4,17 @@ $root = $PSScriptRoot
 if (-not (Test-Path (Join-Path $root '.installed'))) { throw 'Use Mirabel Voice in Windows Installed apps to remove the installed copy.' }
 $running = @(Get-Process python,pythonw -ErrorAction SilentlyContinue | Where-Object { $_.Path -and $_.Path.StartsWith($root + '\', [StringComparison]::OrdinalIgnoreCase) })
 if ($running.Count) { throw 'Choose Quit from the microphone icon before uninstalling.' }
+# Windows on ARM keeps an emulated runtime's DLLs locked for a few seconds after Python exits.
+function Remove-Folder([string]$Path) {
+    $started = Get-Date
+    while ($true) {
+        try { [IO.Directory]::Delete(('\\?\' + $Path), $true); return }
+        catch {
+            if (((Get-Date) - $started).TotalSeconds -ge 60) { throw }
+            Start-Sleep -Seconds 1
+        }
+    }
+}
 $lock = [IO.File]::Open((Join-Path $root '.update.lock'), 'OpenOrCreate', 'ReadWrite', 'None')
 try {
     if (-not $SkipIntegration) {
@@ -15,11 +26,11 @@ try {
     }
     foreach ($name in @('python','python.previous','python.new','__pycache__')) {
         $path = Join-Path $root $name
-        if (Test-Path $path) { [IO.Directory]::Delete(('\\?\' + $path), $true) }
+        if (Test-Path $path) { Remove-Folder $path }
     }
     if ($RemoveSettings) {
         $settings = if ($env:MIRABEL_VOICE_HOME) { $env:MIRABEL_VOICE_HOME } else { Join-Path $env:APPDATA 'MirabelVoice' }
-        if (Test-Path $settings) { [IO.Directory]::Delete(('\\?\' + $settings), $true) }
+        if (Test-Path $settings) { Remove-Folder $settings }
     }
 } finally { $lock.Dispose() }
 foreach ($name in @('Launch.ps1','launcher.py','recovery.py','Uninstall.ps1','.installed','.install-pending','.update.lock','.update-request')) {
