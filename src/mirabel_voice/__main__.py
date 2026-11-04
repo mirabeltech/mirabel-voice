@@ -153,6 +153,48 @@ def _log_to_file() -> None:
         )
 
 
+def _report_crashes() -> None:
+    """Write every uncaught error to the log, and tell the person.
+
+    Under pythonw an error that escapes main() ends the app with nothing
+    on screen and nothing on disk: the icon is simply never there. The
+    error in the main thread also gets a box, since the app is gone. An
+    error in a background thread is logged only; the app may live on.
+    """
+    import threading
+
+    log = logging.getLogger(__name__)
+
+    def on_crash(kind, value, trace) -> None:  # noqa: ANN001
+        if issubclass(kind, KeyboardInterrupt):
+            sys.__excepthook__(kind, value, trace)
+            return
+        log.critical(
+            "Mirabel Voice stopped on an unexpected error.",
+            exc_info=(kind, value, trace),
+        )
+        _show_box(
+            "Mirabel Voice stopped on an unexpected error:\n"
+            f"{kind.__name__}: {value}\n\n"
+            "Send Tommy the file mirabel-voice.log from "
+            "%APPDATA%\\MirabelVoice\\logs.",
+            icon=0x10,  # MB_ICONERROR
+        )
+
+    def on_thread_crash(args) -> None:  # noqa: ANN001
+        if args.exc_type is SystemExit:
+            return
+        name = args.thread.name if args.thread is not None else "unknown"
+        log.error(
+            "The background task %s stopped on an unexpected error.",
+            name,
+            exc_info=(args.exc_type, args.exc_value, args.exc_traceback),
+        )
+
+    sys.excepthook = on_crash
+    threading.excepthook = on_thread_crash
+
+
 def _show_error_box(message: str) -> None:
     """Show a Windows message box, so errors are visible without a console."""
     _show_box(
@@ -393,6 +435,7 @@ def main(argv: list[str] | None = None) -> int:
             return 0
 
     _log_to_file()
+    _report_crashes()
     load_api_keys()
     try:
         config = Config.load()

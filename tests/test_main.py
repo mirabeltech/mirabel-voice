@@ -53,3 +53,49 @@ def test_a_relaunch_survives_a_slowly_leaving_predecessor():
     assert entry._wait_for_exit(
         lambda: entry.already_running(name), seconds=5.0, sleep=sleep
     ) is True
+
+
+def _install_crash_report(monkeypatch):
+    """Install the hooks for one test; monkeypatch puts the old ones back."""
+    import sys
+    import threading
+
+    monkeypatch.setattr(sys, "excepthook", sys.excepthook)
+    monkeypatch.setattr(threading, "excepthook", threading.excepthook)
+    boxes = []
+    monkeypatch.setattr(entry, "_show_box", lambda message, icon: boxes.append(message))
+    entry._report_crashes()
+    return boxes
+
+
+def test_a_startup_crash_reaches_the_log_and_a_box(monkeypatch, caplog):
+    # Under pythonw a crash in main() left no icon, no box and no log
+    # line, so a work computer that never showed the icon gave no clue.
+    import sys
+
+    boxes = _install_crash_report(monkeypatch)
+    try:
+        raise RuntimeError("the tray would not start")
+    except RuntimeError:
+        sys.excepthook(*sys.exc_info())
+
+    assert "the tray would not start" in caplog.text
+    assert "Traceback" in caplog.text
+    assert len(boxes) == 1 and "RuntimeError: the tray would not start" in boxes[0]
+
+
+def test_a_background_crash_is_logged_without_a_box(monkeypatch, caplog):
+    import threading
+
+    boxes = _install_crash_report(monkeypatch)
+
+    def fail():
+        raise ValueError("the update check broke")
+
+    worker = threading.Thread(target=fail, name="mirabel-test-worker")
+    worker.start()
+    worker.join()
+
+    assert "mirabel-test-worker" in caplog.text
+    assert "the update check broke" in caplog.text
+    assert boxes == []
