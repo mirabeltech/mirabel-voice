@@ -4,12 +4,54 @@ on:
     branches: [main]
     tags: ['v*']
   pull_request:
-    branches: [main]
+    branches: [main, ci/skip-docs-only]  # TEMP: second branch for the stacked test PR; remove before merge
   workflow_dispatch:
 permissions:
   contents: read
 jobs:
+  # Decides whether the slow jobs run. Pushes, tags and manual runs always do.
+  # A pull request skips them only when every file it changes is docs-only:
+  # an added or modified *.md file outside the code folders, or anything
+  # under docs/images/. Everything else counts as code, including deletions
+  # and renames (packaging copies README.md, ADMIN.md and three docs/*.md
+  # guides into the ZIP) and docs/pricing.json (tests read it).
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      code: ${{ steps.decide.outputs.code }}
+    steps:
+      - uses: actions/checkout@v4
+        if: github.event_name == 'pull_request'
+        with:
+          fetch-depth: 2
+      - id: decide
+        env:
+          EVENT: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+          code=true
+          # On pull_request, HEAD is GitHub's merge commit: HEAD^1 is the base
+          # and the diff is exactly what merging would change.
+          if [ "$EVENT" = pull_request ] && git rev-parse -q --verify 'HEAD^2' >/dev/null; then
+            code=false
+            while IFS=$'\t' read -r status path; do
+              kind=code
+              if [ "$status" = A ] || [ "$status" = M ]; then
+                case "$path" in
+                  src/*|tests/*|scripts/*|packaging/*|operations/*|.github/*|.claude/*) ;;
+                  *.md|docs/images/*) kind=docs ;;
+                esac
+              fi
+              echo "$kind  $status  $path"
+              if [ "$kind" = code ]; then code=true; fi
+            done < <(git diff --name-status --no-renames 'HEAD^1' HEAD)
+          fi
+          echo "code=$code"
+          echo "code=$code" >> "$GITHUB_OUTPUT"
+          echo "Code changed: **$code**" >> "$GITHUB_STEP_SUMMARY"
   bundle:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -53,7 +95,8 @@ jobs:
             dist/*inventory.json
           if-no-files-found: error
   hardware:
-    needs: bundle
+    needs: [changes, bundle]
+    if: needs.changes.outputs.code == 'true'
     strategy:
       fail-fast: false
       matrix:
