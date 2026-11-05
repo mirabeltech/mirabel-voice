@@ -1,6 +1,7 @@
 """The factory's production guard (.claude/hooks/production-guard.mjs) blocks
 relay deploys, AWS, credentials, tags and releases, and lets ordinary work run."""
 
+import base64
 import json
 import shutil
 import subprocess
@@ -92,6 +93,65 @@ def test_production_commands_are_blocked(command):
 ])
 def test_ordinary_work_runs(command):
     result = run(command)
+    assert result.returncode == 0, result.stderr
+
+
+def encoded(command):
+    return base64.b64encode(command.encode("utf-16-le")).decode("ascii")
+
+
+# Forms the second version let through (review of #97).
+@pytest.mark.parametrize("command", [
+    'cd "C:\\Dev\\"; aws s3 ls',
+    "Write-Output $(aws s3 ls)",
+    "(aws s3 ls)",
+    "if ($true) { aws s3 ls }",
+    "uv run python scripts\\deploy_relay.py",
+    "poetry run python scripts/set_relay.py",
+    "uv run aws s3 ls",
+    "pipx run awscli s3 ls",
+    "node scripts/approve_bundle.py",
+    f"powershell -EncodedCommand {encoded('aws s3 ls')}",
+    f"pwsh -enc {encoded('Get-Content relay.json')}",
+    "powershell -EncodedCommand not-base64-at-all!!",
+])
+def test_powershell_forms_are_blocked(command):
+    result = run(command)
+    assert result.returncode == 2, result.stderr
+
+
+@pytest.mark.parametrize("command", [
+    "echo $(aws s3 ls)",
+    'echo "$(aws s3 ls)"',
+    "echo `aws s3 ls`",
+    "(aws s3 ls)",
+    "{ aws s3 ls; }",
+    "if true; then aws s3 ls; fi",
+    "for r in a b; do aws s3 ls; done",
+    'bash -lc "aws s3 ls"',
+    'sh -ec "aws s3 ls"',
+    "bash scripts/deploy_relay.py",
+    "bash <<EOF\naws s3 ls\nEOF",
+    "python - <<'EOF'\nimport deploy_relay\nEOF",
+    'cd "/c/Dev/\\"x"; aws s3 ls',
+])
+def test_bash_forms_are_blocked(command):
+    result = run(command, tool="Bash")
+    assert result.returncode == 2, result.stderr
+
+
+@pytest.mark.parametrize("command,tool", [
+    ("git commit -m \"$(cat <<'EOF'\nBlock aws s3 ls, git tag v1.0 and cat ~/.aws/credentials\nEOF\n)\"", "Bash"),
+    ("git commit -F - <<'EOF'\nThe guard blocks aws s3 ls\nEOF", "Bash"),
+    ("cat <<EOF\naws s3 ls is blocked now\nEOF", "Bash"),
+    ("rg -n deploy_relay scripts tests", "Bash"),
+    ("Get-Content scripts\\deploy_relay.py", "PowerShell"),
+    ('cd "C:\\Dev\\mirabel-voice\\"; git status', "PowerShell"),
+    ("git commit -F C:\\temp\\msg.txt", "PowerShell"),
+    ("if ($LASTEXITCODE -ne 0) { throw 'tests failed' }", "PowerShell"),
+])
+def test_text_and_reads_still_run(command, tool):
+    result = run(command, tool=tool)
     assert result.returncode == 0, result.stderr
 
 
