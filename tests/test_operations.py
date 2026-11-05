@@ -593,18 +593,21 @@ def test_digest_groups_reports_the_same_way_usage_report_does():
         assert usage_report.group_reports(sample) == monitor.group_reports(sample)
 
 
-def test_digest_lists_each_group_and_the_unreadable_count():
+def test_digest_lists_each_group_and_the_unreadable_count(monkeypatch):
+    monkeypatch.delenv("AWS_REGION", raising=False)
     sns = Publisher()
     assert monitor.reports_check(FakeLogs(REPORT_EVENTS), sns, REPORTS_ARN, NOW) == 5
     [email] = sns.sent
     assert email["TopicArn"] == REPORTS_ARN
-    assert email["Subject"] == "Mirabel Voice: 5 error report(s) in the last 24 hours"
+    assert email["Subject"] == "Mirabel Voice: 5 reports, 1 new - OSError in audio.py"
     body = email["Message"]
     assert "from 2026-11-04 13:00 UTC to 2026-11-05 13:00 UTC" in body
     timeout = body.split("TimeoutError at mirabel_voice/relay_client.py:post\n")[1].split("\n\n")[0]
     assert timeout.splitlines() == [
+        "  Ongoing: also reported from 2026-11-04 12:00 UTC in the 7 days before.",
         "  Count: 3",
         "  People: cole, priya",
+        "  Versions: 0.9.7",
         "  First seen: 2026-11-04 17:00 UTC",
         "  Last seen: 2026-11-05 11:00 UTC",
         "  Innermost frame: mirabel_voice/relay_client.py:51 in post",
@@ -634,7 +637,8 @@ def test_a_lone_surrogate_in_a_report_still_sends():
     assert "  Newest message: cut ? off" in body
 
 
-def test_a_digest_of_many_large_reports_fits_one_sns_message():
+def test_a_digest_of_many_large_reports_fits_one_sns_message(monkeypatch):
+    monkeypatch.delenv("AWS_REGION", raising=False)
     sns = Publisher()
     events = [report_event(n, NOW - n * 60_000, error_type="E" * 8_000 + str(n),
                            inner=("f.py", 1, "g" * 7_000), message="m" * 16_000)
@@ -648,6 +652,100 @@ def test_a_digest_of_many_large_reports_fits_one_sns_message():
     assert 0 < shown < 30
     assert f"{30 - shown} more group(s) not shown; run scripts/usage_report.py --reports" in body
     assert body.endswith("Unreadable report lines: 0\n")
+
+
+def digest_of(events, monkeypatch, region=None):
+    if region:
+        monkeypatch.setenv("AWS_REGION", region)
+    else:
+        monkeypatch.delenv("AWS_REGION", raising=False)
+    sns = Publisher()
+    monitor.reports_check(FakeLogs(events), sns, REPORTS_ARN, NOW)
+    return sns.sent
+
+
+def test_digest_opens_with_a_summary_line_per_group(monkeypatch):
+    [email] = digest_of(REPORT_EVENTS, monkeypatch)
+    body = email["Message"]
+    summary = body.split("Summary\n")[1].split("\n\n")[0].splitlines()
+    assert summary == [
+        "- Ongoing since 2026-11-04: TimeoutError at mirabel_voice/relay_client.py:post "
+        "(3 reports, 2 people; versions 0.9.7)",
+        "- NEW: OSError at mirabel_voice/audio.py:record (1 report, 1 person; versions 0.9.7)",
+    ]
+    assert (body.index("Summary") < body.index("Details")
+            < body.index("TimeoutError at mirabel_voice/relay_client.py:post\n"))
+    assert "  New: no report like this in the 7 days before." in body
+
+
+def test_a_report_older_than_the_lookback_does_not_make_a_group_ongoing(monkeypatch):
+    events = [report_event(1, NOW - HOUR), report_event(2, NOW - 8 * 24 * HOUR - HOUR)]
+    [email] = digest_of(events, monkeypatch)
+    assert email["Subject"] == "Mirabel Voice: 1 report, 1 new - TimeoutError in relay_client.py"
+
+
+def test_subject_names_the_largest_group_when_none_is_new(monkeypatch):
+    audio = dict(error_type="OSError", inner=("mirabel_voice/audio.py", 9, "record"))
+    events = [report_event(1, NOW - HOUR, **audio), report_event(2, NOW - 2 * HOUR),
+              report_event(3, NOW - 3 * HOUR), report_event(4, NOW - 30 * HOUR),
+              report_event(5, NOW - 40 * HOUR, **audio)]
+    [email] = digest_of(events, monkeypatch)
+    assert email["Subject"] == "Mirabel Voice: 3 reports, 0 new - TimeoutError in relay_client.py"
+
+
+def test_subject_is_short_printable_ascii(monkeypatch):
+    error_type = "Bad" + chr(0xD800) + chr(0xE9) + "Type" + chr(10) + "X" * 200
+    [email] = digest_of([report_event(1, NOW - HOUR, error_type=error_type)], monkeypatch)
+    subject = email["Subject"]
+    assert len(subject) <= 99
+    assert all(" " <= c <= "~" for c in subject)
+    assert subject.startswith("Mirabel Voice: 1 report, 1 new - Bad??Type?XXX")
+    assert subject.endswith("...")
+
+
+def test_reports_only_in_the_lookback_send_nothing(monkeypatch):
+    events = [report_event(1, NOW - 30 * HOUR), report_event(2, NOW - 6 * 24 * HOUR)]
+    assert digest_of(events, monkeypatch) == []
+
+
+def test_each_group_lists_its_versions_with_unknown_for_none(monkeypatch):
+    unversioned = report_event(2, NOW - 2 * HOUR)
+    line = json.loads(unversioned["message"].partition("report ")[2])
+    del line["version"]
+    unversioned["message"] = "INFO report " + json.dumps(line, sort_keys=True)
+    [email] = digest_of([report_event(1, NOW - HOUR), unversioned], monkeypatch)
+    assert "  Versions: 0.9.7, unknown\n" in email["Message"]
+    assert "(2 reports, 1 person; versions 0.9.7, unknown)" in email["Message"]
+
+
+def test_known_error_types_say_what_they_usually_mean(monkeypatch):
+    events = [report_event(1, NOW - HOUR, error_type="PortAudioError",
+                           inner=("mirabel_voice/audio.py", 9, "record")),
+              report_event(2, NOW - 2 * HOUR)]
+    [email] = digest_of(events, monkeypatch)
+    body = email["Message"]
+    portaudio = body.split("PortAudioError at mirabel_voice/audio.py:record\n")[1].split("\n\n")[0]
+    assert ("  Likely cause: Usually the microphone is missing, unplugged or in use by another app, "
+            "not an app bug.") in portaudio.splitlines()
+    timeout = body.split("TimeoutError at mirabel_voice/relay_client.py:post\n")[1].split("\n\n")[0]
+    assert "Likely cause" not in timeout
+
+
+def test_digest_ends_with_the_dashboard_link_for_its_region(monkeypatch):
+    assert monitor.DASHBOARD == setup.REPORTS
+    [email] = digest_of(REPORT_EVENTS, monkeypatch, region="us-east-2")
+    assert email["Message"].endswith(
+        "Unreadable report lines: 1\n\nDashboard: https://us-east-2.console.aws.amazon.com/cloudwatch/home"
+        "?region=us-east-2#dashboards/dashboard/mirabel-voice-reports\n")
+
+
+def test_summary_lists_at_most_fifty_groups(monkeypatch):
+    events = [report_event(n, NOW - n * 60_000, error_type=f"E{n}") for n in range(1, 61)]
+    [email] = digest_of(events, monkeypatch)
+    summary = email["Message"].split("Summary\n")[1].split("\n\n")[0].splitlines()
+    assert len(summary) == 51
+    assert summary[-1] == "- and 10 more group(s)"
+    assert email["Message"].count("  Count: 1\n") == 60
 
 
 def test_digest_publishes_only_to_the_reports_topic(monkeypatch, capsys):

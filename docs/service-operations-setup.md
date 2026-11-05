@@ -1,6 +1,21 @@
 # Activate usage limits and monitoring
 
-## Daily error-report digest and dashboard, November 5, 2026 (prepared, not applied)
+## Digest readable at a glance, November 5, 2026 (prepared, not applied)
+
+Tommy asked for a digest he can judge from the subject line (issue #119). Only `operations/monitor.py` changes: the email stays plain text through `mirabel-voice-reports`, and the topic, schedule, dashboard, permissions and alarms are untouched.
+
+- **Subject**: `Mirabel Voice: <N> reports, <K> new - <error type> in <file>`. The named group is the first new one, or the largest when none is new. SNS requires printable ASCII under 100 characters, so other characters become `?` and a long subject ends in `...`.
+- **Summary first**: one line per group (new or ongoing, error type, innermost `file:function`, reports, people, versions), at most 50 lines, then the detail blocks.
+- **New or ongoing**: the scan now reads the 7 days before the 24-hour window too. A group with a report there is ongoing, with the date it was first seen. It still emails only when the last 24 hours hold a report.
+- **Versions** per group, from each relay line's `version`, with `unknown` when missing.
+- **Likely cause** for known error types, from `LIKELY_CAUSES`. It starts with `PortAudioError`.
+- **Dashboard link** at the end, for the Lambda's own region.
+
+Applying redeploys the monitor code. `--apply` also redeploys the relay and resets its concurrency, as below.
+
+## Daily error-report digest and dashboard, November 5, 2026 (applied the same day)
+
+Tommy applied this on November 5 after adding the reports topic and the dashboard to the `MirabelVoiceOperationsSetup` policy. Apply returned `configured: true`, and it also deleted the retired `slow`, `relay-errors` and `relay-throttles` alarms that AWS had refused to delete in September.
 
 Tommy asked to hear about the app's error reports without running `scripts/usage_report.py --reports` by hand (issue #116). He chose a daily digest over a metric alarm or one email per error, asked for a dashboard, and wants the digest to go to him only. `scripts/setup_operations.py` now prepares this. Nothing changes in AWS until he runs `--apply`.
 

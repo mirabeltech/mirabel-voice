@@ -257,9 +257,20 @@ def spend_check(context, prices, clock=time.monotonic):
 
 
 REPORTS_WINDOW_MS = 24 * 3_600_000
+# A group with no report in this lookback before the window counts as new.
+LOOKBACK_MS = 7 * 24 * 3_600_000
 MESSAGE_CHARS = 500
 # SNS refuses a message over 262,144 bytes; the margin holds the "more groups" line.
 DIGEST_BYTES = 250_000
+# SNS requires a subject under 100 characters of printable ASCII.
+SUBJECT_CHARS = 99
+SUMMARY_GROUPS = 50
+SUMMARY_FIELD_CHARS = 120
+DASHBOARD = "mirabel-voice-reports"
+# One plain sentence per known error type; a type not listed gets none.
+LIKELY_CAUSES = {
+    "PortAudioError": "Usually the microphone is missing, unplugged or in use by another app, not an app bug.",
+}
 
 
 def read_reports(logs, start, end):
@@ -348,13 +359,24 @@ def utc(milliseconds):
     return dt.datetime.fromtimestamp(milliseconds / 1000, dt.timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
 
 
-def digest(groups, unreadable, start, end):
-    """The plain-text email: a subject and a body small enough for SNS to send."""
+def digest(groups, unreadable, start, end, region=None):
+    """The plain-text email: a subject and a body small enough for SNS to send.
+
+    The body opens with one summary line per group, then a detail block
+    per group, then the unreadable count and the dashboard link. Each
+    group carries the keys annotate() adds: versions and earlier_ms.
+    """
     total = sum(group["count"] for group in groups) + unreadable
-    subject = f"Mirabel Voice: {total} error report(s) in the last 24 hours"
     head = f"Mirabel Voice error reports from {utc(start)} to {utc(end)}.\n\n"
+    summary = ["Summary"] + [summary_line(group) for group in groups[:SUMMARY_GROUPS]]
+    if len(groups) > SUMMARY_GROUPS:
+        summary.append(f"- and {len(groups) - SUMMARY_GROUPS} more group(s)")
+    head += utf8("\n".join(summary)) + "\n\nDetails\n\n"
     tail = f"Unreadable report lines: {unreadable}\n"
-    blocks, size = [], len(head) + len(tail)
+    if region:
+        tail += ("\nDashboard: https://" + region + ".console.aws.amazon.com/cloudwatch/home?region="
+                 + region + "#dashboards/dashboard/" + DASHBOARD + "\n")
+    blocks, size = [], len(head.encode("utf-8")) + len(tail)
     for shown, group in enumerate(groups):
         block = utf8(group_text(group))
         size += len(block.encode("utf-8"))
@@ -363,7 +385,53 @@ def digest(groups, unreadable, start, end):
                           "run scripts/usage_report.py --reports to see them.\n\n")
             break
         blocks.append(block)
-    return subject, head + "".join(blocks) + tail
+    return subject_line(groups, total), head + "".join(blocks) + tail
+
+
+def annotate(groups, recent, earlier):
+    """Add each group's app versions, and when the lookback first saw it.
+
+    versions lists the window's app versions, with unknown for a line
+    that has none. earlier_ms is the first report of the same key in
+    the lookback before the window, or None when the group is new.
+    """
+    versions, first = {}, {}
+    for line in recent:
+        key = report_key(line.get("report"))
+        if key is not None:
+            versions.setdefault(key, set()).add(str(line.get("version") or "unknown"))
+    for line in earlier:
+        key = report_key(line.get("report"))
+        if key is not None:
+            first[key] = min(first.get(key, line["seen_ms"]), line["seen_ms"])
+    for group in groups:
+        key = (group["error_type"], group["frame"])
+        group["versions"] = sorted(versions.get(key, {"unknown"}))
+        group["earlier_ms"] = first.get(key)
+    return groups
+
+
+def subject_line(groups, total):
+    """Name the first new group, or the largest when none is new, in SNS-safe ASCII."""
+    new = [group for group in groups if group.get("earlier_ms") is None]
+    text = f"Mirabel Voice: {plural(total, 'report')}, {len(new)} new"
+    named = new[0] if new else max(groups, key=lambda group: group["count"], default=None)
+    if named:
+        file = named["frame"].rsplit(":", 1)[0].replace("\\", "/").rsplit("/", 1)[-1]
+        text += f" - {named['error_type']} in {file}"
+    text = "".join(c if " " <= c <= "~" else "?" for c in text)
+    return text if len(text) <= SUBJECT_CHARS else text[:SUBJECT_CHARS - 3] + "..."
+
+
+def summary_line(group):
+    if group.get("earlier_ms") is None:
+        status = "NEW"
+    else:
+        status = "Ongoing since " + utc(group["earlier_ms"])[:10]
+    versions = clip(", ".join(group.get("versions") or ["unknown"]))
+    return (f"- {status}: {clip(group['error_type'])} at {clip(group['frame'])} "
+            f"({plural(group['count'], 'report')}, {plural(len(group['people']), 'person', 'people')}; "
+            f"versions {versions})")
 
 
 def group_text(group):
@@ -371,15 +439,32 @@ def group_text(group):
     message = str(group["message"] or "(none)")
     if len(message) > MESSAGE_CHARS:
         message = message[:MESSAGE_CHARS] + "..."
+    if group.get("earlier_ms") is None:
+        status = "  New: no report like this in the 7 days before."
+    else:
+        status = f"  Ongoing: also reported from {utc(group['earlier_ms'])} in the 7 days before."
+    cause = LIKELY_CAUSES.get(group["error_type"])
     return "\n".join([
         f"{group['error_type']} at {group['frame']}",
+        status,
+        *([f"  Likely cause: {cause}"] if cause else []),
         f"  Count: {group['count']}",
         f"  People: {', '.join(sorted(group['people']))}",
+        f"  Versions: {', '.join(group.get('versions') or ['unknown'])}",
         f"  First seen: {utc(group['first_seen_ms'])}",
         f"  Last seen: {utc(group['last_seen_ms'])}",
         f"  Innermost frame: {file}:{number} in {function}",
         f"  Newest message: {message}",
     ]) + "\n\n"
+
+
+def plural(count, one, many=None):
+    return f"{count} {one if count == 1 else many or one + 's'}"
+
+
+def clip(text):
+    text = str(text)
+    return text if len(text) <= SUMMARY_FIELD_CHARS else text[:SUMMARY_FIELD_CHARS] + "..."
 
 
 def utf8(text):
@@ -388,15 +473,21 @@ def utf8(text):
 
 
 def reports_check(logs, sns, topic, now_ms):
-    """Email the last 24 hours of error reports, grouped; send nothing when there were none."""
+    """Email the last 24 hours of error reports, grouped; send nothing when there were none.
+
+    The scan also reads the 7 days before the window, only to tell new
+    groups from ongoing ones.
+    """
     start = now_ms - REPORTS_WINDOW_MS
-    lines = read_reports(logs, start, now_ms)
-    if not lines:
+    lines = read_reports(logs, start - LOOKBACK_MS, now_ms)
+    recent = [line for line in lines if line["seen_ms"] >= start]
+    if not recent:
         return 0
-    groups, unreadable = group_reports(lines)
-    subject, message = digest(groups, unreadable, start, now_ms)
+    groups, unreadable = group_reports(recent)
+    annotate(groups, recent, [line for line in lines if line["seen_ms"] < start])
+    subject, message = digest(groups, unreadable, start, now_ms, os.environ.get("AWS_REGION"))
     sns.publish(TopicArn=topic, Subject=subject, Message=message)
-    return len(lines)
+    return len(recent)
 
 
 def lambda_handler(event, context):
