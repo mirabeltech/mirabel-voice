@@ -21,6 +21,7 @@ from .app import STATE_RECORDING, STATE_STARTING
 from .config import LANGUAGES
 from .palette import OCEAN, OCEAN_ON_DARK, apps_use_light_theme, panel_palette
 from .tray import LABELS
+from .version import app_version, version_from_markers  # noqa: F401 - diagnostics and tests read these here
 from .overlay import DOTS, Overlay
 
 log = logging.getLogger(__name__)
@@ -75,55 +76,6 @@ def friendly_key_name(spec: str) -> str:
         else:
             parts.append(name.replace("_", " ").upper() if len(name) <= 3 else name.replace("_", " ").title())
     return " + ".join(parts)
-
-
-def version_from_markers(site) -> str:  # noqa: ANN001 - a Path
-    """The version by the newest dist-info folder name, or nothing.
-
-    The updater records each source update by RENAMING the dist-info
-    folder; the METADATA file inside still says whatever pip wrote at
-    the original install. importlib reads that file, so it answers
-    with the version pip installed, not the one running. The folder
-    name is the truth.
-    """
-    try:
-        from .updater import parse_version
-
-        markers = list(site.glob("mirabel_voice-*.dist-info"))
-        versions = [parse_version(marker.name) for marker in markers]
-        versions = [v for v in versions if v]
-        if versions:
-            return "v" + ".".join(str(part) for part in max(versions))
-    except Exception:  # noqa: BLE001 - a strange layout answers nothing
-        pass
-    return ""
-
-
-def app_version() -> str:
-    """The running version, or nothing when it cannot be known."""
-    from pathlib import Path
-    marker = Path(__file__).with_name("_version.txt")
-    if marker.exists():
-        return "v" + marker.read_text(encoding="utf-8").strip()
-    try:
-        from pathlib import Path
-
-        marked = version_from_markers(Path(__file__).resolve().parent.parent)
-        if marked:
-            return marked
-    except Exception:  # noqa: BLE001
-        pass
-    source_project = Path(__file__).resolve().parents[2] / 'pyproject.toml'
-    if source_project.exists():
-        import tomllib
-        return 'v' + tomllib.loads(source_project.read_text(encoding='utf-8'))['project']['version']
-    # Fall back for other installed layouts.
-    try:
-        from importlib.metadata import version
-
-        return f"v{version('mirabel-voice')}"
-    except Exception:  # noqa: BLE001 - a missing dist-info is fine
-        return ""
 
 
 def language_names() -> list[str]:

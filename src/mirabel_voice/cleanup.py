@@ -20,6 +20,7 @@ from __future__ import annotations
 import logging
 
 from .config import relay_base
+from .version import VERSION_HEADER, client_version
 
 log = logging.getLogger(__name__)
 
@@ -144,6 +145,7 @@ class Cleaner:
                 self._client = anthropic.Anthropic(
                     base_url=relay_base(self.relay_url),
                     api_key=self._current_key() or "signed-out",
+                    default_headers={VERSION_HEADER: client_version()},
                 )
             else:
                 self._client = anthropic.Anthropic()

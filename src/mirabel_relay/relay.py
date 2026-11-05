@@ -14,8 +14,9 @@ body, so the app's behavior through the relay is the same as without
 it.
 
 Nothing spoken or written is ever logged. Each request emits one usage
-line - who, which route, which model, how much, how long, and the
-outcome - and that line never contains payload text or audio bytes.
+line - who, which app version, which route, which model, how much, how
+long, and the outcome - and that line never contains payload text or
+audio bytes.
 """
 
 from __future__ import annotations
@@ -23,6 +24,7 @@ from __future__ import annotations
 import hmac
 import json
 import logging
+import re
 import time
 from dataclasses import dataclass, field
 from typing import Callable
@@ -34,12 +36,19 @@ log = logging.getLogger(__name__)
 ANTHROPIC_BASE = "https://api.anthropic.com"
 OPENAI_BASE = "https://api.openai.com"
 
+# The app sends its version in this header; the usage line records it.
+# Anything that is not a plain version string is logged as unknown, so
+# a caller cannot write arbitrary text into the log.
+VERSION_HEADER = "x-mirabel-version"
+VERSION_PATTERN = re.compile(r"[0-9A-Za-z.+-]{1,32}")
+UNKNOWN_VERSION = "unknown"
+
 # The rate Ogg granule positions count at for Opus, whatever the
 # recording's own sample rate.
 OGG_OPUS_GRANULE_RATE = 48_000
 
-# Headers that carry the caller's credential or the transport's own
-# bookkeeping. They must not travel on to the provider.
+# Headers that carry the caller's credential, the app's version, or the
+# transport's own bookkeeping. They must not travel on to the provider.
 #
 # accept-encoding is in the list for a different reason. The SDKs ask for
 # gzip, and a compressed reply arriving here would have to be decompressed
@@ -52,6 +61,7 @@ STRIPPED_HEADERS = {
     "host",
     "content-length",
     "accept-encoding",
+    VERSION_HEADER,
 }
 
 # Reply headers the client needs to read the body. Anything else the
@@ -142,35 +152,36 @@ class Relay:
         """Answer one call from the app."""
         if self.limits and len(request.body) > self.limits.MAX_BODY:
             return _error(413, 'Recording is too large. Use a shorter recording.')
+        version = _client_version(request.headers)
         name = self._authenticate(request.headers)
         if name is None:
-            self._log_usage("-", request.path, None, None, 0.0, "refused")
+            self._log_usage("-", request.path, None, None, 0.0, "refused", version=version)
             return _error(401, "The token is missing or not recognized.")
         if self.limits:
             from .limits import Rejected
             try:
                 self.limits.validate(request, name)
             except Rejected as refusal:
-                self._log_usage(name, request.path, None, None, 0.0, 'limited')
+                self._log_usage(name, request.path, None, None, 0.0, 'limited', version=version)
                 return _error(refusal.status, refusal.message)
         if request.method == "POST" and request.path == "/v1/messages":
             return self._cleanup(name, request)
         if request.method == "POST" and request.path == "/v1/audio/transcriptions":
             return self._transcribe(name, request)
         if request.method == "GET" and request.path == "/update":
-            return self._update(name)
+            return self._update(name, version)
         return _error(404, "The relay does not serve this path.")
 
-    def _update(self, name: str) -> Response:
+    def _update(self, name: str, version: str) -> Response:
         """Say which release this relay endorses for self-update.
 
         The two values are set at deploy time and are not secrets. No
         endorsement keeps managed clients on the installed release.
         """
         if not self.update_info:
-            self._log_usage(name, "update", None, None, 0.0, "none")
+            self._log_usage(name, "update", None, None, 0.0, "none", version=version)
             return _error(404, "The relay endorses no update.")
-        self._log_usage(name, "update", None, None, 0.0, "ok")
+        self._log_usage(name, "update", None, None, 0.0, "ok", version=version)
         return Response(
             200,
             json.dumps(self.update_info).encode(),
@@ -277,6 +288,7 @@ class Relay:
         extra_headers: dict[str, str] | None = None,
     ) -> Response:
         """Forward one call with the real key, and log the usage line."""
+        version = _client_version(request.headers)
         headers = {
             k.lower(): v
             for k, v in request.headers.items()
@@ -294,7 +306,9 @@ class Relay:
         except Exception:  # noqa: BLE001 - the provider being down is an answer too
             latency = self._clock() - started
             log.exception("The provider could not be reached.")
-            self._log_usage(name, route, model, extra_usage, latency, "unreachable")
+            self._log_usage(
+                name, route, model, extra_usage, latency, "unreachable", version=version
+            )
             return _error(502, "The provider could not be reached.")
         latency = self._clock() - started
 
@@ -302,7 +316,9 @@ class Relay:
         usage = dict(extra_usage or {})
         if usage_from_reply is not None and status < 400:
             usage.update(usage_from_reply(body) or {})
-        self._log_usage(name, route, model, usage or None, latency, outcome)
+        self._log_usage(
+            name, route, model, usage or None, latency, outcome, version=version
+        )
 
         lowered = {k.lower(): v for k, v in reply_headers.items()}
         headers = {"content-type": lowered.get("content-type", "application/json")}
@@ -321,6 +337,8 @@ class Relay:
         usage: dict | None,
         latency: float,
         outcome: str,
+        *,
+        version: str,
     ) -> None:
         """Emit the one line per request that the cost report is built from.
 
@@ -329,6 +347,7 @@ class Relay:
         """
         line = {
             "token": name,
+            "version": version,
             "route": route,
             "model": model,
             "latency_ms": round(latency * 1000),
@@ -342,6 +361,12 @@ class Relay:
 def _header(headers: dict[str, str], name: str) -> str:
     """Return one header's value, whatever its capitalization."""
     return {k.lower(): v for k, v in headers.items()}.get(name, "")
+
+
+def _client_version(headers: dict[str, str]) -> str:
+    """Return the app version the caller sent, or unknown."""
+    sent = _header(headers, VERSION_HEADER)
+    return sent if VERSION_PATTERN.fullmatch(sent) else UNKNOWN_VERSION
 
 
 def _json_model(body: bytes) -> str | None:

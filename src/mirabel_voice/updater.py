@@ -30,6 +30,8 @@ import urllib.request
 import zipfile
 from pathlib import Path
 
+from .version import VERSION_HEADER, client_version
+
 log = logging.getLogger(__name__)
 
 RELEASE_API = "https://api.github.com/repos/mirabeltech/mirabel-voice/releases/latest"
@@ -94,7 +96,7 @@ def relay_endorsement(relay_url: str, credential, fetch=None):  # noqa: ANN001
         key = credential() if callable(credential) else credential
         if not key:
             return None
-        answer = json.loads((fetch or _fetch)(f"{base}/update", {"x-api-key": key}))
+        answer = json.loads((fetch or _fetch)(f"{base}/update", {"x-api-key": key, VERSION_HEADER: client_version()}))
         if isinstance(answer, dict) and answer.get("version") and answer.get("sha256"):
             return answer
         return None
