@@ -536,3 +536,104 @@ def test_a_jwt_shaped_credential_without_sign_in_configured_is_refused():
     reply = relay.handle(cleanup_request(token=A_JWT))
     assert reply.status == 401
     assert forward.calls == []
+
+
+# --- The app version on the usage line ---------------------------------------
+
+import pytest  # noqa: E402
+
+from mirabel_relay.limits import Rejected  # noqa: E402
+
+
+def usage_lines(caplog):
+    return [
+        json.loads(r.getMessage().removeprefix("usage "))
+        for r in caplog.records
+        if r.getMessage().startswith("usage ")
+    ]
+
+
+def with_version(request, version):
+    request.headers["X-Mirabel-Version"] = version
+    return request
+
+
+class Refusing:
+    """Stands in for Limits: every call is over the limit."""
+
+    MAX_BODY = 10_000_000
+
+    def validate(self, request, name):
+        raise Rejected(429, "Slow down.")
+
+
+@pytest.mark.parametrize("request_for", [
+    lambda: cleanup_request(),
+    lambda: transcribe_request(),
+    lambda: update_request(),
+    lambda: cleanup_request(token="stolen-guess"),
+], ids=["cleanup", "transcribe", "update", "refused"])
+def test_every_usage_line_records_the_app_version(caplog, request_for):
+    relay, _ = make_relay(update_info=ENDORSEMENT)
+    with caplog.at_level(logging.INFO):
+        relay.handle(with_version(request_for(), "0.9.7"))
+    assert [line["version"] for line in usage_lines(caplog)] == ["0.9.7"]
+
+
+def test_a_limited_call_records_the_app_version(caplog):
+    relay = Relay(TOKENS, REAL_KEY, REAL_OPENAI_KEY, forward=FakeForward(), limits=Refusing())
+    with caplog.at_level(logging.INFO):
+        answer = relay.handle(with_version(cleanup_request(), "0.9.7"))
+    assert answer.status == 429
+    [line] = usage_lines(caplog)
+    assert (line["outcome"], line["version"]) == ("limited", "0.9.7")
+
+
+def test_an_unreachable_provider_still_records_the_app_version(caplog):
+    relay, _ = make_relay(FakeForward(error=ConnectionError("down")))
+    with caplog.at_level(logging.INFO):
+        relay.handle(with_version(cleanup_request(), "0.9.7"))
+    [line] = usage_lines(caplog)
+    assert (line["outcome"], line["version"]) == ("unreachable", "0.9.7")
+
+
+@pytest.mark.parametrize("sent", [
+    None, "", "0.9.7 hello", 'v1"}', "0" * 33, "0.9.7\nusage {}",
+], ids=["missing", "empty", "space", "quote", "too-long", "newline"])
+def test_a_missing_or_odd_version_is_logged_as_unknown(caplog, sent):
+    request = cleanup_request()
+    if sent is not None:
+        with_version(request, sent)
+    relay, _ = make_relay()
+    with caplog.at_level(logging.INFO):
+        relay.handle(request)
+    [line] = usage_lines(caplog)
+    assert line["version"] == "unknown"
+
+
+def test_a_32_character_version_is_kept(caplog):
+    version = "1.2.3-rc+" + "a" * 23
+    assert len(version) == 32
+    relay, _ = make_relay()
+    with caplog.at_level(logging.INFO):
+        relay.handle(with_version(cleanup_request(), version))
+    [line] = usage_lines(caplog)
+    assert line["version"] == version
+
+
+def test_the_app_version_never_travels_to_the_provider():
+    relay, forward = make_relay()
+    relay.handle(with_version(cleanup_request(), "0.9.7"))
+    relay.handle(with_version(transcribe_request(), "0.9.7"))
+    assert len(forward.calls) == 2
+    for call in forward.calls:
+        assert "x-mirabel-version" not in {k.lower() for k in call["headers"]}
+
+
+def test_the_relay_keeps_no_version_between_calls(caplog):
+    """The Lambda container reuses one Relay for many people."""
+    relay, _ = make_relay()
+    with caplog.at_level(logging.INFO):
+        relay.handle(with_version(cleanup_request(), "0.9.7"))
+        relay.handle(cleanup_request())
+    assert [line["version"] for line in usage_lines(caplog)] == ["0.9.7", "unknown"]
