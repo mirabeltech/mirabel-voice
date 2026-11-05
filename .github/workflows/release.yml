@@ -9,7 +9,59 @@ on:
 permissions:
   contents: read
 jobs:
+  # Decides whether the slow jobs run. Pushes, tags and manual runs always do.
+  # A pull request skips them only when every file it changes is docs-only:
+  # an added or modified *.md file outside the code folders, or anything
+  # under docs/images/. Everything else counts as code, including deletions
+  # and renames (packaging copies README.md, ADMIN.md and three docs/*.md
+  # guides into the ZIP) and docs/pricing.json (tests read it).
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      code: ${{ steps.decide.outputs.code }}
+    steps:
+      - uses: actions/checkout@v4
+        if: github.event_name == 'pull_request'
+        with:
+          fetch-depth: 2
+      - id: decide
+        env:
+          EVENT: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+          code=true
+          # On pull_request, HEAD is GitHub's merge commit: HEAD^1 is the base
+          # and the diff is exactly what merging would change.
+          # The diff runs in a plain assignment so set -e stops the step if git
+          # fails; a process substitution would hide that and leave code=false.
+          # An empty diff also runs everything.
+          if [ "$EVENT" = pull_request ] && git rev-parse -q --verify 'HEAD^2' >/dev/null; then
+            changed=$(git diff --name-status --no-renames 'HEAD^1' HEAD)
+          else
+            changed=''
+          fi
+          if [ -n "$changed" ]; then
+            code=false
+            while IFS=$'\t' read -r status path; do
+              kind=code
+              if [ "$status" = A ] || [ "$status" = M ]; then
+                case "$path" in
+                  src/*|tests/*|scripts/*|packaging/*|operations/*|.github/*|.claude/*) ;;
+                  *.md|docs/images/*) kind=docs ;;
+                esac
+              fi
+              echo "$kind  $status  $path"
+              if [ "$kind" = code ]; then code=true; fi
+            done <<< "$changed"
+          fi
+          echo "code=$code"
+          echo "code=$code" >> "$GITHUB_OUTPUT"
+          echo "Code changed: **$code**" >> "$GITHUB_STEP_SUMMARY"
   bundle:
+    needs: changes
+    # Skips only on an explicit 'false'. If changes fails, the output is
+    # empty and everything runs in full.
+    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -53,7 +105,16 @@ jobs:
             dist/*inventory.json
           if-no-files-found: error
   hardware:
-    needs: bundle
+    needs: [changes, bundle]
+    # Branch protection requires each leg by its matrix name. A job-level
+    # if: that is false skips the matrix before it expands and reports one
+    # plain `hardware` check, so the required names never arrive (run
+    # 41954561754). So the legs start whenever bundle passed or was skipped
+    # for a docs-only pull request. On a docs-only pull request each leg runs
+    # on Ubuntu, skips every real step, and passes in a few seconds.
+    if: >-
+      ${{ !cancelled() && (needs.bundle.result == 'success' ||
+      (needs.bundle.result == 'skipped' && needs.changes.outputs.code == 'false')) }}
     strategy:
       fail-fast: false
       matrix:
@@ -63,20 +124,28 @@ jobs:
             cpu: ARM64
           - runner: windows-latest
             cpu: AMD64
-    runs-on: ${{ matrix.runner }}
+    runs-on: ${{ needs.changes.outputs.code == 'false' && 'ubuntu-latest' || matrix.runner }}
+    env:
+      CODE: ${{ needs.changes.outputs.code }}
     steps:
+      - name: Skip, no code changed
+        if: env.CODE == 'false'
+        run: echo "Docs-only pull request; the bundle was not built, so there is nothing to check on ${{ matrix.cpu }}."
       - uses: actions/checkout@v4
+        if: env.CODE != 'false'
       - uses: actions/download-artifact@v4
+        if: env.CODE != 'false'
         with:
           name: python-bundle-test-only
           path: dist
       - name: Verify installation, repair and recovery on this CPU
+        if: env.CODE != 'false'
         shell: powershell
         run: |
           $zip = Get-ChildItem dist/MirabelVoice-*-python.zip | Select-Object -First 1
           scripts/verify_bundle.ps1 -Bundle $zip.FullName
       - name: Check the shortcut, injection and native libraries on this CPU
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && env.CODE != 'false' }}
         shell: powershell
         run: |
           $zip = Get-ChildItem dist/MirabelVoice-*-python.zip | Select-Object -First 1
