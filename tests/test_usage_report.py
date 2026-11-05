@@ -93,7 +93,7 @@ def test_cleanup_pricing_is_unchanged():
 
 import usage_report  # noqa: E402
 from usage_report import (  # noqa: E402
-    SMOKE_HOLDER, never_seen, read_expected, read_lines, report_versions, versions,
+    SMOKE_HOLDER, never_seen, read_expected, read_usage, report_versions, versions,
 )
 
 
@@ -167,7 +167,7 @@ def test_the_section_prints_person_version_last_seen_and_the_rest(capsys):
     assert "  mark" in out
 
 
-def test_read_lines_keeps_each_events_timestamp():
+def test_read_usage_keeps_each_events_timestamp():
     class Logs:
         def get_paginator(self, name):
             assert name == "filter_log_events"
@@ -184,7 +184,7 @@ def test_read_lines_keeps_each_events_timestamp():
         def client(self, name):
             return Logs()
 
-    assert read_lines(Session(), 30, "usage") == [
+    assert read_usage(Session(), 30) == [
         {"token": "cole", "version": "0.9.7", "seen_ms": 1_234}
     ]
 
