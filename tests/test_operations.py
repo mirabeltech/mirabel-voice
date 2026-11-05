@@ -332,6 +332,22 @@ def test_preflight_reads_only_named_metric_alarms():
     assert len(requests[0]["AlarmNames"]) == len(setup.alarms(CONFIG, "test-topic"))
 
 
+def test_preflight_passes_before_the_reports_topic_and_dashboard_exist():
+    class Missing(Exception):
+        def __init__(self, code):
+            self.response = {"Error": {"Code": code}}
+    class Client:
+        def get_dashboard(self, **kwargs):
+            raise Missing("ResourceNotFound")
+        def get_topic_attributes(self, **kwargs):
+            raise Missing("NotFound")
+        def get_account_settings(self, **kwargs):
+            return {"AccountLimit": {"UnreservedConcurrentExecutions": 1000}}
+        def __getattr__(self, name):
+            return lambda **kwargs: {}
+    assert setup.preflight(SimpleNamespace(client=lambda name: Client()), "123", CONFIG) == []
+
+
 def apply_clients(monkeypatch):
     """Mocked AWS clients that let apply() run to the end; nothing reaches AWS."""
     import io
@@ -600,6 +616,33 @@ def test_a_window_with_no_reports_publishes_nothing():
     assert sns.sent == []
 
 
+def test_a_lone_surrogate_in_a_report_still_sends():
+    sns = Publisher()
+    events = [report_event(1, NOW - HOUR, error_type="Bad\ud800Type", message="cut \ud800 off")]
+    assert monitor.reports_check(FakeLogs(events), sns, REPORTS_ARN, NOW) == 1
+    [email] = sns.sent
+    body = email["Message"]
+    body.encode("utf-8")
+    assert "Bad?Type at mirabel_voice/relay_client.py:post" in body
+    assert "  Newest message: cut ? off" in body
+
+
+def test_a_digest_of_many_large_reports_fits_one_sns_message():
+    sns = Publisher()
+    events = [report_event(n, NOW - n * 60_000, error_type="E" * 8_000 + str(n),
+                           inner=("f.py", 1, "g" * 7_000), message="m" * 16_000)
+              for n in range(1, 31)]
+    assert monitor.reports_check(FakeLogs(events), sns, REPORTS_ARN, NOW) == 30
+    [email] = sns.sent
+    body = email["Message"]
+    assert len(body.encode("utf-8")) <= 262_144
+    assert "  Newest message: " + "m" * 500 + "...\n" in body
+    shown = body.count("  Count: 1\n")
+    assert 0 < shown < 30
+    assert f"{30 - shown} more group(s) not shown; run scripts/usage_report.py --reports" in body
+    assert body.endswith("Unreadable report lines: 0\n")
+
+
 def test_digest_publishes_only_to_the_reports_topic(monkeypatch, capsys):
     sns = Publisher()
     monkeypatch.setattr(monitor, "bounded", {"logs": FakeLogs(REPORT_EVENTS), "sns": sns}.__getitem__)
@@ -657,6 +700,36 @@ def test_dashboard_reads_the_relay_log_group():
         assert widget["type"] == "log"
         assert widget["properties"]["query"].startswith("SOURCE '/aws/lambda/mirabel-voice-relay' | ")
         assert widget["properties"]["region"] == "us-east-2"
+
+
+def test_dashboard_queries_read_the_lines_the_relay_writes(caplog):
+    import logging
+    import re
+    from mirabel_relay.relay import Relay, Request
+    relay = Relay(tokens={"cole-token": "cole"}, anthropic_key="sk-ant-x", openai_key="sk-x",
+                  forward=lambda *args: pytest.fail("nothing is forwarded"), clock=lambda: 0.0)
+    headers = {"x-api-key": "cole-token", "x-mirabel-version": "0.9.7"}
+    report = {"app_version": "0.9.7", "cpu": "ARM64", "error_type": "TimeoutError",
+              "frames": [["mirabel_voice/app.py", 120, "dictate"]], "message": "timed out"}
+    with caplog.at_level(logging.INFO):
+        assert relay.handle(Request("POST", "/v1/report", headers, json.dumps(report).encode())).status == 204
+        relay.handle(Request("GET", "/update", headers, b""))
+    lines = {r.getMessage().split(" ", 1)[0]: r.getMessage() for r in caplog.records}
+
+    def parsed(query, line):
+        """Run a Logs Insights query's filter and parse steps as Python regexes."""
+        kept = all(re.search(f, line) for f in re.findall(r"filter @message like /(.+?)/ ", query))
+        fields = {}
+        for pattern in re.findall(r"parse @message /(.+?)/ ", query):
+            fields.update(re.search(pattern.replace("(?<", "(?P<"), line).groupdict())
+        return kept and fields
+
+    queries = {title: query for title, _, query in setup.report_queries()}
+    assert parsed(queries["Reports by error type"], lines["report"]) == {"error_type": "TimeoutError"}
+    assert parsed(queries["Reports by person"], lines["report"]) == {"person": "cole", "version": "0.9.7"}
+    assert parsed(queries["Latest app version by person"], lines["usage"]) == {
+        "person": "cole", "version": "0.9.7"}
+    assert not parsed(queries["Reports by person"], lines["usage"])
 
 
 @pytest.mark.parametrize("recipients", [

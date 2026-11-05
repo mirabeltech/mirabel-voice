@@ -257,6 +257,9 @@ def spend_check(context, prices, clock=time.monotonic):
 
 
 REPORTS_WINDOW_MS = 24 * 3_600_000
+MESSAGE_CHARS = 500
+# SNS refuses a message over 262,144 bytes; the margin holds the "more groups" line.
+DIGEST_BYTES = 250_000
 
 
 def read_reports(logs, start, end):
@@ -339,24 +342,42 @@ def utc(milliseconds):
 
 
 def digest(groups, unreadable, start, end):
-    """The plain-text email: a subject and a body."""
+    """The plain-text email: a subject and a body small enough for SNS to send."""
     total = sum(group["count"] for group in groups) + unreadable
     subject = f"Mirabel Voice: {total} error report(s) in the last 24 hours"
-    lines = [f"Mirabel Voice error reports from {utc(start)} to {utc(end)}.", ""]
-    for group in groups:
-        file, number, function = group["frames"][-1]
-        lines += [
-            f"{group['error_type']} at {group['frame']}",
-            f"  Count: {group['count']}",
-            f"  People: {', '.join(sorted(group['people']))}",
-            f"  First seen: {utc(group['first_seen_ms'])}",
-            f"  Last seen: {utc(group['last_seen_ms'])}",
-            f"  Innermost frame: {file}:{number} in {function}",
-            f"  Newest message: {group['message'] or '(none)'}",
-            "",
-        ]
-    lines.append(f"Unreadable report lines: {unreadable}")
-    return subject, "\n".join(lines) + "\n"
+    head = f"Mirabel Voice error reports from {utc(start)} to {utc(end)}.\n\n"
+    tail = f"Unreadable report lines: {unreadable}\n"
+    blocks, size = [], len(head) + len(tail)
+    for shown, group in enumerate(groups):
+        block = utf8(group_text(group))
+        size += len(block.encode("utf-8"))
+        if size > DIGEST_BYTES:
+            blocks.append(f"{len(groups) - shown} more group(s) not shown; "
+                          "run scripts/usage_report.py --reports to see them.\n\n")
+            break
+        blocks.append(block)
+    return subject, head + "".join(blocks) + tail
+
+
+def group_text(group):
+    file, number, function = group["frames"][-1]
+    message = str(group["message"] or "(none)")
+    if len(message) > MESSAGE_CHARS:
+        message = message[:MESSAGE_CHARS] + "..."
+    return "\n".join([
+        f"{group['error_type']} at {group['frame']}",
+        f"  Count: {group['count']}",
+        f"  People: {', '.join(sorted(group['people']))}",
+        f"  First seen: {utc(group['first_seen_ms'])}",
+        f"  Last seen: {utc(group['last_seen_ms'])}",
+        f"  Innermost frame: {file}:{number} in {function}",
+        f"  Newest message: {message}",
+    ]) + "\n\n"
+
+
+def utf8(text):
+    """Text SNS can encode: JSON escapes in a report can decode to a lone surrogate."""
+    return text.encode("utf-8", "replace").decode("utf-8")
 
 
 def reports_check(logs, sns, topic, now_ms):

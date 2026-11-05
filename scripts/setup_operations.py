@@ -10,13 +10,14 @@ import urllib.request
 import wave
 import zipfile
 
+from deploy_relay import SMOKE_HOLDER
+
 ROOT = Path(__file__).resolve().parents[1]
 FUNCTION = "mirabel-voice-relay"
 MONITOR = "mirabel-voice-monitor"
 TABLE = "mirabel-voice-rate-limits"
 TOPIC = "mirabel-voice-alerts"
 REPORTS = "mirabel-voice-reports"  # the digest's topic and the dashboard share this name
-SMOKE_HOLDER = "Smoke test"
 NAMESPACE = "MirabelVoice/Operations"
 RETIRED_ALARMS = ["mirabel-voice-" + suffix for suffix in (
     "slow", "relay-errors", "relay-throttles", "spend-monitor", "unpriced-usage", "stale-prices",
@@ -109,7 +110,7 @@ def report_queries():
     """Logs Insights widgets over the relay's `report {...}` and `usage {...}` lines.
 
     The relay writes each line with sorted keys, so `token` and `version` are
-    always the last two keys, and `error_type` comes first inside `report`.
+    always the last two keys. `error_type` is matched by name wherever it falls.
     """
     reports = r"filter @message like /report \{/"
     person = r'parse @message /"token": "(?<person>[^"]*)", "version": "(?<version>[^"]*)"\}/'
