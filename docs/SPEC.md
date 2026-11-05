@@ -10,7 +10,7 @@ An internal dictation tool for the organization. Hold `Ctrl+Win`, speak, release
 
 1. Key-release to pasted text in 1–2 seconds for a typical utterance.
 2. Output that needs no manual editing: no filler words, correct punctuation, self-corrections applied.
-3. Zero data at rest: no audio and no transcripts stored anywhere. Two records exist, and neither holds audio or text: the relay keeps one usage line per request (who, app version, route, model, amounts, outcome), and the app queues the scrubbed error reports described in README "Privacy and support".
+3. Zero data at rest: no audio and no transcripts stored anywhere. The relay keeps one usage line per request (who, app version, route, model, amounts, outcome), and the app queues the scrubbed error reports described in README "Privacy and support"; neither holds audio or transcript text.
 4. A non-technical coworker can install it with one script and one hotkey lesson.
 
 ## Non-goals (v1)
