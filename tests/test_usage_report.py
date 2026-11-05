@@ -87,3 +87,116 @@ def test_cleanup_pricing_is_unchanged():
     assert person["cleanup_cost"] == pytest.approx(
         1000 / 1e6 * 1.0 + 100 / 1e6 * 5.0
     )
+
+
+# --- The versions section ----------------------------------------------------
+
+import usage_report  # noqa: E402
+from usage_report import (  # noqa: E402
+    SMOKE_HOLDER, never_seen, read_expected, read_lines, report_versions, versions,
+)
+
+
+def seen(who, version, at, **extra):
+    line = {"token": who, "route": "update", "outcome": "ok", "seen_ms": at}
+    if version is not None:
+        line["version"] = version
+    line.update(extra)
+    return line
+
+
+def test_the_latest_version_is_the_newest_call_not_the_highest_number():
+    people = versions([
+        seen("cole", "0.9.6", 1_000),
+        seen("cole", "0.9.7", 2_000),
+        seen("cole", "0.9.5", 3_000),  # rolled back
+    ])
+    assert people["cole"]["latest"] == "0.9.5"
+    assert people["cole"]["last_seen_ms"] == 3_000
+    assert people["cole"]["others"] == ["0.9.6", "0.9.7"]
+
+
+def test_line_order_does_not_decide_the_latest():
+    people = versions([seen("cole", "0.9.7", 2_000), seen("cole", "0.9.6", 1_000)])
+    assert (people["cole"]["latest"], people["cole"]["last_seen_ms"]) == ("0.9.7", 2_000)
+
+
+def test_a_line_without_a_version_counts_as_unknown():
+    people = versions([seen("priya", None, 1_000)])
+    assert people["priya"]["latest"] == "unknown"
+
+
+def test_refusals_and_the_smoke_test_are_not_people():
+    people = versions([seen("-", "0.9.7", 1_000), seen(SMOKE_HOLDER, "0.9.7", 1_000)])
+    assert people == {}
+
+
+def test_the_expected_file_skips_comments_and_blank_lines(tmp_path):
+    path = tmp_path / "people.txt"
+    path.write_text(
+        "# who should be running it\n\ncole@example.com\n  priya@example.com  # laptop\n",
+        encoding="utf-8",
+    )
+    assert read_expected(path) == ["cole@example.com", "priya@example.com"]
+
+
+def test_never_seen_lists_the_expected_people_without_a_line():
+    people = versions([seen("cole@example.com", "0.9.7", 1_000)])
+    assert never_seen(["cole@example.com", "mark@example.com"], people) == ["mark@example.com"]
+
+
+def test_the_section_prints_person_version_last_seen_and_the_rest(capsys):
+    people = versions([
+        seen("cole", "0.9.6", 1_000),
+        seen("cole", "0.9.7", 1_762_257_600_000),  # 2025-11-04 12:00 UTC
+    ])
+    report_versions(people, ["cole", "mark"], 30)
+    out = capsys.readouterr().out
+    row = next(line for line in out.splitlines() if line.startswith("cole"))
+    assert row.split() == ["cole", "0.9.7", "2025-11-04", "12:00", "0.9.6"]
+    assert "Installed but never seen (1):" in out
+    assert "  mark" in out
+
+
+def test_read_lines_keeps_each_events_timestamp():
+    class Logs:
+        def get_paginator(self, name):
+            assert name == "filter_log_events"
+            return self
+
+        def paginate(self, **kwargs):
+            assert kwargs["filterPattern"] == "usage"
+            return [{"events": [
+                {"timestamp": 1_234, "message": 'INFO usage {"token": "cole", "version": "0.9.7"}'},
+                {"timestamp": 5_678, "message": "INFO something else"},
+            ]}]
+
+    class Session:
+        def client(self, name):
+            return Logs()
+
+    assert read_lines(Session(), 30, "usage") == [
+        {"token": "cole", "version": "0.9.7", "seen_ms": 1_234}
+    ]
+
+
+def test_an_unreadable_expected_file_stops_before_aws(tmp_path, monkeypatch, capsys):
+    def no_session(*args):
+        raise AssertionError("the report must not sign in to AWS")
+
+    monkeypatch.setattr(usage_report.deploy_relay, "open_session", no_session)
+    missing = tmp_path / "nobody.txt"
+    assert usage_report.main(["--expected", str(missing)]) == 2
+    assert f"Cannot read the expected-people file: {missing}" in capsys.readouterr().out
+
+
+def test_the_versions_section_follows_the_cost_section(monkeypatch, capsys):
+    monkeypatch.setattr(usage_report.deploy_relay, "open_session", lambda *args: object())
+    monkeypatch.setattr(
+        usage_report, "read_usage",
+        lambda session, days: [dict(seen("cole", "0.9.7", 1_000), route="cleanup",
+                                    model="claude-haiku-4-5", input_tokens=1, output_tokens=1)],
+    )
+    assert usage_report.main([]) == 0
+    out = capsys.readouterr().out
+    assert out.index("Relay usage") < out.index("App versions")

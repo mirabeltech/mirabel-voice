@@ -2,11 +2,16 @@
 
     python scripts/usage_report.py
     python scripts/usage_report.py --days 30
+    python scripts/usage_report.py --expected people.txt
 
 The relay writes one usage line per request to CloudWatch. This reads
 those lines back and adds them up per person. Nothing here reaches a
 provider's billing API: the numbers are the relay's own record of what
 it forwarded, priced with the rates in docs/pricing.json.
+
+After the cost table comes a versions section: each person's latest app
+version and when their copy last called the relay. With --expected, the
+names in that file that never called in the window are listed too.
 
 The lines carry no audio and no text, so a report can be shared without
 sharing anything anybody said.
@@ -30,14 +35,23 @@ PRICES = Path(__file__).resolve().parent.parent / "docs" / "pricing.json"
 
 def main(argv=None) -> int:
     parsed = _arguments(argv)
+    expected = None
+    if parsed.expected:
+        try:
+            expected = read_expected(parsed.expected)
+        except (OSError, UnicodeDecodeError):
+            say(f"Cannot read the expected-people file: {parsed.expected}")
+            return 2
     try:
         session = deploy_relay.open_session(parsed.profile, parsed.region)
         prices = json.loads(PRICES.read_text(encoding="utf-8"))
         lines = read_usage(session, parsed.days)
-        if not lines:
+        if lines:
+            report(summarize(lines, prices), prices, parsed.days)
+        else:
             say(f"No relay requests in the last {parsed.days} days.")
-            return 0
-        report(summarize(lines, prices), prices, parsed.days)
+        say()
+        report_versions(versions(lines), expected, parsed.days)
         return 0
     except Stop as reason:
         say()
@@ -50,29 +64,91 @@ def _arguments(argv):
     parser.add_argument("--days", type=int, default=30, help="Default: 30.")
     parser.add_argument("--profile", help="AWS profile name.")
     parser.add_argument("--region", default=DEFAULT_REGION, help=f"Default: {DEFAULT_REGION}.")
+    parser.add_argument(
+        "--expected", type=Path,
+        help="A file of names, one per line as the report shows them. "
+        "Lists the ones never seen in the window.",
+    )
     return parser.parse_args(argv)
 
 
 def read_usage(session, days: int) -> list[dict]:
     """Return every usage line in the window, oldest first."""
+    return read_lines(session, days, "usage")
+
+
+def read_lines(session, days: int, marker: str) -> list[dict]:
+    """Return every `marker {...}` line in the window, oldest first.
+
+    Each line gains seen_ms, the log event's own timestamp, so the
+    versions section can tell which call came last.
+    """
     import time
 
     client = session.client("logs")
     start = int((time.time() - days * 86400) * 1000)
     found = []
     pages = client.get_paginator("filter_log_events").paginate(
-        logGroupName=LOG_GROUP, startTime=start, filterPattern="usage"
+        logGroupName=LOG_GROUP, startTime=start, filterPattern=marker
     )
     for page in pages:
         for event in page.get("events", []):
-            _, marker, body = event["message"].partition("usage {")
-            if not marker:
+            _, opening, body = event["message"].partition(marker + " {")
+            if not opening:
                 continue
             try:
-                found.append(json.loads("{" + body.strip()))
+                line = json.loads("{" + body.strip())
             except json.JSONDecodeError:
                 continue
+            line["seen_ms"] = event.get("timestamp", 0)
+            found.append(line)
     return found
+
+
+def versions(lines: list[dict]) -> dict[str, dict]:
+    """Each person's latest version, when they were last seen, and the rest.
+
+    Latest means the version on the newest line, not the highest number:
+    a person who rolled back runs the older release. Refused calls and
+    the deploy's smoke test are not people. A line from before the relay
+    recorded versions counts as unknown.
+    """
+    people: dict[str, dict] = {}
+    for line in lines:
+        who = line.get("token", "-")
+        if who in ("-", SMOKE_HOLDER):
+            continue
+        version = line.get("version") or "unknown"
+        seen = line.get("seen_ms", 0)
+        person = people.setdefault(
+            who, {"latest": version, "last_seen_ms": seen, "seen": set()}
+        )
+        person["seen"].add(version)
+        if seen >= person["last_seen_ms"]:
+            person["latest"] = version
+            person["last_seen_ms"] = seen
+    for person in people.values():
+        person["others"] = sorted(person.pop("seen") - {person["latest"]})
+    return people
+
+
+def read_expected(path: Path) -> list[str]:
+    """The names in an expected-people file, in file order.
+
+    One name per line, written as the usage line's token. Blank lines
+    and # comments are skipped.
+    """
+    names: list[str] = []
+    for raw in path.read_text(encoding="utf-8").splitlines():
+        name = raw.split("#", 1)[0].strip()
+        if name and name not in names:
+            names.append(name)
+    return names
+
+
+def never_seen(expected: list[str], people: dict) -> list[str]:
+    """The expected names with no line in the window."""
+    return [name for name in expected if name not in people]
 
 
 def summarize(lines: list[dict], prices: dict) -> dict:
@@ -194,6 +270,33 @@ def report(people: dict, prices: dict, days: int) -> None:
         say(f"{refused} request(s) were refused: no token, or a token nobody holds.")
     if unpriced:
         say(f"No price for: {', '.join(sorted(unpriced))}. Add it to docs/pricing.json.")
+
+
+def report_versions(people: dict, expected: list[str] | None, days: int) -> None:
+    """Print the versions section."""
+    from datetime import datetime, timezone
+
+    say(f"App versions, last {days} days. Times are UTC.")
+    say("=" * 78)
+    say(f"{'Person':<32}{'Latest':<12}{'Last seen':<18}Other versions")
+    say("-" * 78)
+    for who in sorted(people):
+        person = people[who]
+        seen = datetime.fromtimestamp(person["last_seen_ms"] / 1000, tz=timezone.utc)
+        others = ", ".join(person["others"])
+        say(f"{who:<32}{person['latest']:<12}{seen:%Y-%m-%d %H:%M}  {others}".rstrip())
+    if not people:
+        say("Nobody called the relay.")
+    if expected is None:
+        return
+    missing = never_seen(expected, people)
+    say()
+    if missing:
+        say(f"Installed but never seen ({len(missing)}):")
+        for name in missing:
+            say(f"  {name}")
+    else:
+        say("Everyone in the expected-people file was seen.")
 
 
 if __name__ == "__main__":
