@@ -283,6 +283,27 @@ def test_reports_that_cannot_be_grouped_are_counted_and_noted(capsys):
     assert "skipped 3 unreadable report lines" in out
 
 
+def test_read_reports_reads_the_report_lines():
+    class Logs:
+        def get_paginator(self, name):
+            return self
+
+        def paginate(self, **kwargs):
+            assert kwargs["filterPattern"] == "report"
+            return [{"events": [
+                {"timestamp": 1_234, "message": 'INFO report {"token": "cole", "report": {}}'},
+                {"timestamp": 5_678, "message": 'INFO usage {"route": "/v1/report"}'},
+            ]}]
+
+    class Session:
+        def client(self, name):
+            return Logs()
+
+    assert usage_report.read_reports(Session(), 7) == [
+        {"token": "cole", "report": {}, "seen_ms": 1_234}
+    ]
+
+
 def test_the_reports_section_runs_only_with_the_flag(monkeypatch, capsys):
     read = []
     monkeypatch.setattr(usage_report.deploy_relay, "open_session", lambda *args: object())
