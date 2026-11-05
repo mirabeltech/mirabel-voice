@@ -2,6 +2,7 @@
 
 import pytest
 
+from mirabel_relay import relay
 from mirabel_voice import version
 
 
@@ -35,3 +36,24 @@ def test_the_flyout_still_offers_the_version_helpers():
 
     assert flyout.app_version is version.app_version
     assert flyout.version_from_markers is version.version_from_markers
+
+
+# The relay cannot import the app, so each side declares the header on its
+# own. These keep the two declarations in step.
+
+def test_the_app_and_the_relay_name_the_same_header():
+    assert version.VERSION_HEADER.lower() == relay.VERSION_HEADER
+
+
+def test_the_relay_logs_the_version_the_app_sends():
+    assert relay.VERSION_PATTERN.fullmatch(version.client_version())
+
+
+def test_a_development_build_version_is_logged_as_sent(monkeypatch):
+    monkeypatch.setattr(version, "app_version", lambda: "v0.9.7.dev0+gabc")
+    assert relay.VERSION_PATTERN.fullmatch(version.client_version())
+
+
+def test_the_app_and_the_relay_spell_unknown_the_same(monkeypatch):
+    monkeypatch.setattr(version, "app_version", lambda: "")
+    assert version.client_version() == relay.UNKNOWN_VERSION
