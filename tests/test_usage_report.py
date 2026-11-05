@@ -6,6 +6,8 @@ Getting this wrong misprices every number anyone quotes about the
 pilot, so each path gets its own test.
 """
 
+import json
+
 import pytest
 
 from usage_report import summarize
@@ -302,6 +304,28 @@ def test_read_reports_reads_the_report_lines():
     assert usage_report.read_reports(Session(), 7) == [
         {"token": "cole", "report": {}, "seen_ms": 1_234}
     ]
+
+
+def test_a_report_line_that_does_not_parse_is_counted_as_unreadable(capsys):
+    class Logs:
+        def get_paginator(self, name):
+            return self
+
+        def paginate(self, **kwargs):
+            return [{"events": [
+                {"timestamp": 1_000, "message": "INFO report " + json.dumps(reported("cole", 0))},
+                {"timestamp": 2_000, "message": 'INFO report {"token": "cole", "report": {'},
+            ]}]
+
+    class Session:
+        def client(self, name):
+            return Logs()
+
+    groups, unreadable = group_reports(usage_report.read_reports(Session(), 7))
+    assert len(groups) == 1
+    assert unreadable == 1
+    report_errors(groups, unreadable, 7)
+    assert "skipped 1 unreadable report lines" in capsys.readouterr().out
 
 
 def test_the_reports_section_runs_only_with_the_flag(monkeypatch, capsys):

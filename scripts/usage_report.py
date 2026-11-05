@@ -88,15 +88,21 @@ def read_usage(session, days: int) -> list[dict]:
 
 
 def read_reports(session, days: int) -> list[dict]:
-    """Return every error report line in the window, oldest first."""
-    return read_lines(session, days, "report")
+    """Return every error report line in the window, oldest first.
+
+    A line that does not parse stays in without a report, so
+    group_reports counts it as unreadable.
+    """
+    return read_lines(session, days, "report", keep_unparsed=True)
 
 
-def read_lines(session, days: int, marker: str) -> list[dict]:
+def read_lines(session, days: int, marker: str, keep_unparsed: bool = False) -> list[dict]:
     """Return every `marker {...}` line in the window, oldest first.
 
     Each line gains seen_ms, the log event's own timestamp, so the
-    versions section can tell which call came last.
+    versions section can tell which call came last. A line whose JSON
+    does not parse is dropped, or kept as an empty line with
+    keep_unparsed.
     """
     import time
 
@@ -114,7 +120,9 @@ def read_lines(session, days: int, marker: str) -> list[dict]:
             try:
                 line = json.loads("{" + body.strip())
             except json.JSONDecodeError:
-                continue
+                if not keep_unparsed:
+                    continue
+                line = {}
             line["seen_ms"] = event.get("timestamp", 0)
             found.append(line)
     return found
@@ -153,8 +161,9 @@ def group_reports(lines: list[dict]) -> tuple[list[dict], int]:
     The same failure on several machines is one group. Each group keeps
     how many reports and from whom, when it was first and last seen,
     and the newest report's frames and message. Groups come newest
-    last-seen first. A line whose report lacks an error type or readable
-    [file, line, function] frames cannot be grouped; it is counted instead.
+    last-seen first. A line with no report, or whose report lacks an error
+    type or readable [file, line, function] frames, cannot be grouped; it
+    is counted instead.
     """
     groups: dict[tuple[str, str], dict] = {}
     unreadable = 0
