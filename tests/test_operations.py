@@ -584,6 +584,15 @@ def test_digest_groups_reports_by_error_type_and_innermost_frame():
     assert monitor.group_reports(malformed) == ([], 4)
 
 
+def test_digest_groups_reports_the_same_way_usage_report_does():
+    import usage_report
+    assert Path(usage_report.group_reports.__code__.co_filename).resolve() == ROOT / "operations/monitor.py"
+    lines = monitor.read_reports(FakeLogs(REPORT_EVENTS), NOW - monitor.REPORTS_WINDOW_MS, NOW)
+    malformed = [{"token": "cole", "report": r} for r in ("text", {"error_type": "OSError", "frames": []})]
+    for sample in (lines, malformed, lines + malformed):
+        assert usage_report.group_reports(sample) == monitor.group_reports(sample)
+
+
 def test_digest_lists_each_group_and_the_unreadable_count():
     sns = Publisher()
     assert monitor.reports_check(FakeLogs(REPORT_EVENTS), sns, REPORTS_ARN, NOW) == 5
