@@ -194,7 +194,7 @@ A second run updates what is there. It never creates a duplicate.
 |---|---|
 | Secrets Manager | The two provider keys, and the token list |
 | Lambda | The relay function and its URL |
-| CloudWatch Logs | One usage line per dictation: who, how much, how long. One line per error report from the app: error type, message, code frames, versions. Never any speech or text |
+| CloudWatch Logs | One usage line per dictation: who, how much, how long. One line per error report from the app: error type, message, code frames, versions. Never any speech or text. Kept 90 days once `scripts/setup_operations.py` has been applied |
 
 ## Questions you may have
 
