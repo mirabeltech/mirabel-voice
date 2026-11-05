@@ -17,6 +17,13 @@ Nothing spoken or written is ever logged. Each request emits one usage
 line - who, which app version, which route, which model, how much, how
 long, and the outcome - and that line never contains payload text or
 audio bytes.
+
+POST /v1/report is the relay's own route, not a provider's. The app
+sends it an error report it has already scrubbed - the error's type,
+message and stack frames, the app and Windows versions - and the relay
+writes it as one report line, stores nothing else, and forwards
+nothing. Report lines, like usage lines, never hold payload text or
+audio.
 """
 
 from __future__ import annotations
@@ -42,6 +49,10 @@ OPENAI_BASE = "https://api.openai.com"
 VERSION_HEADER = "x-mirabel-version"
 VERSION_PATTERN = re.compile(r"[0-9A-Za-z.+-]{1,32}")
 UNKNOWN_VERSION = "unknown"
+
+# Here rather than in limits.py, so a relay built without limits still
+# refuses an oversized report.
+REPORT_MAX_BODY = 16_384
 
 # The rate Ogg granule positions count at for Opus, whatever the
 # recording's own sample rate.
@@ -170,6 +181,8 @@ class Relay:
             return self._transcribe(name, request)
         if request.method == "GET" and request.path == "/update":
             return self._update(name, version)
+        if request.method == "POST" and request.path == "/v1/report":
+            return self._report(name, request, version)
         return _error(404, "The relay does not serve this path.")
 
     def _update(self, name: str, version: str) -> Response:
@@ -187,6 +200,26 @@ class Relay:
             json.dumps(self.update_info).encode(),
             {"content-type": "application/json"},
         )
+
+    def _report(self, name: str, request: Request, version: str) -> Response:
+        """Log one error report from the app, and nothing else.
+
+        Limits.validate passes this path without counting it, so a
+        report never uses up the person's request allowance.
+        """
+        if len(request.body) > REPORT_MAX_BODY:
+            return _error(413, "Report is too large.")
+        try:
+            body = json.loads(request.body)
+        except ValueError:
+            return _error(400, "Invalid report.")
+        if not isinstance(body, dict):
+            return _error(400, "Invalid report.")
+        log.info(
+            "report %s",
+            json.dumps({"token": name, "version": version, "report": body}, sort_keys=True),
+        )
+        return Response(204, b"", {})
 
     def _cleanup(self, name: str, request: Request) -> Response:
         """Forward a transcript to Anthropic for tidying."""
