@@ -637,3 +637,115 @@ def test_the_relay_keeps_no_version_between_calls(caplog):
         relay.handle(with_version(cleanup_request(), "0.9.7"))
         relay.handle(cleanup_request())
     assert [line["version"] for line in usage_lines(caplog)] == ["0.9.7", "unknown"]
+
+
+# --- The report route: error reports from the app ---
+
+
+REPORT = {
+    "trigger": "dictation",
+    "error_type": "TimeoutError",
+    "message": "The read operation timed out",
+    "frames": [["mirabel_voice/app.py", 120, "dictate"], ["mirabel_voice/relay_client.py", 48, "post"]],
+    "app_version": "0.9.7",
+    "windows_version": "10.0.26200",
+    "cpu": "ARM64",
+    "time": "2026-11-05T12:00:00Z",
+}
+
+
+def report_request(token="tommy-token-1", body=None):
+    headers = {"x-api-key": token, "x-mirabel-version": "0.9.7"} if token else {}
+    if body is None:
+        body = json.dumps(REPORT).encode()
+    return Request(method="POST", path="/v1/report", headers=headers, body=body)
+
+
+def report_lines(caplog):
+    return [r.getMessage() for r in caplog.records if r.getMessage().startswith("report ")]
+
+
+def test_a_report_without_a_known_token_is_refused_and_not_logged(caplog):
+    relay, _ = make_relay()
+    with caplog.at_level(logging.INFO):
+        assert relay.handle(report_request(token=None)).status == 401
+        assert relay.handle(report_request(token="stolen-guess")).status == 401
+    assert report_lines(caplog) == []
+    assert [(line["route"], line["outcome"]) for line in usage_lines(caplog)] == [
+        ("/v1/report", "refused"), ("/v1/report", "refused"),
+    ]
+
+
+def test_an_oversized_report_is_413_whatever_the_limits():
+    relay, _ = make_relay()
+    reply = relay.handle(report_request(body=b" " * 16_385))
+    assert reply.status == 413
+    assert json.loads(reply.body)["error"]["message"] == "Report is too large."
+
+
+def test_a_report_that_is_not_a_json_object_is_400(caplog):
+    relay, _ = make_relay()
+    with caplog.at_level(logging.INFO):
+        for body in (b"[1]", b"not json", b"\xff\xfe"):
+            assert relay.handle(report_request(body=body)).status == 400
+    assert report_lines(caplog) == []
+
+
+def nested(depth):
+    return b'{"a":' + b"[" * depth + b"]" * depth + b"}"
+
+
+def test_a_deeply_nested_report_is_400_not_a_crash(caplog):
+    relay, _ = make_relay()
+    with caplog.at_level(logging.INFO):
+        assert relay.handle(report_request(body=nested(8_000))).status == 400
+    assert report_lines(caplog) == []
+
+
+def test_no_nesting_depth_under_the_limit_crashes_the_route():
+    """Parsing and the log line's encoding give out at different depths,
+    a few levels apart, and where depends on the stack in use."""
+    relay, _ = make_relay()
+    for depth in range(2_000, 4_000):
+        assert relay.handle(report_request(body=nested(depth))).status in (204, 400)
+
+
+def test_a_report_of_exactly_the_limit_is_accepted():
+    body = json.dumps(REPORT).encode()
+    body += b" " * (16_384 - len(body))
+    relay, _ = make_relay()
+    assert relay.handle(report_request(body=body)).status == 204
+
+
+def test_a_report_is_logged_once_and_forwarded_nowhere(caplog):
+    relay, forward = make_relay()
+    with caplog.at_level(logging.INFO):
+        reply = relay.handle(report_request())
+    assert (reply.status, reply.body) == (204, b"")
+    assert forward.calls == []
+    lines = report_lines(caplog)
+    assert len(lines) == 1
+    assert "\n" not in lines[0]
+    assert json.loads(lines[0].removeprefix("report ")) == {
+        "token": "tommy", "version": "0.9.7", "report": REPORT,
+    }
+    assert "tommy-token-1" not in lines[0]
+    assert usage_lines(caplog) == []
+
+
+def test_a_report_never_counts_against_the_request_limit():
+    from mirabel_relay.limits import Limits
+
+    class Exhausted:
+        def allow(self, person):
+            return False
+
+    relay = Relay(TOKENS, REAL_KEY, REAL_OPENAI_KEY, forward=FakeForward(), limits=Limits(Exhausted()))
+    cleanup = json.dumps({
+        "model": "claude-haiku-4-5", "max_tokens": 100,
+        "messages": [{"role": "user", "content": "um hello there"}],
+    }).encode()
+    messages = Request(method="POST", path="/v1/messages",
+                       headers={"x-api-key": "tommy-token-1"}, body=cleanup)
+    assert relay.handle(messages).status == 429
+    assert relay.handle(report_request()).status == 204

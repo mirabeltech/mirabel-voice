@@ -3,6 +3,7 @@
     python scripts/usage_report.py
     python scripts/usage_report.py --days 30
     python scripts/usage_report.py --expected people.txt
+    python scripts/usage_report.py --reports
 
 The relay writes one usage line per request to CloudWatch. This reads
 those lines back and adds them up per person. Nothing here reaches a
@@ -12,6 +13,8 @@ it forwarded, priced with the rates in docs/pricing.json.
 After the cost table comes a versions section: each person's latest app
 version and when their copy last called the relay. With --expected, the
 names in that file that never called in the window are listed too.
+With --reports, the app's error reports follow, grouped by error type
+and the innermost stack frame.
 
 The lines carry no audio and no text, so a report can be shared without
 sharing anything anybody said.
@@ -52,6 +55,9 @@ def main(argv=None) -> int:
             say(f"No relay requests in the last {parsed.days} days.")
         say()
         report_versions(versions(lines), expected, parsed.days)
+        if parsed.reports:
+            say()
+            report_errors(*group_reports(read_reports(session, parsed.days)), parsed.days)
         return 0
     except Stop as reason:
         say()
@@ -69,6 +75,10 @@ def _arguments(argv):
         help="A file of names, one per line as the report shows them. "
         "Lists the ones never seen in the window.",
     )
+    parser.add_argument(
+        "--reports", action="store_true",
+        help="Also list the app's error reports, grouped.",
+    )
     return parser.parse_args(argv)
 
 
@@ -77,11 +87,22 @@ def read_usage(session, days: int) -> list[dict]:
     return read_lines(session, days, "usage")
 
 
-def read_lines(session, days: int, marker: str) -> list[dict]:
+def read_reports(session, days: int) -> list[dict]:
+    """Return every error report line in the window, oldest first.
+
+    A line that does not parse stays in without a report, so
+    group_reports counts it as unreadable.
+    """
+    return read_lines(session, days, "report", keep_unparsed=True)
+
+
+def read_lines(session, days: int, marker: str, keep_unparsed: bool = False) -> list[dict]:
     """Return every `marker {...}` line in the window, oldest first.
 
     Each line gains seen_ms, the log event's own timestamp, so the
-    versions section can tell which call came last.
+    versions section can tell which call came last. A line whose JSON
+    does not parse is dropped, or kept as an empty line with
+    keep_unparsed.
     """
     import time
 
@@ -99,7 +120,9 @@ def read_lines(session, days: int, marker: str) -> list[dict]:
             try:
                 line = json.loads("{" + body.strip())
             except json.JSONDecodeError:
-                continue
+                if not keep_unparsed:
+                    continue
+                line = {}
             line["seen_ms"] = event.get("timestamp", 0)
             found.append(line)
     return found
@@ -130,6 +153,55 @@ def versions(lines: list[dict]) -> dict[str, dict]:
     for person in people.values():
         person["others"] = sorted(person.pop("seen") - {person["latest"]})
     return people
+
+
+def group_reports(lines: list[dict]) -> tuple[list[dict], int]:
+    """Group report lines by error type and innermost frame.
+
+    The same failure on several machines is one group. Each group keeps
+    how many reports and from whom, when it was first and last seen,
+    and the newest report's frames and message. Groups come newest
+    last-seen first. A line with no report, or whose report lacks an error
+    type or readable [file, line, function] frames, cannot be grouped; it
+    is counted instead.
+    """
+    groups: dict[tuple[str, str], dict] = {}
+    unreadable = 0
+    for line in lines:
+        report = line.get("report")
+        key = _report_key(report)
+        if key is None:
+            unreadable += 1
+            continue
+        seen = line.get("seen_ms", 0)
+        group = groups.setdefault(key, {
+            "error_type": key[0], "frame": key[1], "count": 0, "people": set(),
+            "first_seen_ms": seen, "last_seen_ms": seen,
+            "frames": report["frames"], "message": report.get("message"),
+        })
+        group["count"] += 1
+        group["people"].add(line.get("token", "-"))
+        group["first_seen_ms"] = min(group["first_seen_ms"], seen)
+        if seen >= group["last_seen_ms"]:
+            group["last_seen_ms"] = seen
+            group["frames"] = report["frames"]
+            group["message"] = report.get("message")
+    ordered = sorted(groups.values(), key=lambda g: g["last_seen_ms"], reverse=True)
+    return ordered, unreadable
+
+
+def _report_key(report) -> tuple[str, str] | None:
+    """The (error type, innermost file:function) a report groups under."""
+    if not isinstance(report, dict):
+        return None
+    error_type = report.get("error_type")
+    frames = report.get("frames")
+    if not isinstance(error_type, str) or not isinstance(frames, list) or not frames:
+        return None
+    if not all(isinstance(frame, list) and len(frame) == 3 for frame in frames):
+        return None
+    file, _, function = frames[-1]
+    return error_type, f"{file}:{function}"
 
 
 def read_expected(path: Path) -> list[str]:
@@ -298,6 +370,33 @@ def report_versions(people: dict, expected: list[str] | None, days: int) -> None
             say(f"  {name}")
     else:
         say("Everyone in the expected-people file was seen.")
+
+
+def report_errors(groups: list[dict], unreadable: int, days: int) -> None:
+    """Print the error reports section."""
+    from datetime import datetime, timezone
+
+    def when(ms):
+        return f"{datetime.fromtimestamp(ms / 1000, tz=timezone.utc):%Y-%m-%d %H:%M}"
+
+    say(f"Error reports, last {days} days. Times are UTC.")
+    say("=" * 78)
+    for group in groups:
+        people = ", ".join(sorted(group["people"]))
+        say(f"{group['error_type']} at {group['frame']}")
+        say(
+            f"  {group['count']} report(s) from {people}; "
+            f"first {when(group['first_seen_ms'])}, last {when(group['last_seen_ms'])}"
+        )
+        for file, number, function in group["frames"]:
+            say(f"    {file}:{number} in {function}")
+        if group["message"]:
+            say(f"  {group['message']}")
+        say()
+    if not groups:
+        say("No error reports.")
+    if unreadable:
+        say(f"skipped {unreadable} unreadable report lines")
 
 
 if __name__ == "__main__":
