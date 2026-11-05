@@ -194,7 +194,7 @@ A second run updates what is there. It never creates a duplicate.
 |---|---|
 | Secrets Manager | The two provider keys, and the token list |
 | Lambda | The relay function and its URL |
-| CloudWatch Logs | One usage line per dictation: who, how much, how long. Never any speech or text |
+| CloudWatch Logs | One usage line per dictation: who, how much, how long. One line per error report from the app: error type, message, code frames, versions. Never any speech or text |
 
 ## Questions you may have
 
