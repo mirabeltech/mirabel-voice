@@ -1,0 +1,23 @@
+{
+  "profileVersion": 1,
+  "mdkVersion": "mdk-2026.09.29",
+  "repo": "mirabeltech/mirabel-voice",
+  "branches": {
+    "main": "main"
+  },
+  "components": [
+    {
+      "name": "app",
+      "paths": [
+        "**"
+      ],
+      "testCommand": "C:\\Dev\\mirabel-voice\\.venv\\Scripts\\python.exe -m pytest -q"
+    }
+  ],
+  "ci": {
+    "required": []
+  },
+  "factory": {
+    "autoMergeMaxTier": "T2"
+  }
+}

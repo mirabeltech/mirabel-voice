@@ -1,0 +1,9 @@
+# Repo-level Archon config for a factory repo: install as .archon/config.yaml.
+# Factory runs load only this repo's .claude/ (its CLAUDE.md, skills and the
+# tripwire hooks), never the dev's personal ~/.claude config (plan D16, §6).
+# Pack workflows also set settingSources per node; this covers any run
+# started from this checkout.
+assistants:
+  claude:
+    settingSources:
+      - project

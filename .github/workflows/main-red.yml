@@ -1,0 +1,136 @@
+# main-red: when CI fails on the default branch, open one `factory:fix` issue
+# (plan B4). Installs as .github/workflows/main-red.yml in a factory repo.
+#
+# Why. Branch protection no longer requires PRs to be up to date with main, so
+# two PRs that pass on their own can break main together. CI runs on every push
+# to main and catches that; this makes the break visible and gives any session
+# an issue to start the factory on.
+#
+# What it does, per finished CI run on a push to main:
+#   - red (failure or timed out): if an open main-red issue exists, comment the
+#     new failure on it; otherwise open one, labelled `factory:fix`.
+#   - green: if an open main-red issue exists, comment and close it.
+# Other conclusions (cancelled, skipped) change nothing, and so does a run whose
+# commit is no longer the branch tip: runs can finish out of order, and only
+# the tip says whether the branch is red now. So a tip commit CI never runs on
+# (`[skip ci]`, `paths-ignore`) leaves the issue as it was until the next run
+# that does. The issue is found by a marker
+# line in its body, not by its title, so renaming it is safe.
+#
+# Set `workflows:` below to the name of the repo's CI workflow and `branches:`
+# to its default branch. It reads the branch tip, writes issues only, and never
+# checks out code.
+#
+# tests/factory-main-red.mjs runs the script below against a fake GitHub API.
+name: main-red
+
+on:
+  workflow_run:
+    workflows: ["Verify Windows Python bundle"]
+    types: [completed]
+    branches: [main]
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: main-red
+  cancel-in-progress: false
+
+jobs:
+  report:
+    if: github.event.workflow_run.event == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Open, update or close the main-red issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          CONCLUSION: ${{ github.event.workflow_run.conclusion }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          BRANCH: ${{ github.event.workflow_run.head_branch }}
+          WORKFLOW: ${{ github.event.workflow_run.name }}
+          RUN_URL: ${{ github.event.workflow_run.html_url }}
+        run: |
+          node --input-type=module - <<'MAIN_RED_JS'
+          const env = process.env
+          const apiBase = (env.GITHUB_API_URL || 'https://api.github.com').replace(/\/$/, '')
+          const repo = env.REPO
+          const MARKER = '<!-- main-red -->'
+          const LABEL = 'factory:fix'
+
+          async function api(path, { method = 'GET', body } = {}) {
+            const res = await fetch(`${apiBase}${path}`, {
+              method,
+              headers: {
+                accept: 'application/vnd.github+json',
+                authorization: `Bearer ${env.GH_TOKEN}`,
+                'x-github-api-version': '2022-11-28',
+                ...(body ? { 'content-type': 'application/json' } : {}),
+              },
+              body: body ? JSON.stringify(body) : undefined,
+            })
+            if (!res.ok) throw new Error(`${method} ${path} returned ${res.status}`)
+            return res.status === 204 ? null : res.json()
+          }
+
+          // Exit codes are set, never process.exit(): exiting while fetch's sockets close
+          // aborts node on Windows. An error rejects main() and fails the step.
+          async function main() {
+            const red = ['failure', 'timed_out'].includes(env.CONCLUSION)
+            const green = env.CONCLUSION === 'success'
+            if (!red && !green) {
+              console.log(`${env.WORKFLOW} ended ${env.CONCLUSION}; nothing to do.`)
+              return
+            }
+            const sha = env.HEAD_SHA.slice(0, 7)
+            const tip = (await api(`/repos/${repo}/branches/${encodeURIComponent(env.BRANCH)}`)).commit.sha
+            if (tip !== env.HEAD_SHA) {
+              console.log(`${env.WORKFLOW} ran on ${sha}, but ${env.BRANCH} is now at ${tip.slice(0, 7)}; its own run decides.`)
+              return
+            }
+            let open = null
+            for (let page = 1; !open; page++) {
+              const batch = await api(`/repos/${repo}/issues?state=open&labels=${encodeURIComponent(LABEL)}&per_page=100&page=${page}`)
+              open = batch.find((i) => !i.pull_request && (i.body ?? '').split('\n').some((l) => l.trim() === MARKER)) ?? null
+              if (batch.length < 100) break
+            }
+            if (red && open) {
+              await api(`/repos/${repo}/issues/${open.number}/comments`, {
+                method: 'POST',
+                body: { body: `${env.WORKFLOW} failed again on \`${env.BRANCH}\` at ${env.HEAD_SHA}: ${env.RUN_URL}` },
+              })
+              console.log(`Commented on #${open.number}.`)
+            } else if (red) {
+              const issue = await api(`/repos/${repo}/issues`, {
+                method: 'POST',
+                body: {
+                  title: `${env.BRANCH} is red: ${env.WORKFLOW} failed at ${sha}`,
+                  labels: [LABEL],
+                  body: [
+                    `${env.WORKFLOW} failed on \`${env.BRANCH}\` at ${env.HEAD_SHA}.`,
+                    '',
+                    `Run: ${env.RUN_URL}`,
+                    '',
+                    'Find the failing job in the run, fix it in a PR that links this issue, and merge it. This issue closes itself when CI on the default branch is green again.',
+                    '',
+                    MARKER,
+                  ].join('\n'),
+                },
+              })
+              console.log(`Opened #${issue.number}.`)
+            } else if (open) {
+              await api(`/repos/${repo}/issues/${open.number}/comments`, {
+                method: 'POST',
+                body: { body: `${env.WORKFLOW} is green on \`${env.BRANCH}\` again at ${env.HEAD_SHA}: ${env.RUN_URL}` },
+              })
+              await api(`/repos/${repo}/issues/${open.number}`, { method: 'PATCH', body: { state: 'closed', state_reason: 'completed' } })
+              console.log(`Closed #${open.number}.`)
+            } else {
+              console.log(`${env.WORKFLOW} is green and no main-red issue is open.`)
+            }
+          }
+          await main()
+          MAIN_RED_JS
