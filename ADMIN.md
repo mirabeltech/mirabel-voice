@@ -153,7 +153,7 @@ The deploy's smoke test makes real calls, and those used to be charged to whiche
 
 Refused requests appear as a count with no name attached, which is what a wrong or withdrawn token looks like from the relay's side. A few are normal, because the app's warm-up pings reach the relay before any dictation does. A run of them from nowhere is worth a look.
 
-After the cost table comes the versions section: each person, the version their copy sent on its most recent call, when that call was (UTC), and any other versions they ran in the window. Every relay call carries the version, including the update check a copy makes about a minute after it starts and then daily, so a copy that runs but never dictates still shows up. "Latest" means the most recent call, not the highest number, so a machine that went back to an older release shows the older one. `unknown` means a call from a release before the app sent its version, or a relay before it logged one.
+After the cost table comes the versions section: each person, the version their copy sent on its most recent call, when that call was (UTC), and any other versions they ran in the window. Every relay call carries the version, including the update check. An installed copy that is signed in and has automatic updates on makes that check about a minute after it starts and then daily, so it shows up even if it never dictates. A copy with automatic updates off shows up only when somebody dictates or checks for updates from the tray. "Latest" means the most recent call, not the highest number, so a machine that went back to an older release shows the older one. `unknown` means a call from a release before the app sent its version, or a relay before it logged one.
 
 To see who has gone quiet, keep a plain text file of the people who should be using it, one name per line written exactly as the report shows them (`#` starts a comment, blank lines are skipped), and pass it in:
 
@@ -161,7 +161,7 @@ To see who has gone quiet, keep a plain text file of the people who should be us
 python scripts\usage_report.py --days 30 --expected $HOME\mirabel-people.txt
 ```
 
-The report then lists everyone in the file with no call in the window under "Installed but never seen". That catches a copy that fails before the app ever starts. Keep the file outside this repository: it holds people's email addresses, and the repository is public. If the file can't be read, the report stops before it signs in to AWS.
+The report then lists everyone in the file with no call in the window under "Installed but never seen". A name there is not proof of a broken install. It can be a copy that fails before the app starts, but also one that is signed out, or one with automatic updates off that nobody dictated with in the window. Keep the file outside this repository: it holds people's email addresses, and the repository is public. If the file can't be read, the report stops before it signs in to AWS.
 
 ## Rotating a key on a machine that still holds keys
 
