@@ -140,6 +140,15 @@ def test_the_expected_file_skips_comments_and_blank_lines(tmp_path):
     assert read_expected(path) == ["cole@example.com", "priya@example.com"]
 
 
+def test_a_byte_order_mark_does_not_hide_the_first_name(tmp_path):
+    path = tmp_path / "people.txt"
+    path.write_bytes(b"\xef\xbb\xbfcole@example.com\nmark@example.com\n")
+    expected = read_expected(path)
+    assert expected == ["cole@example.com", "mark@example.com"]
+    people = versions([seen("cole@example.com", "0.9.7", 1_000)])
+    assert never_seen(expected, people) == ["mark@example.com"]
+
+
 def test_never_seen_lists_the_expected_people_without_a_line():
     people = versions([seen("cole@example.com", "0.9.7", 1_000)])
     assert never_seen(["cole@example.com", "mark@example.com"], people) == ["mark@example.com"]
@@ -200,3 +209,16 @@ def test_the_versions_section_follows_the_cost_section(monkeypatch, capsys):
     assert usage_report.main([]) == 0
     out = capsys.readouterr().out
     assert out.index("Relay usage") < out.index("App versions")
+
+
+def test_an_empty_window_still_lists_the_expected_people(tmp_path, monkeypatch, capsys):
+    path = tmp_path / "people.txt"
+    path.write_text("cole@example.com\n", encoding="utf-8")
+    monkeypatch.setattr(usage_report.deploy_relay, "open_session", lambda *args: object())
+    monkeypatch.setattr(usage_report, "read_usage", lambda session, days: [])
+    assert usage_report.main(["--expected", str(path)]) == 0
+    out = capsys.readouterr().out
+    assert "No relay requests in the last 30 days." in out
+    assert "Nobody called the relay." in out
+    assert "Installed but never seen (1):" in out
+    assert "  cole@example.com" in out

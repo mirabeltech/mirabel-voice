@@ -136,10 +136,11 @@ def read_expected(path: Path) -> list[str]:
     """The names in an expected-people file, in file order.
 
     One name per line, written as the usage line's token. Blank lines
-    and # comments are skipped.
+    and # comments are skipped. A leading byte order mark is dropped:
+    Windows PowerShell 5.1 writes one with -Encoding utf8.
     """
     names: list[str] = []
-    for raw in path.read_text(encoding="utf-8").splitlines():
+    for raw in path.read_text(encoding="utf-8-sig").splitlines():
         name = raw.split("#", 1)[0].strip()
         if name and name not in names:
             names.append(name)
