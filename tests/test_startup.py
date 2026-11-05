@@ -135,11 +135,15 @@ def test_the_shortcut_repair_runs_powershell_with_the_bypass(monkeypatch, tmp_pa
 def test_a_failing_repair_never_raises(monkeypatch, tmp_path):
     written = {}
     installed_app(monkeypatch, tmp_path, written)
+    recorded = []
+    monkeypatch.setattr(startup.report, "record", lambda trigger, error: recorded.append((trigger, error)))
 
     def explode(*args, **kwargs):
         raise OSError("no powershell")
 
     assert startup.repair_launch_entries(run=explode) == []
+    [(trigger, error)] = recorded
+    assert trigger == "launch-repair" and str(error) == "no powershell"
 
 
 @pytest.mark.skipif(sys.platform != "win32", reason="edits a real .lnk through Windows")

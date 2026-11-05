@@ -6,6 +6,8 @@ import sys
 import tempfile
 from pathlib import Path
 
+from . import report
+
 log = logging.getLogger(__name__)
 
 BYPASS = '-ExecutionPolicy Bypass'
@@ -114,6 +116,7 @@ def repair_launch_entries(folders=None, run=subprocess.run):
             Path(script.name).unlink(missing_ok=True)
         if changed:
             log.info('Repaired launch entries that could not start the app: %s.', ', '.join(changed))
-    except Exception:  # noqa: BLE001 - a repair must never block the start
+    except Exception as error:  # noqa: BLE001 - a repair must never block the start
         log.exception('The launch entry repair failed.')
+        report.record('launch-repair', error)
     return changed

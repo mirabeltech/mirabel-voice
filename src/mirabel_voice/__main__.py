@@ -7,8 +7,9 @@ import logging
 import os
 import sys
 
+from . import report
 from .app import VoiceApp
-from .config import Config, config_path, load_api_keys
+from .config import Config, config_dir, config_path, load_api_keys
 
 LOG_FORMAT = "%(asctime)s  %(levelname)-7s %(message)s"
 
@@ -173,6 +174,7 @@ def _report_crashes() -> None:
             "Mirabel Voice stopped on an unexpected error.",
             exc_info=(kind, value, trace),
         )
+        report.record("crash", value, wait=True)
         _show_box(
             "Mirabel Voice stopped on an unexpected error:\n"
             f"{kind.__name__}: {value}\n\n"
@@ -190,6 +192,7 @@ def _report_crashes() -> None:
             name,
             exc_info=(args.exc_type, args.exc_value, args.exc_traceback),
         )
+        report.record("crash", args.exc_value)
 
     sys.excepthook = on_crash
     threading.excepthook = on_thread_crash
@@ -454,6 +457,12 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     app = VoiceApp(config)
+    report.configure(
+        config.relay_url,
+        app.signin.credential if app.signin else config.relay_token,
+        config_dir(),
+        secrets=[config.relay_token] if config.relay_token else [],
+    )
 
     if app.signin is not None and not app.signin.signed_in():
         # First run: the browser opens once, the person signs in with the
@@ -521,7 +530,6 @@ def main(argv: list[str] | None = None) -> int:
         overlay = None
 
     from .shutdown import ShutdownDeadline
-    from .config import config_dir
 
     shutdown = ShutdownDeadline(config_dir() / "logs")
     tray = Tray(app, flyout=flyout)
@@ -532,6 +540,7 @@ def main(argv: list[str] | None = None) -> int:
     if flyout is not None and not config.onboarding_complete:
         flyout.show()
     _start_update_watch(app, tray)
+    report.flush_later(60)
     # Shortcuts written before 0.9.4 lack the execution-policy bypass and
     # do nothing on a default Windows computer. Off the main thread: it
     # runs PowerShell once and must not delay the tray.

@@ -470,9 +470,13 @@ def test_a_microphone_timeout_reports_and_stays_usable(monkeypatch, tmp_path):
         real_start()
 
     app.recorder.start = start
+    recorded = _capture_reports(monkeypatch)
 
     # The press fails fast, with the reason and a hint line.
     assert app.start_recording() is False
+    assert [(trigger, type(error).__name__) for trigger, error in recorded] == [
+        ("microphone", "MicrophoneTimeout")
+    ]
     state, detail = seen[-1]
     assert state == STATE_ERROR
     assert "did not answer" in detail
@@ -482,6 +486,33 @@ def test_a_microphone_timeout_reports_and_stays_usable(monkeypatch, tmp_path):
     wedged[0] = False
     assert app.start_recording() is True
     assert app.state == STATE_RECORDING
+
+
+def _capture_reports(monkeypatch):
+    from mirabel_voice import app as module
+
+    recorded = []
+    monkeypatch.setattr(module.report, "record", lambda trigger, error: recorded.append((trigger, error)))
+    return recorded
+
+
+def test_a_microphone_that_will_not_open_is_reported(monkeypatch, tmp_path):
+    from mirabel_voice.app import STATE_ERROR
+
+    app = language_app(monkeypatch, tmp_path)
+    seen = []
+    app.on_status = lambda state, detail: seen.append((state, detail))
+    recorded = _capture_reports(monkeypatch)
+
+    def broken_open():
+        raise OSError("device unplugged")
+
+    app.recorder.start = broken_open
+    assert app.start_recording() is False
+    assert seen[-1][0] == STATE_ERROR
+    assert "Could not start the microphone" in seen[-1][1]
+    [(trigger, error)] = recorded
+    assert trigger == "microphone" and str(error) == "device unplugged"
 
 
 def test_quitting_always_shuts_the_recorder_down(monkeypatch, tmp_path):
@@ -509,8 +540,10 @@ def test_a_cancelled_open_does_not_claim_to_listen(monkeypatch, tmp_path):
         raise MicrophoneCancelled("cancelled while opening")
 
     app.recorder.start = cancelled_open
+    recorded = _capture_reports(monkeypatch)
     assert app.start_recording() is False
     assert STATE_RECORDING not in seen
+    assert recorded == []  # a cancel is not a failure
 
 
 # --- the hot microphone starts instantly -------------------------------------

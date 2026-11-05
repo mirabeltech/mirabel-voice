@@ -170,6 +170,19 @@ def test_an_answer_without_a_refresh_token_is_refused(tmp_path):
         signin.sign_in()
 
 
+def test_a_failed_sign_in_is_reported_and_still_raises(tmp_path, monkeypatch):
+    from mirabel_voice import signin as module
+
+    recorded = []
+    monkeypatch.setattr(module.report, "record", lambda trigger, error: recorded.append((trigger, error)))
+    signin, _ = make_signin(tmp_path, google=FakeGoogle(refuse="access_denied"))
+
+    with pytest.raises(SigninError) as raised:
+        signin.sign_in()
+
+    assert recorded == [("sign-in", raised.value)]
+
+
 def test_a_store_written_by_another_user_reads_as_signed_out(tmp_path):
     (tmp_path / "google_signin.bin").write_bytes(b"not dpapi at all")
     signin, _ = make_signin(tmp_path)
