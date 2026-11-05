@@ -23,6 +23,14 @@
       "PowerShell(git push -u origin factory/*)",
       "Bash(git push --force-with-lease origin factory/*)",
       "PowerShell(git push --force-with-lease origin factory/*)"
+    ],
+    "deny": [
+      "Read(~/.aws/**)",
+      "Edit(~/.aws/**)",
+      "Read(./relay.json)",
+      "Edit(./relay.json)",
+      "Read(**/relay.json)",
+      "Edit(**/relay.json)"
     ]
   },
   "hooks": {
@@ -35,6 +43,20 @@
             "command": "node",
             "args": [
               "${CLAUDE_PROJECT_DIR}/.claude/hooks/factory-tripwire.mjs"
+            ],
+            "timeout": 15,
+            "onFailure": "block"
+          }
+        ]
+      },
+      {
+        "matcher": "Bash|PowerShell",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node",
+            "args": [
+              "${CLAUDE_PROJECT_DIR}/.claude/hooks/production-guard.mjs"
             ],
             "timeout": 15,
             "onFailure": "block"

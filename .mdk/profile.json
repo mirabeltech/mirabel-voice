@@ -19,5 +19,23 @@
   },
   "factory": {
     "autoMergeMaxTier": "T2"
-  }
+  },
+  "protectedPaths": [
+    {
+      "tier": "T3",
+      "paths": [
+        "src/mirabel_relay/**",
+        "packaging/**",
+        "operations/**",
+        "scripts/deploy_relay.py",
+        "scripts/set_relay.py",
+        "scripts/setup_relay.py",
+        "scripts/setup_operations.py",
+        "scripts/approve_bundle.py",
+        "docs/deploy-policy.json",
+        "install.ps1",
+        "setup.ps1"
+      ]
+    }
+  ]
 }
