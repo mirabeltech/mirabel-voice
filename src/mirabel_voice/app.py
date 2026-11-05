@@ -21,6 +21,7 @@ import threading
 import time
 from typing import Callable
 
+from . import report
 from .audio import MicrophoneCancelled, MicrophoneTimeout, Recorder
 from .cleanup import Cleaner
 from .config import LANGUAGES, Config
@@ -458,6 +459,7 @@ class VoiceApp:
             # The device is wedged, not refusing: say so, and come
             # straight back so the next press still works.
             log.warning("The microphone did not answer: %s", error)
+            report.record("microphone", error)
             hint = getattr(error, "hint", "")
             detail = f"{error}\n{hint}" if hint else str(error)
             self._set_state(STATE_ERROR, detail)
@@ -465,6 +467,7 @@ class VoiceApp:
             return False
         except Exception as error:  # noqa: BLE001
             log.exception("The microphone did not open.")
+            report.record("microphone", error)
             self._set_state(
                 STATE_ERROR,
                 "Could not start the microphone.\n"

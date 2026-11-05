@@ -107,6 +107,50 @@ def test_a_download_with_no_package_changes_nothing(tmp_path):
     assert (site / "mirabel_voice" / "__init__.py").read_text() == "old code"
 
 
+def _capture_reports(monkeypatch):
+    from mirabel_voice import updater as module
+
+    recorded = []
+    monkeypatch.setattr(module.report, "record", lambda trigger, error: recorded.append((trigger, error)))
+    return recorded
+
+
+def test_a_failed_download_is_reported_and_changes_nothing(tmp_path, monkeypatch):
+    recorded = _capture_reports(monkeypatch)
+    serve = a_release("v0.5.0")
+
+    def fetch(url):
+        if url.endswith(".zip"):
+            raise OSError("connection reset")
+        return serve(url)
+
+    site, python_dir = a_bundle(tmp_path, version="0.4.0")
+    updater = Updater(site, python_dir, fetch=fetch, prove=lambda: True)
+
+    assert updater.apply_latest() is None
+    assert (updater.outcome, updater.message) == ("failed", "The download failed. Nothing changed.")
+    assert (site / "mirabel_voice" / "__init__.py").read_text() == "old code"
+    [(trigger, error)] = recorded
+    assert trigger == "update-download" and str(error) == "connection reset"
+
+
+def test_an_unexpected_update_failure_is_reported(tmp_path, monkeypatch):
+    recorded = _capture_reports(monkeypatch)
+    site, python_dir = a_bundle(tmp_path, version="0.4.0")
+    updater = Updater(site, python_dir, fetch=a_release("v0.5.0"), prove=lambda: True)
+
+    def broken():
+        raise ValueError("Unsafe archive path")
+
+    updater._apply_locked = broken
+
+    assert updater.apply_latest() is None
+    assert updater.outcome == "failed"
+    assert updater.message.startswith("Update failed.")
+    [(trigger, error)] = recorded
+    assert trigger == "update-download" and str(error) == "Unsafe archive path"
+
+
 def test_a_stale_marker_does_not_hide_the_installed_version(tmp_path):
     # Install.ps1 used to copy the new bundle over the old one, leaving
     # both version markers behind. The newest one is the truth.

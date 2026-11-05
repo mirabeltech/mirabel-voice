@@ -68,12 +68,22 @@ def _install_crash_report(monkeypatch):
     return boxes
 
 
+def _capture_reports(monkeypatch):
+    recorded = []
+    monkeypatch.setattr(
+        entry.report, "record",
+        lambda trigger, error, wait=False: recorded.append((trigger, error, wait)),
+    )
+    return recorded
+
+
 def test_a_startup_crash_reaches_the_log_and_a_box(monkeypatch, caplog):
     # Under pythonw a crash in main() left no icon, no box and no log
     # line, so a work computer that never showed the icon gave no clue.
     import sys
 
     boxes = _install_crash_report(monkeypatch)
+    recorded = _capture_reports(monkeypatch)
     try:
         raise RuntimeError("the tray would not start")
     except RuntimeError:
@@ -82,12 +92,16 @@ def test_a_startup_crash_reaches_the_log_and_a_box(monkeypatch, caplog):
     assert "the tray would not start" in caplog.text
     assert "Traceback" in caplog.text
     assert len(boxes) == 1 and "RuntimeError: the tray would not start" in boxes[0]
+    # The process is about to end, so the report is on disk before the box.
+    [(trigger, error, wait)] = recorded
+    assert (trigger, str(error), wait) == ("crash", "the tray would not start", True)
 
 
 def test_a_background_crash_is_logged_without_a_box(monkeypatch, caplog):
     import threading
 
     boxes = _install_crash_report(monkeypatch)
+    recorded = _capture_reports(monkeypatch)
 
     def fail():
         raise ValueError("the update check broke")
@@ -99,3 +113,5 @@ def test_a_background_crash_is_logged_without_a_box(monkeypatch, caplog):
     assert "mirabel-test-worker" in caplog.text
     assert "the update check broke" in caplog.text
     assert boxes == []
+    [(trigger, error, wait)] = recorded
+    assert (trigger, str(error), wait) == ("crash", "the update check broke", False)

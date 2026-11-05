@@ -40,6 +40,7 @@ import webbrowser
 from pathlib import Path
 from typing import Callable
 
+from . import report
 from .config import config_dir
 
 AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
@@ -285,6 +286,13 @@ class GoogleSignin:
         Raises:
             SigninError: The person did not finish, or Google refused.
         """
+        try:
+            return self._sign_in(wait_seconds)
+        except Exception as error:
+            report.record("sign-in", error)
+            raise
+
+    def _sign_in(self, wait_seconds: float) -> str:
         verifier = _b64url(secrets.token_bytes(32))
         auth = AUTH_URL + "?" + urllib.parse.urlencode(
             {

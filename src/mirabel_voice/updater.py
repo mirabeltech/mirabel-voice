@@ -30,6 +30,7 @@ import urllib.request
 import zipfile
 from pathlib import Path
 
+from . import report
 from .version import VERSION_HEADER, client_version
 
 log = logging.getLogger(__name__)
@@ -208,7 +209,8 @@ class Updater:
                 return self._apply_locked()
         except UpdateBusy:
             self.outcome, self.message = "deferred", "Another installation or update is running."
-        except Exception:
+        except Exception as error:
+            report.record("update-download", error)
             self.outcome, self.message = "failed", "Update failed. The previous copy was retained; try again or repair from the full bundle."
             log.exception("Update failed; use the stable launcher for recovery.")
         return None
@@ -264,6 +266,7 @@ class Updater:
         try:
             archive = zipfile.ZipFile(io.BytesIO(self._fetch(url)))
         except Exception as error:  # noqa: BLE001
+            report.record("update-download", error)
             self.outcome, self.message = "failed", "The download failed. Nothing changed."
             log.warning("The release download failed: %s", type(error).__name__)
             return None

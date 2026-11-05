@@ -10,7 +10,7 @@ An internal dictation tool for the organization. Hold `Ctrl+Win`, speak, release
 
 1. Key-release to pasted text in 1–2 seconds for a typical utterance.
 2. Output that needs no manual editing: no filler words, correct punctuation, self-corrections applied.
-3. Zero data at rest: no audio, no transcripts, no telemetry stored anywhere.
+3. Zero data at rest: no audio and no transcripts stored anywhere. The relay keeps one usage line per request (who, app version, route, model, amounts, outcome), and the app queues the scrubbed error reports described in README "Privacy and support"; neither holds audio or transcript text.
 4. A non-technical coworker can install it with one script and one hotkey lesson.
 
 ## Non-goals (v1)
@@ -57,7 +57,7 @@ A seed file of hand-curated Mirabel terms ships with the app (Mirabel, Magazine 
 
 - One shared org key pair (OpenAI + Anthropic), entered once by the setup script, stored in the user's config folder (`%APPDATA%\MirabelVoice`). Never in the repo.
 - Owner task before pilot: set spend limits on both provider dashboards.
-- Audio goes to OpenAI; transcripts go to Anthropic; both under API no-training terms. Nothing is written to disk. No telemetry.
+- Audio goes to OpenAI; transcripts go to Anthropic; both under API no-training terms. Neither is written to disk. The relay keeps one usage line per request (who, app version, route, model, amounts, outcome), and the app sends the scrubbed error reports described in README "Privacy and support"; neither holds audio or transcript text.
 - The keyboard listener observes keys only; it never blocks or modifies keystrokes (Wispr's worst bug class).
 
 ## Distribution
