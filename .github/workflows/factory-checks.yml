@@ -1,0 +1,554 @@
+# Factory checks: the review-evidence and auto-merge gates in one job (plan
+# §6, D10, B2, B3).
+#
+# Install in a factory repo as .github/workflows/factory-checks.yml, in place
+# of review-evidence.yml and factory-gate.yml, and require the statuses
+# `mdk/review-evidence` and `factory-gate` (templates/factory/main-ruleset.json).
+# The two steps post those two statuses; the status names never change.
+#
+# Step 1, `mdk/review-evidence`: the PR must carry a review report pinned to
+# its head SHA, or the `review-exempt` label. An evidence ritual, not a
+# security boundary: anyone who can merge can also post the comment.
+#
+# Step 2, `factory-gate`. A PR that asks for auto-merge (the `auto-merge`
+# label, or GitHub auto-merge turned on) gets a failure unless all hold:
+#   - its tier label, raised by any path floor, is at or under the ceiling in
+#     the base branch's .mdk/profile.json (`factory.autoMergeMaxTier`, T2 when
+#     unset);
+#   - it touches no protected path (finance, billing, tenancy, permissions,
+#     schema, migrations) and none of the factory's own guardrail files,
+#     whatever the ceiling;
+#   - the newest mdk-review-report comment from a writer (or the Claude app)
+#     is pinned to the head SHA and reports zero unresolved findings;
+#   - the newest mdk-audit-report comment from a writer (or the Claude app)
+#     is pinned to the head SHA and says `verdict=pass`. A hand-fixed commit
+#     moves the head, so the PR waits for a new audit or for its owner. An
+#     audit whose every failed item only a person can check (`failed=N
+#     unverifiable=N`) counts as passed once a writer, never a bot, comments
+#     `Owner check: <head sha, 7+ characters>` as the comment's first line;
+#     a new push voids it. When that check is the only rule left, the gate
+#     posts `pending` ("Auto-merge waits for an owner check at <sha>")
+#     instead of failure, and success once the check is posted;
+#   - it is not `review-exempt`;
+#   - every issue the body links (`Refs #N`) was opened by someone with write
+#     access.
+# A factory PR (the `factory-pr` label, or a `factory/` branch, so removing
+# the label changes nothing) that does not ask for auto-merge still needs the
+# audit: the gate stays `pending` until the newest
+# mdk-audit-report from a writer (or the Claude app) pins the head, fails when
+# that audit's verdict is not `pass`, and passes once it is. Its owner then
+# merges it (D9). A hand fix moves the head, so the PR waits for a new audit.
+# Any other PR that does not ask for auto-merge passes: its owner merges it.
+#
+# Why it is built this way.
+#   - Branch protection requires the two STATUSES, not this job, and the job
+#     is named differently from both. GitHub reports a skipped required job as
+#     success; a status that is never posted stays pending and blocks the
+#     merge instead.
+#   - So the job may skip, and does, for comments that cannot change either
+#     verdict: a comment on a plain issue, or one that neither starts with nor
+#     used to start with a report marker. A skipped job is not billed and
+#     leaves the last statuses in place. Every pull_request_target event runs.
+#     Deleted comments always run, since the deleted text may have been a
+#     report.
+#   - The concurrency group is on the job, not the workflow, so a skipped run
+#     never cancels one that is evaluating.
+#   - It runs on `pull_request_target`, so the workflow file comes from the
+#     base branch: a PR cannot rewrite the checks that judge it. The job reads
+#     API metadata only and never checks out or executes PR code, which is
+#     what makes `pull_request_target` and `statuses: write` safe here. Keep it
+#     that way.
+#   - Each step keeps its own error handling. An error posts `failure` (gate)
+#     or nothing (evidence); neither fails open. The gate step runs even when
+#     the evidence step errored.
+#
+# What it does not buy. Labels and report comments are written with the dev's
+# own GitHub login, so an agent running as the dev can write them too (plan §3:
+# labels are records, the gate in the engine is `wait: attention`). These
+# checks stop an ineligible PR from merging unattended; they do not prove who
+# wrote their inputs.
+#
+# tests/factory-gate.mjs runs both scripts below against a fake GitHub API.
+name: factory-checks
+
+on:
+  pull_request_target:
+    types:
+      - opened
+      - reopened
+      - synchronize
+      - edited
+      - labeled
+      - unlabeled
+      - ready_for_review
+      - auto_merge_enabled
+      - auto_merge_disabled
+  issue_comment:
+    # A new, edited or deleted report changes the verdicts.
+    types: [created, edited, deleted]
+
+permissions:
+  contents: read
+  issues: read
+  pull-requests: read
+  statuses: write
+
+jobs:
+  evaluate:
+    name: evaluate review evidence and auto-merge eligibility
+    if: >-
+      github.event_name == 'pull_request_target' ||
+      (github.event.issue.pull_request && (
+        github.event.action == 'deleted' ||
+        startsWith(github.event.comment.body, '<!-- mdk-review-report') ||
+        startsWith(github.event.comment.body, '<!-- mdk-audit-report') ||
+        startsWith(github.event.comment.body, 'Owner check:') ||
+        startsWith(github.event.changes.body.from, '<!-- mdk-review-report') ||
+        startsWith(github.event.changes.body.from, '<!-- mdk-audit-report') ||
+        startsWith(github.event.changes.body.from, 'Owner check:')))
+    concurrency:
+      group: factory-checks-${{ github.event.pull_request.number || github.event.issue.number }}
+      cancel-in-progress: true
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPO: ${{ github.repository }}
+      PR: ${{ github.event.pull_request.number || github.event.issue.number }}
+      IS_PR: ${{ github.event_name == 'pull_request_target' || github.event.issue.pull_request != null }}
+      RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+    steps:
+      - name: Check for a SHA-pinned review report and post mdk/review-evidence
+        run: |
+          node --input-type=module - <<'FACTORY_EVIDENCE_JS'
+          const env = process.env
+          const apiBase = (env.GITHUB_API_URL || 'https://api.github.com').replace(/\/$/, '')
+          const repo = env.REPO
+          const pr = env.PR
+          const CONTEXT = 'mdk/review-evidence'
+
+          async function api(path, { method = 'GET', body } = {}) {
+            const res = await fetch(`${apiBase}${path}`, {
+              method,
+              headers: {
+                accept: 'application/vnd.github+json',
+                authorization: `Bearer ${env.GH_TOKEN}`,
+                'x-github-api-version': '2022-11-28',
+                ...(body ? { 'content-type': 'application/json' } : {}),
+              },
+              body: body ? JSON.stringify(body) : undefined,
+            })
+            if (!res.ok) throw new Error(`${method} ${path} returned ${res.status}`)
+            return res.status === 204 ? null : res.json()
+          }
+
+          // Exit codes are set, never process.exit(): exiting while fetch's sockets close
+          // aborts node on Windows (0xC0000409) instead of exiting 1.
+          async function main() {
+            try {
+              if (env.IS_PR !== 'true' || !pr) {
+                console.log('Not a pull request event; nothing to check.')
+                return
+              }
+              // Read the PR fresh: a comment payload carries no head SHA, and a
+              // push payload can already be stale.
+              const p = await api(`/repos/${repo}/pulls/${pr}`)
+              if (p.state !== 'open') {
+                console.log(`PR #${pr} is ${p.state}; nothing to check.`)
+                return
+              }
+              const head = p.head.sha
+              let state
+              let description
+              if (p.labels.some((l) => l.name === 'review-exempt')) {
+                state = 'success'
+                description = 'Exempt: review-exempt label is set on this PR.'
+              } else {
+                // Marker contract: the report comment's FIRST line is
+                //   <!-- mdk-review-report v1 sha=<40-hex> skill=... verdicts=... -->
+                // The factory edits one report comment each round, so the newest
+                // report is the one updated last, not the one posted last. Comments
+                // come back oldest first, and a tie keeps that order.
+                let reported = null
+                let reportedAt = ''
+                for (let page = 1; ; page++) {
+                  const batch = await api(`/repos/${repo}/issues/${pr}/comments?per_page=100&page=${page}`)
+                  for (const c of batch) {
+                    const m = /^<!-- mdk-review-report v1 sha=([0-9a-f]{40})/.exec((c.body ?? '').split('\n')[0] ?? '')
+                    const at = c.updated_at ?? c.created_at ?? ''
+                    if (m && at >= reportedAt) {
+                      reported = m[1]
+                      reportedAt = at
+                    }
+                  }
+                  if (batch.length < 100) break
+                }
+                if (!reported) {
+                  state = 'failure'
+                  description = 'No mdk-review-report comment on this PR. Run mdk-code-review and post its report.'
+                } else if (reported !== head) {
+                  state = 'failure'
+                  description = `Review report pins ${reported.slice(0, 7)}, head is ${head.slice(0, 7)}. Re-review the current head.`
+                } else {
+                  state = 'success'
+                  description = `Review report pinned to ${head.slice(0, 7)}.`
+                }
+              }
+              console.log(`head ${head}: ${state}: ${description}`)
+              await api(`/repos/${repo}/statuses/${head}`, {
+                method: 'POST',
+                body: { state, context: CONTEXT, description: description.slice(0, 140), target_url: env.RUN_URL },
+              })
+            } catch (err) {
+              // Nothing is posted, so the required status stays where it was
+              // (pending on a new head). This check never fails open.
+              console.error(`review-evidence error: ${err.message}`)
+              process.exitCode = 1
+            }
+          }
+          await main()
+          FACTORY_EVIDENCE_JS
+      - name: Decide and post the factory-gate status
+        if: ${{ !cancelled() }}
+        run: |
+          node --input-type=module - <<'FACTORY_GATE_JS'
+          const env = process.env
+          const apiBase = (env.GITHUB_API_URL || 'https://api.github.com').replace(/\/$/, '')
+          const repo = env.REPO
+          const pr = env.PR
+          const CONTEXT = 'factory-gate'
+          const MAX_FILES = 3000 // GitHub lists at most 3000 files for a PR.
+
+          // Paths that always block auto-merge (risk-and-precedence.md
+          // "Protected paths", plan D10). A repo's .mdk/profile.json can add
+          // floors; it cannot remove these.
+          const PROTECTED = [
+            { tier: 4, glob: '**/finance/**' },
+            { tier: 4, glob: '**/billing/**' },
+            { tier: 4, glob: '**/tenant*/**' },
+            { tier: 4, glob: '**/permissions/**' },
+            { tier: 4, glob: '**/prisma/schema.prisma' },
+            { tier: 4, glob: '**/migrations/**' },
+          ]
+          // The factory's own guardrails: CI, hooks, Archon and MDK config.
+          // An unattended merge must never change what checks the next one.
+          const GUARDRAILS = ['.github/**', '.claude/**', '.archon/**', '.mdk/**', '**/CODEOWNERS']
+          // The auto-merge ceiling when the base branch's .mdk/profile.json sets
+          // no factory.autoMergeMaxTier (plan D10, B3).
+          const DEFAULT_MAX_TIER = 2
+          // Apps whose review reports count: W3 posts as the Claude GitHub App.
+          const TRUSTED_BOTS = ['claude[bot]']
+          // A person's sign-off on the checks an audit left to a person (Mirabel).
+          const OWNER_CHECK = /^Owner check:\s*([0-9a-fA-F]{7,40})\b/
+
+          function globToRegExp(glob) {
+            let re = ''
+            for (let i = 0; i < glob.length; i++) {
+              const c = glob[i]
+              if (c === '*' && glob[i + 1] === '*') {
+                if (glob[i + 2] === '/') { re += '(?:.*/)?'; i += 2 } else { re += '.*'; i += 1 }
+              } else if (c === '*') re += '[^/]*'
+              else if (c === '?') re += '[^/]'
+              else re += c.replace(/[.+^${}()|[\]\\]/g, '\\$&')
+            }
+            return new RegExp(`^${re}$`, 'i')
+          }
+          const matches = (glob, file) => globToRegExp(glob).test(file)
+
+          async function api(path, { method = 'GET', body, allow404 = false } = {}) {
+            const res = await fetch(`${apiBase}${path}`, {
+              method,
+              headers: {
+                accept: 'application/vnd.github+json',
+                authorization: `Bearer ${env.GH_TOKEN}`,
+                'x-github-api-version': '2022-11-28',
+                ...(body ? { 'content-type': 'application/json' } : {}),
+              },
+              body: body ? JSON.stringify(body) : undefined,
+            })
+            if (allow404 && res.status === 404) return null
+            if (!res.ok) throw new Error(`${method} ${path} returned ${res.status}`)
+            return res.status === 204 ? null : res.json()
+          }
+          async function all(path, cap = Infinity) {
+            const out = []
+            for (let page = 1; out.length < cap; page++) {
+              const sep = path.includes('?') ? '&' : '?'
+              const batch = await api(`${path}${sep}per_page=100&page=${page}`)
+              out.push(...batch)
+              if (batch.length < 100) break
+            }
+            return out
+          }
+
+          // Reads the PR's comments once. writer() says whether a login can
+          // write to the repo (or is a trusted app); newest(kind) finds the
+          // newest marker comment of a kind from a writer, counting the others.
+          async function reports(p) {
+            const canWrite = new Map()
+            async function writer(user) {
+              if (!user?.login) return false
+              if (user.type === 'Bot') return TRUSTED_BOTS.includes(user.login)
+              if (!canWrite.has(user.login)) {
+                const perm = await api(`/repos/${repo}/collaborators/${encodeURIComponent(user.login)}/permission`, { allow404: true })
+                canWrite.set(user.login, ['admin', 'write'].includes(perm?.permission))
+              }
+              return canWrite.get(user.login)
+            }
+            const comments = await all(`/repos/${repo}/issues/${p.number}/comments`)
+            async function newest(kind) {
+              const marker = new RegExp(`^<!-- ${kind} v1 sha=([0-9a-f]{40})\\b(.*)-->`)
+              let ignored = 0
+              // Newest by last update: a report or audit edited in place is current.
+              const byUpdate = comments
+                .map((c, i) => ({ c, i, at: c.updated_at ?? c.created_at ?? '' }))
+                .sort((a, b) => (a.at === b.at ? a.i - b.i : a.at < b.at ? -1 : 1))
+                .map(({ c }) => c)
+              for (const c of byUpdate.reverse()) {
+                const m = marker.exec(((c.body ?? '').split('\n')[0] ?? '').trim())
+                if (!m) continue
+                if (await writer(c.user)) return { found: m, ignored }
+                ignored++
+              }
+              return { found: null, ignored }
+            }
+            // The newest owner check a person with write access posted on the
+            // PR whose commit is a prefix of the head: `Owner check: <sha>` on
+            // its first line. A bot or app never counts, and a new push voids it.
+            async function ownerCheck(head) {
+              const byUpdate = [...comments].sort((a, b) => ((a.updated_at ?? a.created_at ?? '') < (b.updated_at ?? b.created_at ?? '') ? 1 : -1))
+              for (const c of byUpdate) {
+                const m = OWNER_CHECK.exec(((c.body ?? '').split('\n')[0] ?? '').trim())
+                if (!m || c.user?.type !== 'User') continue
+                if (head.startsWith(m[1].toLowerCase()) && (await writer(c.user))) return c
+              }
+              return null
+            }
+            return { writer, newest, ownerCheck }
+          }
+
+          // Why the head has no passing audit, if it has none. `waiting` marks
+          // what a new audit at the head can settle; the rest is a verdict.
+          async function auditReasons(p, { newest, ownerCheck }) {
+            const out = []
+            const audit = await newest('mdk-audit-report')
+            if (!audit.found && audit.ignored) out.push({ waiting: true, reason: `${audit.ignored} audit report(s) from authors without write access ignored` })
+            if (!audit.found) {
+              out.push({ waiting: true, reason: 'no mdk-audit-report comment' })
+            } else if (audit.found[1] !== p.head.sha) {
+              out.push({ waiting: true, reason: `audit report pins ${audit.found[1].slice(0, 7)}, head is ${p.head.sha.slice(0, 7)}` })
+            } else {
+              const verdict = /\bverdict=(\w+)/.exec(audit.found[2])
+              if (!verdict) out.push({ waiting: false, reason: 'audit report states no verdict' })
+              else if (verdict[1] !== 'pass') {
+                // A fail whose every failed item only a person can check passes on
+                // the owner's check of this head; until then it waits for one.
+                const failed = /\bfailed=(\d+)/.exec(audit.found[2])
+                const unverifiable = /\bunverifiable=(\d+)/.exec(audit.found[2])
+                const ownerOnly = Boolean(failed && unverifiable && Number(failed[1]) > 0 && failed[1] === unverifiable[1])
+                if (!ownerOnly) out.push({ waiting: false, reason: `audit verdict is ${verdict[1]}` })
+                else if (!(await ownerCheck(p.head.sha))) {
+                  out.push({ waiting: true, owner: true, reason: `${unverifiable[1]} item(s) need a person: comment "Owner check: ${p.head.sha.slice(0, 7)}" once checked` })
+                }
+              }
+            }
+            return out
+          }
+
+          async function evaluate(p) {
+            const reasons = []
+            const labels = p.labels.map((l) => l.name)
+
+            // The BASE branch's profile, so the PR cannot change the rules that
+            // judge it: extra path floors and the auto-merge ceiling.
+            let profile = null
+            const profileFile = await api(`/repos/${repo}/contents/.mdk/profile.json?ref=${p.base.sha}`, { allow404: true })
+            if (profileFile) {
+              try {
+                profile = JSON.parse(Buffer.from(profileFile.content, 'base64').toString('utf8'))
+              } catch (err) {
+                reasons.push(`cannot read .mdk/profile.json (${err.message})`)
+              }
+            }
+            let maxTier = DEFAULT_MAX_TIER
+            const ceiling = profile?.factory?.autoMergeMaxTier
+            if (ceiling !== undefined) {
+              const t = /^T([0-5])$/.exec(typeof ceiling === 'string' ? ceiling : '')
+              if (t) maxTier = Number(t[1])
+              else reasons.push(`.mdk/profile.json factory.autoMergeMaxTier "${ceiling}" is not T0-T5`)
+            }
+
+            // 1. Tier: the highest tier:T* label, raised by path floors below.
+            if (labels.includes('review-exempt')) reasons.push('review-exempt PRs never auto-merge')
+            const labelTiers = labels.map((l) => /^tier:T([0-5])$/.exec(l)).filter(Boolean).map((m) => Number(m[1]))
+            if (labelTiers.length === 0) reasons.push('no tier:T0-T5 label')
+            let tier = labelTiers.length ? Math.max(...labelTiers) : null
+
+            // 2. Changed paths, renames counted under both names. GitHub's PR file
+            // list is measured from the base SHA it stored at the last base sync, so
+            // after the branch takes in main it also lists main's own changes
+            // (mirabel-ad-creator#157 was refused over main's migration). The diff
+            // against the base branch as it is now lists only the PR's changes. Past
+            // the compare API's 300-file cap, the PR list is used: it can only list
+            // more paths, so it can only refuse more.
+            const COMPARE_CAP = 300
+            const compared = p.base?.ref
+              ? (await api(`/repos/${repo}/compare/${encodeURIComponent(p.base.ref)}...${p.head.sha}`))?.files
+              : undefined
+            const files = Array.isArray(compared) && compared.length < COMPARE_CAP
+              ? compared
+              : await all(`/repos/${repo}/pulls/${p.number}/files`, MAX_FILES)
+            if (files.length >= MAX_FILES) reasons.push(`${files.length}+ changed files, too many to verify`)
+            const paths = files.flatMap((f) => [f.filename, f.previous_filename].filter(Boolean))
+
+            const floors = [...PROTECTED]
+            try {
+              for (const entry of profile?.protectedPaths ?? []) {
+                const t = /^T([0-5])$/.exec(entry.tier ?? '')
+                if (!t || !Array.isArray(entry.paths)) throw new Error('bad protectedPaths entry')
+                for (const glob of entry.paths) floors.push({ tier: Number(t[1]), glob, profile: true })
+              }
+            } catch (err) {
+              reasons.push(`cannot read .mdk/profile.json protectedPaths (${err.message})`)
+            }
+            for (const floor of floors) {
+              const hit = paths.find((f) => matches(floor.glob, f))
+              if (!hit) continue
+              if (!floor.profile) reasons.push(`protected path ${hit} changed`)
+              if (tier !== null && floor.tier > tier) tier = floor.tier
+            }
+            if (tier !== null && tier > maxTier) reasons.push(`tier T${tier} (auto-merge allows T0-T${maxTier})`)
+            const guard = paths.find((f) => GUARDRAILS.some((g) => matches(g, f)))
+            if (guard) reasons.push(`changes factory guardrail ${guard}`)
+
+            // 3. The newest review report from someone who can write to the
+            // repo must pin the head and leave nothing unresolved.
+            const found = await reports(p)
+            const { writer, newest } = found
+            const { found: report, ignored } = await newest('mdk-review-report')
+            if (!report && ignored) reasons.push(`${ignored} review report(s) from authors without write access ignored`)
+            if (!report) {
+              reasons.push('no mdk-review-report comment')
+            } else if (report[1] !== p.head.sha) {
+              reasons.push(`review report pins ${report[1].slice(0, 7)}, head is ${p.head.sha.slice(0, 7)}`)
+            } else {
+              const explicit = /\bunresolved=(\d+)\b/.exec(report[2])
+              const verdicts = /\bverdicts=(\d+)C\/(\d+)P\b/.exec(report[2])
+              // Take the larger count when both are given, so a marker cannot
+              // claim zero unresolved beside confirmed findings.
+              const counts = [explicit && Number(explicit[1]), verdicts && Number(verdicts[1]) + Number(verdicts[2])].filter((n) => n !== null)
+              const unresolved = counts.length ? Math.max(...counts) : null
+              if (unresolved === null) reasons.push('review report states no finding counts')
+              else if (unresolved > 0) reasons.push(`${unresolved} unresolved review finding(s)`)
+            }
+
+            // 4. The newest audit report from a writer must pin the head and
+            // pass (plan B3). A hand fix moves the head, so it waits for a
+            // new audit or for the owner to merge.
+            const audit = await auditReasons(p, found)
+            reasons.push(...audit.map((r) => r.reason))
+
+            // 5. Every linked issue's author has write access (D10).
+            const body = p.body ?? ''
+            const linked = new Set()
+            for (const m of body.matchAll(/\b(?:refs|close[sd]?|fix(?:e[sd])?|resolve[sd]?):?\s+#(\d+)\b/gi)) linked.add(Number(m[1]))
+            if (linked.size === 0) reasons.push('body links no issue (Refs #N)')
+            for (const n of [...linked].slice(0, 10)) {
+              const issue = await api(`/repos/${repo}/issues/${n}`, { allow404: true })
+              if (!issue) { reasons.push(`linked issue #${n} not found`); continue }
+              if (issue.pull_request) { reasons.push(`#${n} is a pull request, not an issue`); continue }
+              const login = issue.user?.login
+              if (!login || issue.user.type === 'Bot') { reasons.push(`issue #${n} was not opened by a person`); continue }
+              if (!(await writer(issue.user))) reasons.push(`issue #${n} author ${login} lacks write access`)
+            }
+            if (linked.size > 10) reasons.push('more than 10 linked issues')
+            // Whether the owner check is the one rule left: the request then
+            // waits for it instead of failing.
+            const waitsOnOwner = reasons.length === 1 && audit.length === 1 && audit[0].owner === true
+            return { reasons, waitsOnOwner }
+          }
+
+          async function post(sha, state, description) {
+            await api(`/repos/${repo}/statuses/${sha}`, {
+              method: 'POST',
+              body: { state, context: CONTEXT, description: description.slice(0, 140), target_url: env.RUN_URL },
+            })
+          }
+
+          async function summary(lines) {
+            if (!env.GITHUB_STEP_SUMMARY) return
+            const fs = await import('node:fs')
+            fs.appendFileSync(env.GITHUB_STEP_SUMMARY, `${lines.join('\n')}\n`)
+          }
+
+          // Exit codes are set, never process.exit(): exiting while fetch's sockets close
+          // aborts node on Windows (0xC0000409) instead of exiting 1.
+          async function main() {
+            let headSha = null
+            try {
+              if (env.IS_PR !== 'true' || !pr) {
+                console.log('Not a pull request event; nothing to gate.')
+                return
+              }
+              const p = await api(`/repos/${repo}/pulls/${pr}`)
+              if (p.state !== 'open') {
+                console.log(`PR #${pr} is ${p.state}; nothing to gate.`)
+                return
+              }
+              headSha = p.head.sha
+              const requested = p.labels.some((l) => l.name === 'auto-merge') || p.auto_merge != null
+              // The branch marks a factory PR too, so removing the label
+              // cannot drop the audit requirement.
+              const factory = p.labels.some((l) => l.name === 'factory-pr') || /^factory\//.test(p.head.ref ?? '')
+              let state = 'success'
+              let description = 'No auto-merge requested; the owner merges.'
+              let reasons = []
+              if (!requested && factory) {
+                // Every factory PR waits for a passing audit at its head, even
+                // when its owner merges it. The description starts with
+                // 'Factory PR:', which never answers an auto-merge request
+                // (gateAnswer in archon/mirabel/.shared/mirabel-policy.ts).
+                const found = await auditReasons(p, await reports(p))
+                const short = p.head.sha.slice(0, 7)
+                reasons = found.map((r) => r.reason)
+                if (!found.length) {
+                  description = `Factory PR: audit passed at ${short}; the owner merges.`
+                } else if (found.every((r) => r.waiting)) {
+                  state = 'pending'
+                  description = `Factory PR: waiting for a passing audit at ${short}: ${reasons.join('; ')}`
+                } else {
+                  state = 'failure'
+                  description = `Factory PR: no passing audit at ${short}: ${reasons.join('; ')}`
+                }
+              } else if (requested) {
+                const judged = await evaluate(p)
+                reasons = judged.reasons
+                if (!reasons.length) {
+                  description = 'Auto-merge allowed: tier within the ceiling, no protected paths, review clean and audit passed at head, issue author can write.'
+                } else if (judged.waitsOnOwner) {
+                  // Every rule holds but the owner check, so the gate waits for
+                  // it. merge-mode arms GitHub auto-merge on this answer only
+                  // (GATE_OWNER_CHECK in mirabel-policy.ts); pending still blocks
+                  // the merge, and only the check of this head turns it to success.
+                  state = 'pending'
+                  description = `Auto-merge waits for an owner check at ${p.head.sha.slice(0, 7)}: ${reasons[0]}`
+                } else {
+                  state = 'failure'
+                  description = `Auto-merge blocked: ${reasons.join('; ')}`
+                }
+              }
+              console.log(`head ${headSha}: ${state}: ${description}`)
+              for (const r of reasons) console.log(`  - ${r}`)
+              await summary([`### factory-gate: ${state}`, '', description, ...reasons.map((r) => `- ${r}`)])
+              await post(headSha, state, description)
+              if (state === 'failure') process.exitCode = 1
+            } catch (err) {
+              console.error(`factory-gate error: ${err.message}`)
+              if (headSha) {
+                try { await post(headSha, 'failure', `factory-gate errored: ${err.message}`) } catch {}
+              }
+              process.exitCode = 1
+            }
+          }
+          await main()
+          FACTORY_GATE_JS

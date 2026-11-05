@@ -1,0 +1,68 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(gh issue create *)",
+      "PowerShell(gh issue create *)",
+      "Bash(archon workflow run *)",
+      "PowerShell(archon workflow run *)",
+      "Bash(archon workflow resume *)",
+      "PowerShell(archon workflow resume *)",
+      "Bash(archon workflow status *)",
+      "PowerShell(archon workflow status *)",
+      "Bash(archon workflow list *)",
+      "PowerShell(archon workflow list *)",
+      "Bash(archon workflow get *)",
+      "PowerShell(archon workflow get *)",
+      "Bash(archon workflow attention *)",
+      "PowerShell(archon workflow attention *)",
+      "Bash(schtasks /run /tn \"Archon wake (Mirabel factory)\")",
+      "PowerShell(schtasks /run /tn \"Archon wake (Mirabel factory)\")",
+      "Bash(git push origin factory/*)",
+      "PowerShell(git push origin factory/*)",
+      "Bash(git push -u origin factory/*)",
+      "PowerShell(git push -u origin factory/*)",
+      "Bash(git push --force-with-lease origin factory/*)",
+      "PowerShell(git push --force-with-lease origin factory/*)"
+    ],
+    "deny": [
+      "Read(~/.aws/**)",
+      "Edit(~/.aws/**)",
+      "Read(./relay.json)",
+      "Edit(./relay.json)",
+      "Read(**/relay.json)",
+      "Edit(**/relay.json)"
+    ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash|PowerShell",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node",
+            "args": [
+              "${CLAUDE_PROJECT_DIR}/.claude/hooks/factory-tripwire.mjs"
+            ],
+            "timeout": 15,
+            "onFailure": "block"
+          }
+        ]
+      },
+      {
+        "matcher": "Bash|PowerShell",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node",
+            "args": [
+              "${CLAUDE_PROJECT_DIR}/.claude/hooks/production-guard.mjs"
+            ],
+            "timeout": 15,
+            "onFailure": "block"
+          }
+        ]
+      }
+    ]
+  }
+}

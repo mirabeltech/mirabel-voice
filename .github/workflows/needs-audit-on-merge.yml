@@ -1,0 +1,109 @@
+# needs-audit-on-merge — TEMPLATE (copy into a repo's .github/workflows/)
+#
+# The merge-side half of the ticket lifecycle handoff (MDK
+# skills/mirabel/references/ticket-lifecycle.md). Because lifecycle
+# PRs link tickets with `Refs #N` (never `Closes`), GitHub does nothing to the
+# ticket when the PR merges — this workflow performs the documented
+# transition: `in progress` off, `needs-audit` on, with a breadcrumb comment.
+# The audit queue (human /audit-work-queue or the KB audit-queue cron) takes
+# it from there. Pair with audit-close-guard.yml for the close-side guard.
+#
+# A ticket the factory already audited before merge (plan C3) skips the queue:
+# when the newest `mdk-audit-report` comment on the PR from someone with write
+# access (or the Claude app) says `verdict=pass`, pins the PR's final head and
+# names the ticket (`issue=<n>`), this posts `AUDIT: PASS — pre-merge audit of
+# #<pr> at <sha>` on that ticket and closes it as completed. Every other `Refs`
+# ticket goes to the queue: the audit checked one ticket's promise.
+# audit-close-guard accepts the close, since the workflow token is not the
+# ticket's assignee. A hand fix after the audit moves the head, so that ticket
+# goes to the queue as before.
+#
+# Dependency-free: runner `gh` + `jq` with the workflow token, nothing to
+# SHA-pin. Only `Refs #N` / `Refs: #N` references in the PR BODY are honoured —
+# commit messages are ignored by design (they are not the declared linkage).
+name: needs-audit-on-merge
+on:
+  pull_request:
+    types: [closed]
+
+permissions:
+  issues: write
+  # Reading a pull request's comments (issues/<pr>/comments) needs this too;
+  # without it the audit-report lookup gets HTTP 403.
+  pull-requests: read
+
+jobs:
+  handoff:
+    if: github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+    steps:
+      - name: Move Refs-linked tickets to the audit queue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+          BODY: ${{ github.event.pull_request.body }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          NUMS=$(printf '%s' "$BODY" | grep -oiE 'refs[: ]+#[0-9]+' | grep -oE '[0-9]+' | sort -u || true)
+          [ -n "$NUMS" ] || { echo "no Refs-linked tickets"; exit 0; }
+
+          # The newest audit report from a writer or the Claude app, read as factory-gate
+          # reads it: the trimmed first line matches its marker, and the first
+          # `verdict=` decides. A 404 from the permission lookup means not a writer,
+          # as in the gate; any other failure stops the search, so the tickets go
+          # to the queue rather than an older report counting.
+          AUDIT_URL=""
+          AUDITED=""
+          REPORTS=""
+          if ! COMMENTS=$(gh api "repos/$REPO/issues/$PR/comments" --paginate); then
+            echo "::warning::could not read PR #$PR's comments; every ticket goes to the queue"
+          else
+            REPORTS=$(printf '%s' "$COMMENTS" \
+              | jq -rs 'add // [] | reverse | .[]
+                  | ((.body // "") | split("\n")[0] | gsub("^\\s+|\\s+$"; "")) as $line
+                  | ($line | capture("^<!-- mdk-audit-report v1 sha=(?<sha>[0-9a-f]{40})\\b(?<rest>.*)-->")?) as $m
+                  | select($m != null)
+                  | [.user.login, .user.type, .html_url, $m.sha, ($m.rest | gsub("\t"; " "))] | @tsv') \
+              || { echo "::warning::could not parse PR #$PR's comments; every ticket goes to the queue"; REPORTS=""; }
+          fi
+          while IFS=$'\t' read -r LOGIN TYPE URL SHA REST; do
+            [ -n "$LOGIN" ] || continue
+            if [ "$TYPE" = "Bot" ]; then
+              [ "$LOGIN" = "claude[bot]" ] || continue
+            else
+              if ! PERM=$(gh api "repos/$REPO/collaborators/$LOGIN/permission" -q '.permission' 2>/tmp/perm-err); then
+                grep -q 'HTTP 404' /tmp/perm-err && continue
+                echo "could not read $LOGIN's permission; every ticket goes to the queue"
+                break
+              fi
+              case "$PERM" in admin|write) ;; *) continue ;; esac
+            fi
+            VERDICT=$(printf '%s' "$REST" | grep -oE '\bverdict=[A-Za-z0-9_]+' | head -n1 | cut -d= -f2 || true)
+            if [ "$SHA" = "$HEAD_SHA" ] && [ "$VERDICT" = "pass" ]; then
+              AUDIT_URL=$URL
+              AUDITED=$(printf '%s' "$REST" | grep -oE '\bissue=[0-9]+\b' | head -n1 | cut -d= -f2 || true)
+            fi
+            break
+          done <<< "$REPORTS"
+
+          for N in $NUMS; do
+            # A `Refs` to a pull request number is not a ticket: never comment on or close a PR.
+            KIND=$(gh api "repos/$REPO/issues/$N" -q '[.state, (has("pull_request") | tostring)] | @tsv' 2>/dev/null || printf 'missing\tfalse')
+            STATE=${KIND%%$'\t'*}
+            [ "${KIND##*$'\t'}" = "true" ] && { echo "#$N is a pull request — skipping"; continue; }
+            [ "$STATE" = "open" ] || { echo "#$N is $STATE — skipping"; continue; }
+            gh api -X DELETE "repos/$REPO/issues/$N/labels/in%20progress" >/dev/null 2>&1 || true
+            if [ -n "$AUDIT_URL" ] && [ "$N" = "$AUDITED" ]; then
+              gh issue comment "$N" -R "$REPO" --body "AUDIT: PASS — pre-merge audit of #$PR at $HEAD_SHA
+
+          An independent agent session audited this ticket's promise against the pull request's final head before it merged: $AUDIT_URL. Posted by \`needs-audit-on-merge\`; see the MDK ticket lifecycle (\`skills/mirabel/references/ticket-lifecycle.md\`)."
+              gh api -X DELETE "repos/$REPO/issues/$N/labels/needs-audit" >/dev/null 2>&1 || true
+              gh issue close "$N" -R "$REPO" --reason completed
+              continue
+            fi
+            gh api -X POST "repos/$REPO/issues/$N/labels" -f "labels[]=needs-audit" >/dev/null
+            gh issue comment "$N" -R "$REPO" --body \
+              "📦 **needs-audit-on-merge**: PR #$PR merged. This ticket is now in the audit queue — the independent auditor closes it (or sends it back) from here. See the MDK ticket lifecycle (\`skills/mirabel/references/ticket-lifecycle.md\`)."
+          done

@@ -1,0 +1,108 @@
+# Factory W3: every-PR review (plan §4 W3). Installs as
+# .github/workflows/factory-review.yml in a factory repo; templates/factory/README.md
+# has the steps and the secrets.
+#
+# Runs mdk-code-review on each ready, same-repo pull request and posts its report
+# as the Claude GitHub App. The report's first line is the `mdk-review-report`
+# marker pinned to the head commit, so `mdk/review-evidence` re-evaluates and
+# factory-gate can read the finding counts. Advisory only: it never pushes,
+# approves or merges, and nothing here is a required check.
+#
+# Skipped: drafts and fork PRs (no secrets reach them). A head that already has a
+# review report from a writer or the Claude app, which is what an Archon run
+# leaves on a factory PR, ends the job after one API read. A hand-fixed commit
+# on a factory PR has no report, so it is reviewed here (plan B5).
+name: factory-review
+
+on:
+  pull_request:
+    types: [opened, synchronize, ready_for_review]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: factory-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  review:
+    if: >-
+      github.event.pull_request.draft == false &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      pull-requests: write
+      # The action exchanges the run's OIDC token for the Claude GitHub App's token,
+      # so the comment is posted as the app. No github_token input is passed below.
+      id-token: write
+    steps:
+      # A report already pinned to this head (the Archon run's, or an earlier
+      # run of this job) ends the job here. As in factory-gate, the newest
+      # report counts only from the Claude app or someone with write access.
+      - name: Check for a report on this head
+        id: pinned
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          # One line per report comment, oldest first: login, type, pinned SHA.
+          gh api --paginate "repos/$REPO/issues/$PR/comments" \
+            --jq '.[] | ((.body // "") | split("\n") | (.[0] // "")) as $first
+                  | select($first | test("^<!-- mdk-review-report v1 sha=[0-9a-f]{40}"))
+                  | "\(.user.login) \(.user.type) \($first | capture("sha=(?<sha>[0-9a-f]{40})").sha)"' \
+            > "$RUNNER_TEMP/reports.txt"
+          reviewed=false
+          while read -r login type sha; do
+            if [ "$type" = "Bot" ]; then
+              [ "$login" = "claude[bot]" ] || continue
+            else
+              perm=$(gh api "repos/$REPO/collaborators/$login/permission" --jq .permission 2>/dev/null || echo none)
+              case "$perm" in admin|write) ;; *) continue ;; esac
+            fi
+            [ "$sha" = "$HEAD_SHA" ] && reviewed=true
+            break
+          done < <(tac "$RUNNER_TEMP/reports.txt")
+          if [ "$reviewed" = true ]; then
+            echo "::notice::A review report is already pinned to ${HEAD_SHA:0:7}; nothing to review."
+          fi
+          echo "reviewed=$reviewed" >> "$GITHUB_OUTPUT"
+      # The head commit, not GitHub's merge commit: the marker pins the reviewed
+      # commit, and review-evidence compares it to the PR head.
+      - if: steps.pinned.outputs.reviewed == 'false'
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      # The MDK repository is private, so the plugin is loaded from a checkout made
+      # with a read-only token, as a local marketplace. It is factory-main, the
+      # branch factory runs use: master's mdk-code-review writes no `unresolved=`
+      # count in its report, and factory-gate needs one.
+      - if: steps.pinned.outputs.reviewed == 'false'
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: mirabeltech/mirabel-agent-skills
+          ref: factory-main
+          path: .factory-mdk
+          token: ${{ secrets.MDK_READ_TOKEN }}
+          persist-credentials: false
+      - if: steps.pinned.outputs.reviewed == 'false'
+        uses: anthropics/claude-code-action@ed670b4cf9de2a5a570d130d2f6197b9e543cd64 # v1.0.240
+        env:
+          # The KB MCP server reads its token from the environment first.
+          MIRABEL_KB_TOKEN: ${{ secrets.MIRABEL_KB_TOKEN }}
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          plugin_marketplaces: ./.factory-mdk
+          plugins: mirabel-skills@mirabel-agent-skills
+          prompt: |
+            /mirabel-skills:mdk-code-review Review pull request #${{ github.event.pull_request.number }} in ${{ github.repository }}. Its head commit ${{ github.event.pull_request.head.sha }} is checked out, detached; the base to diff against is origin/${{ github.event.pull_request.base.ref }}. Name the pull request by number in every gh command. Ignore the .factory-mdk folder: it is the MDK, not part of this change. Post the report as the skill's step 6 says, then stop.
+          claude_args: |
+            --max-turns 40
+            --allowedTools "Read,Glob,Grep,Write,Skill,Bash(git diff:*),Bash(git status:*),Bash(git ls-files:*),Bash(git symbolic-ref:*),Bash(git log:*),Bash(git show:*),Bash(git rev-parse:*),Bash(git merge-base:*),Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh pr comment:*),mcp__plugin_mirabel-skills_mirabel-knowledge"

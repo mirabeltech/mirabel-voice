@@ -1,0 +1,41 @@
+{
+  "profileVersion": 1,
+  "mdkVersion": "mdk-2026.09.29",
+  "repo": "mirabeltech/mirabel-voice",
+  "branches": {
+    "main": "main"
+  },
+  "components": [
+    {
+      "name": "app",
+      "paths": [
+        "**"
+      ],
+      "testCommand": "C:\\Dev\\mirabel-voice\\.venv\\Scripts\\python.exe -m pytest -q"
+    }
+  ],
+  "ci": {
+    "required": []
+  },
+  "factory": {
+    "autoMergeMaxTier": "T2"
+  },
+  "protectedPaths": [
+    {
+      "tier": "T3",
+      "paths": [
+        "src/mirabel_relay/**",
+        "packaging/**",
+        "operations/**",
+        "scripts/deploy_relay.py",
+        "scripts/set_relay.py",
+        "scripts/setup_relay.py",
+        "scripts/setup_operations.py",
+        "scripts/approve_bundle.py",
+        "docs/deploy-policy.json",
+        "install.ps1",
+        "setup.ps1"
+      ]
+    }
+  ]
+}
