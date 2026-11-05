@@ -6,7 +6,8 @@ Tommy asked for a digest he can judge from the subject line (issue #119). Only `
 
 - **Subject**: `Mirabel Voice: <N> reports, <K> new - <error type> in <file>`. The named group is the first new one, or the largest when none is new. SNS requires printable ASCII under 100 characters, so other characters become `?` and a long subject ends in `...`.
 - **Summary first**: one line per group (new or ongoing, error type, innermost `file:function`, reports, people, versions), at most 50 lines, then the detail blocks.
-- **New or ongoing**: the scan now reads the 7 days before the 24-hour window too. A group with a report there is ongoing, with the date it was first seen. It still emails only when the last 24 hours hold a report.
+- **New or ongoing**: after the 24-hour scan finds reports, a second scan reads the 7 days before the window. A group with a report there is ongoing, with the date it was first seen. That second scan stops after 45 seconds (`LOOKBACK_SECONDS`), well inside the Lambda's 120-second timeout. If it fails, the monitor logs `lookback: failed` with the exception class and still sends the digest, with its groups marked history unknown and no new count in the subject. A quiet day makes only the 24-hour scan and sends nothing.
+- **One line per field**: control characters in a report's error type, frame or version become `?`, so a report cannot add lines to the email.
 - **Versions** per group, from each relay line's `version`, with `unknown` when missing.
 - **Likely cause** for known error types, from `LIKELY_CAUSES`. It starts with `PortAudioError`.
 - **Dashboard link** at the end, for the Lambda's own region.
@@ -15,7 +16,7 @@ Applying redeploys the monitor code. `--apply` also redeploys the relay and rese
 
 ## Daily error-report digest and dashboard, November 5, 2026 (applied the same day)
 
-Tommy applied this on November 5 after adding the reports topic and the dashboard to the `MirabelVoiceOperationsSetup` policy. Apply returned `configured: true`, and it also deleted the retired `slow`, `relay-errors` and `relay-throttles` alarms that AWS had refused to delete in September.
+Tommy applied this on November 5 after adding the reports topic and the dashboard to the `MirabelVoiceOperationsSetup` policy. Apply returned `configured: true` and `retired_alarms: deleted`, which means it found and deleted retired alarms that were still in AWS. The `slow`, `relay-errors` and `relay-throttles` alarms that AWS refused to delete in September are the likely ones, but the alarm list was not read back.
 
 Tommy asked to hear about the app's error reports without running `scripts/usage_report.py --reports` by hand (issue #116). He chose a daily digest over a metric alarm or one email per error, asked for a dashboard, and wants the digest to go to him only. `scripts/setup_operations.py` now prepares this. Nothing changes in AWS until he runs `--apply`.
 

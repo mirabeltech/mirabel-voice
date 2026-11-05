@@ -259,6 +259,9 @@ def spend_check(context, prices, clock=time.monotonic):
 REPORTS_WINDOW_MS = 24 * 3_600_000
 # A group with no report in this lookback before the window counts as new.
 LOOKBACK_MS = 7 * 24 * 3_600_000
+# The lookback only labels groups, so it gets a time limit well inside the
+# Lambda's 120 s; when it runs out, the digest still sends without labels.
+LOOKBACK_SECONDS = 45
 MESSAGE_CHARS = 500
 # SNS refuses a message over 262,144 bytes; the margin holds the "more groups" line.
 DIGEST_BYTES = 250_000
@@ -273,15 +276,19 @@ LIKELY_CAUSES = {
 }
 
 
-def read_reports(logs, start, end):
+def read_reports(logs, start, end, deadline=None):
     """Every `report {...}` line logged in [start, end) ms.
 
     Each line gains seen_ms, the log event's timestamp. A line whose JSON
     does not parse is kept empty, so group_reports counts it as unreadable.
+    With a deadline (time.monotonic seconds), the scan raises instead of
+    starting a page after it.
     """
     args = dict(logGroupName=RELAY_LOGS, startTime=start, endTime=end - 1, filterPattern="report")
     seen, tokens, found = set(), set(), []
     for _ in range(WINDOW_PAGES):
+        if deadline is not None and time.monotonic() > deadline:
+            raise RuntimeError("Report scan ran out of time")
         page = logs.filter_log_events(**args)
         for event in page.get("events", []):
             if event["eventId"] in seen:
@@ -394,13 +401,16 @@ def annotate(groups, recent, earlier):
     versions lists the window's app versions, with unknown for a line
     that has none. earlier_ms is the first report of the same key in
     the lookback before the window, or None when the group is new.
+    earlier is None when the lookback could not be read; history is then
+    False and no group is called new or ongoing.
     """
     versions, first = {}, {}
     for line in recent:
         key = report_key(line.get("report"))
         if key is not None:
-            versions.setdefault(key, set()).add(str(line.get("version") or "unknown"))
-    for line in earlier:
+            version = line.get("version")
+            versions.setdefault(key, set()).add("unknown" if version in (None, "") else str(version))
+    for line in earlier or []:
         key = report_key(line.get("report"))
         if key is not None:
             first[key] = min(first.get(key, line["seen_ms"]), line["seen_ms"])
@@ -408,15 +418,32 @@ def annotate(groups, recent, earlier):
         key = (group["error_type"], group["frame"])
         group["versions"] = sorted(versions.get(key, {"unknown"}))
         group["earlier_ms"] = first.get(key)
-    return groups
+        group["history"] = earlier is not None
+
+
+def history(group):
+    """A group's summary label and detail line, from annotate()'s marks."""
+    if not group.get("history", True):
+        return "History unknown", "  History unknown: the 7 days before could not be read."
+    if group.get("earlier_ms") is None:
+        return "NEW", "  New: no report like this in the 7 days before."
+    return ("Ongoing since " + utc(group["earlier_ms"])[:10],
+            f"  Ongoing: also reported from {utc(group['earlier_ms'])} in the 7 days before.")
 
 
 def subject_line(groups, total):
-    """Name the first new group, or the largest when none is new, in SNS-safe ASCII."""
-    new = [group for group in groups if group.get("earlier_ms") is None]
-    text = f"Mirabel Voice: {plural(total, 'report')}, {len(new)} new"
+    """Name the first new group, or the largest when none is new, in SNS-safe ASCII.
+
+    When the lookback could not be read, the subject leaves out the new
+    count and names the largest group.
+    """
+    text = f"Mirabel Voice: {plural(total, 'report')}"
+    new = []
+    if all(group.get("history", True) for group in groups):
+        new = [group for group in groups if group.get("earlier_ms") is None]
+        text += f", {len(new)} new"
     named = new[0] if new else max(groups, key=lambda group: group["count"], default=None)
-    if named:
+    if named is not None:
         file = named["frame"].rsplit(":", 1)[0].replace("\\", "/").rsplit("/", 1)[-1]
         text += f" - {named['error_type']} in {file}"
     text = "".join(c if " " <= c <= "~" else "?" for c in text)
@@ -424,37 +451,28 @@ def subject_line(groups, total):
 
 
 def summary_line(group):
-    if group.get("earlier_ms") is None:
-        status = "NEW"
-    else:
-        status = "Ongoing since " + utc(group["earlier_ms"])[:10]
-    versions = clip(", ".join(group.get("versions") or ["unknown"]))
-    return (f"- {status}: {clip(group['error_type'])} at {clip(group['frame'])} "
+    label, _ = history(group)
+    versions = clip(oneline(", ".join(group.get("versions") or ["unknown"])))
+    return (f"- {label}: {clip(oneline(group['error_type']))} at {clip(oneline(group['frame']))} "
             f"({plural(group['count'], 'report')}, {plural(len(group['people']), 'person', 'people')}; "
             f"versions {versions})")
 
 
 def group_text(group):
     file, number, function = group["frames"][-1]
-    message = str(group["message"] or "(none)")
-    if len(message) > MESSAGE_CHARS:
-        message = message[:MESSAGE_CHARS] + "..."
-    if group.get("earlier_ms") is None:
-        status = "  New: no report like this in the 7 days before."
-    else:
-        status = f"  Ongoing: also reported from {utc(group['earlier_ms'])} in the 7 days before."
+    _, status = history(group)
     cause = LIKELY_CAUSES.get(group["error_type"])
     return "\n".join([
-        f"{group['error_type']} at {group['frame']}",
+        f"{oneline(group['error_type'])} at {oneline(group['frame'])}",
         status,
         *([f"  Likely cause: {cause}"] if cause else []),
         f"  Count: {group['count']}",
         f"  People: {', '.join(sorted(group['people']))}",
-        f"  Versions: {', '.join(group.get('versions') or ['unknown'])}",
+        f"  Versions: {oneline(', '.join(group.get('versions') or ['unknown']))}",
         f"  First seen: {utc(group['first_seen_ms'])}",
         f"  Last seen: {utc(group['last_seen_ms'])}",
         f"  Innermost frame: {file}:{number} in {function}",
-        f"  Newest message: {message}",
+        f"  Newest message: {clip(group['message'] or '(none)', MESSAGE_CHARS)}",
     ]) + "\n\n"
 
 
@@ -462,9 +480,14 @@ def plural(count, one, many=None):
     return f"{count} {one if count == 1 else many or one + 's'}"
 
 
-def clip(text):
+def clip(text, limit=SUMMARY_FIELD_CHARS):
     text = str(text)
-    return text if len(text) <= SUMMARY_FIELD_CHARS else text[:SUMMARY_FIELD_CHARS] + "..."
+    return text if len(text) <= limit else text[:limit] + "..."
+
+
+def oneline(text):
+    """Text that cannot start a new line: a report field could otherwise forge email lines."""
+    return "".join("?" if c < " " or c == "\x7f" else c for c in str(text))
 
 
 def utf8(text):
@@ -475,16 +498,22 @@ def utf8(text):
 def reports_check(logs, sns, topic, now_ms):
     """Email the last 24 hours of error reports, grouped; send nothing when there were none.
 
-    The scan also reads the 7 days before the window, only to tell new
-    groups from ongoing ones.
+    A second, time-limited scan reads the 7 days before the window, only
+    to tell new groups from ongoing ones. When it fails, the digest still
+    sends, with its groups marked history unknown.
     """
     start = now_ms - REPORTS_WINDOW_MS
-    lines = read_reports(logs, start - LOOKBACK_MS, now_ms)
-    recent = [line for line in lines if line["seen_ms"] >= start]
+    recent = read_reports(logs, start, now_ms)
     if not recent:
         return 0
     groups, unreadable = group_reports(recent)
-    annotate(groups, recent, [line for line in lines if line["seen_ms"] < start])
+    try:
+        earlier = read_reports(logs, start - LOOKBACK_MS, start,
+                               deadline=time.monotonic() + LOOKBACK_SECONDS)
+    except Exception as error:
+        print(json.dumps({"check": "reports", "lookback": "failed", "category": type(error).__name__}))
+        earlier = None
+    annotate(groups, recent, earlier)
     subject, message = digest(groups, unreadable, start, now_ms, os.environ.get("AWS_REGION"))
     sns.publish(TopicArn=topic, Subject=subject, Message=message)
     return len(recent)
