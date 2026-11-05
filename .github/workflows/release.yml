@@ -32,7 +32,15 @@ jobs:
           code=true
           # On pull_request, HEAD is GitHub's merge commit: HEAD^1 is the base
           # and the diff is exactly what merging would change.
+          # The diff runs in a plain assignment so set -e stops the step if git
+          # fails; a process substitution would hide that and leave code=false.
+          # An empty diff also runs everything.
           if [ "$EVENT" = pull_request ] && git rev-parse -q --verify 'HEAD^2' >/dev/null; then
+            changed=$(git diff --name-status --no-renames 'HEAD^1' HEAD)
+          else
+            changed=''
+          fi
+          if [ -n "$changed" ]; then
             code=false
             while IFS=$'\t' read -r status path; do
               kind=code
@@ -44,7 +52,7 @@ jobs:
               fi
               echo "$kind  $status  $path"
               if [ "$kind" = code ]; then code=true; fi
-            done < <(git diff --name-status --no-renames 'HEAD^1' HEAD)
+            done <<< "$changed"
           fi
           echo "code=$code"
           echo "code=$code" >> "$GITHUB_OUTPUT"
