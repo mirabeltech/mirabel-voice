@@ -169,6 +169,52 @@ def test_the_section_prints_person_version_last_seen_and_the_rest(capsys):
     assert "  mark" in out
 
 
+LONG = "a.long.address@sales.example.com"  # 32 characters: the old versions column width
+LONGER = "someone.with.a.longer.name@example.com"
+
+
+def test_a_long_name_keeps_the_versions_columns_apart(capsys):
+    people = versions([
+        seen(LONG, None, 1_000),
+        seen(LONGER, "0.9.7", 2_000),
+        seen("mark", "0.9.6", 3_000),
+    ])
+    report_versions(people, None, 1)
+    rows = [line for line in capsys.readouterr().out.splitlines() if "@" in line or line.startswith("mark")]
+    assert [row.split()[:2] for row in rows] == [
+        [LONG, "unknown"],
+        ["mark", "0.9.6"],
+        [LONGER, "0.9.7"],
+    ]
+    # Every version starts in the same column.
+    assert len({row.index(row.split()[1], len(row.split()[0])) for row in rows}) == 1
+
+
+def test_a_long_name_keeps_the_cost_columns_apart(capsys):
+    lines = [
+        transcribe_line(token=LONGER),
+        transcribe_line(token="mark"),
+    ]
+    usage_report.report(summarize(lines, PRICES), PRICES, 1)
+    out = capsys.readouterr().out.splitlines()
+    rows = [line for line in out if line.startswith(("mark", "someone", "Everyone"))]
+    assert [row.split()[:2] for row in rows] == [
+        ["mark", "1"],
+        [LONGER, "1"],
+        ["Everyone", "2"],
+    ]
+    # Right-aligned numbers end in the same column, and the rules cover the rows.
+    assert len({len(row) for row in rows}) == 1
+    assert all(len(line) >= len(rows[0]) for line in out if set(line) in ({"="}, {"-"}))
+
+
+def test_short_names_keep_the_usual_layout(capsys):
+    usage_report.report(summarize([transcribe_line(token="mark")], PRICES), PRICES, 1)
+    out = capsys.readouterr().out.splitlines()
+    assert out[1] == "=" * 78
+    assert next(line for line in out if line.startswith("Person")).index("Dictations") == 24 + 1
+
+
 def test_read_lines_keeps_each_events_timestamp():
     class Logs:
         def get_paginator(self, name):
