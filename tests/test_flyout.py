@@ -6,6 +6,7 @@ shapes - is logic, and runs without a desktop.
 """
 
 import gc
+import sys
 import threading
 from types import SimpleNamespace
 
@@ -574,9 +575,14 @@ def collect_tk_on_main_thread():
     # Tk widget trees are reference cycles, so destroy() leaves them as
     # garbage. Left alone, the next collection can run on any thread, and
     # finalizing Tcl objects off the interpreter's thread kills the whole
-    # run with 0x80000003 (issue #98). Collect here, after the test frame
-    # is gone, on the thread that created the interpreter.
+    # run with 0x80000003 (issue #98). Collect here, on the thread that
+    # created the interpreter. When the test fails, pytest keeps its frame
+    # alive in sys.last_* until the next test starts; drop those first or
+    # the collect frees nothing.
     yield
+    for name in ("last_type", "last_value", "last_traceback", "last_exc"):
+        if hasattr(sys, name):
+            delattr(sys, name)
     gc.collect()
 
 
