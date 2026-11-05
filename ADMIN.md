@@ -64,6 +64,8 @@ See [service maintenance](docs/service-maintenance.md) for request/model/output 
 
 The microphone normally maintains a rolling memory buffer for fast starts; Pause closes it. Failed audio is retained only in memory for one explicit retry and discarded on new recording, Discard or Quit. The last transcript remains in memory for copy/paste-last. Configuration, credentials and application logs do persist; clipboard history/sync and provider retention are separate systems. Do not promise zero retention or describe network loss as seamless offline operation. Keep logs limited to operational status, not speech, keys or provider payloads.
 
+The app sends its version with each relay request and sends scrubbed error reports (error type and message, code locations, app and Windows versions, CPU type; never audio, transcript text, keys or tokens). The relay keeps its usage lines and those reports in its CloudWatch log group, `/aws/lambda/mirabel-voice-relay`, for 90 days. `scripts/setup_operations.py` sets that retention, so it applies only after you run it.
+
 The following commands describe existing relay operations. They require the appropriate operator credentials and are not automatically run by the installer.
 
 ## Running the relay
