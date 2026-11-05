@@ -66,9 +66,12 @@ def required_permissions(account, region):
               [f"{base}:iam::{account}:role/{name}-role" for name in (FUNCTION, MONITOR)]),
         allow(["iam:PassRole"], f"{base}:iam::{account}:role/{MONITOR}-role",
               Condition={"StringEquals": {"iam:PassedToService": "lambda.amazonaws.com"}}),
-        allow(["logs:CreateLogGroup", "logs:PutRetentionPolicy"],
+        allow(["logs:CreateLogGroup"],
               [f"{base}:logs:{region}:{account}:log-group:/aws/lambda/{MONITOR}",
                f"{base}:logs:{region}:{account}:log-group:/aws/lambda/{MONITOR}:*"]),
+        allow(["logs:PutRetentionPolicy"],
+              [f"{base}:logs:{region}:{account}:log-group:/aws/lambda/{name}{suffix}"
+               for name in (MONITOR, FUNCTION) for suffix in ("", ":*")]),
     ])
 
 
@@ -265,6 +268,7 @@ def apply(session, account, config, audio, backup_dir):
     except logs.exceptions.ResourceAlreadyExistsException:
         pass
     logs.put_retention_policy(logGroupName="/aws/lambda/"+MONITOR, retentionInDays=30)
+    logs.put_retention_policy(logGroupName="/aws/lambda/"+FUNCTION, retentionInDays=90)
     relay_url = lam.get_function_url_config(FunctionName=FUNCTION)["FunctionUrl"].rstrip("/")
     monitor_env = {"RELAY_URL":relay_url,"TOKENS_SECRET":token_secret,"AWS_RESERVE_USD":str(config["aws_reserve_usd"]),
                    "SPEND_LEDGER_TABLE":TABLE}

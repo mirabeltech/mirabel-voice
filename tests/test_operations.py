@@ -365,6 +365,8 @@ def test_apply_activates_limits_alarms_and_schedules_without_billing_access(tmp_
     assert result["retired_alarms"] == "deleted"
     assert deployment.environment.call_args.args[0]["MIRABEL_REQUESTS_PER_MINUTE"] == "20"
     lam.put_function_concurrency.assert_called_once_with(FunctionName=setup.FUNCTION, ReservedConcurrentExecutions=20)
+    clients["logs"].put_retention_policy.assert_any_call(
+        logGroupName="/aws/lambda/"+setup.FUNCTION, retentionInDays=90)
     assert clients["cloudwatch"].put_metric_alarm.call_count == 1
     clients["cloudwatch"].delete_alarms.assert_called_once_with(AlarmNames=[
         "mirabel-voice-slow", "mirabel-voice-relay-errors", "mirabel-voice-relay-throttles",
@@ -392,6 +394,16 @@ def test_permission_request_cannot_edit_operator_permissions_or_other_functions(
     assert "function:*" not in serialized
     assert "iam:PassRole" in serialized
     assert "budgets:" not in serialized
+
+
+def test_permission_request_may_set_relay_log_retention_but_not_create_its_group():
+    statements=setup.required_permissions("123","us-east-2")["Statement"]
+    def resources(action):
+        return [r for s in statements if action in s["Action"] for r in s["Resource"]]
+    relay="arn:aws:logs:us-east-2:123:log-group:/aws/lambda/"+setup.FUNCTION
+    monitor="arn:aws:logs:us-east-2:123:log-group:/aws/lambda/"+setup.MONITOR
+    assert {relay, relay+":*"} <= set(resources("logs:PutRetentionPolicy"))
+    assert set(resources("logs:CreateLogGroup")) == {monitor, monitor+":*"}
 
 
 @pytest.mark.parametrize("changes", [
