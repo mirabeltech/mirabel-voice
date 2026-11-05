@@ -211,14 +211,13 @@ class Relay:
             return _error(413, "Report is too large.")
         try:
             body = json.loads(request.body)
-        except ValueError:
+            if not isinstance(body, dict):
+                return _error(400, "Invalid report.")
+            line = json.dumps({"token": name, "version": version, "report": body}, sort_keys=True)
+        except (ValueError, RecursionError):
+            # A few kilobytes of nested brackets exhaust the recursion limit.
             return _error(400, "Invalid report.")
-        if not isinstance(body, dict):
-            return _error(400, "Invalid report.")
-        log.info(
-            "report %s",
-            json.dumps({"token": name, "version": version, "report": body}, sort_keys=True),
-        )
+        log.info("report %s", line)
         return Response(204, b"", {})
 
     def _cleanup(self, name: str, request: Request) -> Response:

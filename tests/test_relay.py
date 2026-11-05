@@ -671,6 +671,9 @@ def test_a_report_without_a_known_token_is_refused_and_not_logged(caplog):
         assert relay.handle(report_request(token=None)).status == 401
         assert relay.handle(report_request(token="stolen-guess")).status == 401
     assert report_lines(caplog) == []
+    assert [(line["route"], line["outcome"]) for line in usage_lines(caplog)] == [
+        ("/v1/report", "refused"), ("/v1/report", "refused"),
+    ]
 
 
 def test_an_oversized_report_is_413_whatever_the_limits():
@@ -688,6 +691,32 @@ def test_a_report_that_is_not_a_json_object_is_400(caplog):
     assert report_lines(caplog) == []
 
 
+def nested(depth):
+    return b'{"a":' + b"[" * depth + b"]" * depth + b"}"
+
+
+def test_a_deeply_nested_report_is_400_not_a_crash(caplog):
+    relay, _ = make_relay()
+    with caplog.at_level(logging.INFO):
+        assert relay.handle(report_request(body=nested(8_000))).status == 400
+    assert report_lines(caplog) == []
+
+
+def test_no_nesting_depth_under_the_limit_crashes_the_route():
+    """Parsing and the log line's encoding give out at different depths,
+    a few levels apart, and where depends on the stack in use."""
+    relay, _ = make_relay()
+    for depth in range(2_000, 4_000):
+        assert relay.handle(report_request(body=nested(depth))).status in (204, 400)
+
+
+def test_a_report_of_exactly_the_limit_is_accepted():
+    body = json.dumps(REPORT).encode()
+    body += b" " * (16_384 - len(body))
+    relay, _ = make_relay()
+    assert relay.handle(report_request(body=body)).status == 204
+
+
 def test_a_report_is_logged_once_and_forwarded_nowhere(caplog):
     relay, forward = make_relay()
     with caplog.at_level(logging.INFO):
@@ -701,6 +730,7 @@ def test_a_report_is_logged_once_and_forwarded_nowhere(caplog):
         "token": "tommy", "version": "0.9.7", "report": REPORT,
     }
     assert "tommy-token-1" not in lines[0]
+    assert usage_lines(caplog) == []
 
 
 def test_a_report_never_counts_against_the_request_limit():
