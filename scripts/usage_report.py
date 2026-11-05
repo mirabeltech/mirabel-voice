@@ -73,7 +73,12 @@ def _arguments(argv):
 
 
 def read_usage(session, days: int) -> list[dict]:
-    """Return every usage line in the window, oldest first.
+    """Return every usage line in the window, oldest first."""
+    return read_lines(session, days, "usage")
+
+
+def read_lines(session, days: int, marker: str) -> list[dict]:
+    """Return every `marker {...}` line in the window, oldest first.
 
     Each line gains seen_ms, the log event's own timestamp, so the
     versions section can tell which call came last.
@@ -84,12 +89,12 @@ def read_usage(session, days: int) -> list[dict]:
     start = int((time.time() - days * 86400) * 1000)
     found = []
     pages = client.get_paginator("filter_log_events").paginate(
-        logGroupName=LOG_GROUP, startTime=start, filterPattern="usage"
+        logGroupName=LOG_GROUP, startTime=start, filterPattern=marker
     )
     for page in pages:
         for event in page.get("events", []):
-            _, marker, body = event["message"].partition("usage {")
-            if not marker:
+            _, opening, body = event["message"].partition(marker + " {")
+            if not opening:
                 continue
             try:
                 line = json.loads("{" + body.strip())
