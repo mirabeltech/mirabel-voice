@@ -38,6 +38,28 @@ def run(command, tool="PowerShell"):
     "git push origin v0.9.7",
     "git push --tags",
     "gh secret set CLAUDE_CODE_OAUTH_TOKEN --repo mirabeltech/mirabel-voice",
+    # Forms the first version let through (review of #96).
+    'git tag -m "release" -a v0.9.7',
+    "git tag -a -m x v1.0",
+    "git -C . push --tags",
+    "git -C C:\\Dev\\mirabel-voice tag v0.9.7",
+    "git push origin +v0.9.7",
+    "cd ~/.aws; cat credentials",
+    "Set-Location $env:USERPROFILE\\.aws; Get-Content credentials",
+    "sudo aws s3 ls",
+    '"aws" sts get-caller-identity',
+    '& "C:\\Program Files\\Amazon\\AWSCLIV2\\aws.exe" s3 ls',
+    "env AWS_PROFILE=prod aws s3 ls",
+    'cmd /c "aws s3 ls"',
+    "powershell -NoProfile -Command \"aws s3 ls\"",
+    "python -m awscli s3 ls",
+    '[IO.File]::ReadAllText("relay.json")',
+    ".\\scripts\\deploy_relay.py",
+    "scripts\\set_relay.py --url https://x",
+    "cmd /c scripts\\setup_operations.py",
+    "Start-Process python -ArgumentList scripts\\approve_bundle.py",
+    "git status && .\\scripts\\deploy_relay.py",
+    "echo $env:AWS_SECRET_ACCESS_KEY",
 ])
 def test_production_commands_are_blocked(command):
     result = run(command)
@@ -57,6 +79,16 @@ def test_production_commands_are_blocked(command):
     'git commit -m "Keep the aws CLI, boto3, ~/.aws and relay.json away from agents"',
     "rg -n boto3 pyproject.toml",
     "git log --oneline -- scripts/aws_helpers.py",
+    # Names in text, searches and listings, which the first version blocked.
+    "rg -n AWS_SECRET_ACCESS_KEY src",
+    'git tag --list "v*"',
+    "git tag -l",
+    "git tag",
+    'git commit -m "Block git tag v1.0, sudo aws s3 ls and cat ~/.aws/credentials"',
+    'gh pr create --title "Guard: aws and tags" --body "blocks sudo aws s3 ls and relay.json reads"',
+    "git push origin guard-bypasses",
+    "git push -u origin factory/fix-v2-hotkey",
+    "rg -n set_relay scripts",
 ])
 def test_ordinary_work_runs(command):
     result = run(command)
