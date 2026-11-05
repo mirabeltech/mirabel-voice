@@ -295,10 +295,17 @@ def read_reports(logs, start, end):
     raise RuntimeError("Report scan exceeded its page budget")
 
 
-# group_reports and report_key copy scripts/usage_report.py, which cannot be
-# packaged into this Lambda; tests/test_operations.py checks that they agree.
+# scripts/usage_report.py --reports imports group_reports, so both group alike.
 def group_reports(lines):
-    """Group report lines by error type and innermost frame, newest last-seen first."""
+    """Group report lines by error type and innermost frame.
+
+    The same failure on several machines is one group. Each group keeps
+    how many reports and from whom, when it was first and last seen,
+    and the newest report's frames and message. Groups come newest
+    last-seen first. A line with no report, or whose report lacks an error
+    type or readable [file, line, function] frames, cannot be grouped; it
+    is counted instead.
+    """
     groups, unreadable = {}, 0
     for line in lines:
         report = line.get("report")

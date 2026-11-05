@@ -534,7 +534,6 @@ def test_rollback_does_not_overwrite_another_operators_changes(field):
 
 # --- The daily error-report digest -------------------------------------------
 
-usage_report = load("operations_usage_report", "scripts/usage_report.py")
 ALERTS_ARN = "arn:aws:sns:us-east-2:123:" + setup.TOPIC
 REPORTS_ARN = "arn:aws:sns:us-east-2:123:" + setup.REPORTS
 NOW = monitor.ms(at(2026, 11, 5, 13))
@@ -571,10 +570,9 @@ class Publisher:
         self.sent.append(kwargs)
 
 
-def test_digest_groups_reports_the_way_the_usage_report_does():
+def test_digest_groups_reports_by_error_type_and_innermost_frame():
     lines = monitor.read_reports(FakeLogs(REPORT_EVENTS), NOW - monitor.REPORTS_WINDOW_MS, NOW)
     assert len(lines) == 5, "the usage line and the line outside the window are not reports"
-    assert monitor.group_reports(lines) == usage_report.group_reports(lines)
     groups, unreadable = monitor.group_reports(lines)
     assert unreadable == 1
     assert [(g["error_type"], g["frame"], g["count"]) for g in groups] == [
@@ -583,7 +581,7 @@ def test_digest_groups_reports_the_way_the_usage_report_does():
     malformed = [{"token": "cole", "report": r} for r in (
         "text", {"error_type": "OSError", "frames": []}, {"error_type": 1, "frames": [["a", 1, "f"]]},
         {"error_type": "OSError", "frames": [["a.py", 1]]})]
-    assert monitor.group_reports(malformed) == usage_report.group_reports(malformed) == ([], 4)
+    assert monitor.group_reports(malformed) == ([], 4)
 
 
 def test_digest_lists_each_group_and_the_unreadable_count():
