@@ -1,4 +1,4 @@
-"""Scheduled relay checks and approximate spend metrics; never log payloads."""
+"""Scheduled relay checks, approximate spend metrics and the daily error-report digest; never log payloads."""
 from __future__ import annotations
 import base64
 import datetime as dt
@@ -256,10 +256,134 @@ def spend_check(context, prices, clock=time.monotonic):
     ]
 
 
+REPORTS_WINDOW_MS = 24 * 3_600_000
+
+
+def read_reports(logs, start, end):
+    """Every `report {...}` line logged in [start, end) ms.
+
+    Each line gains seen_ms, the log event's timestamp. A line whose JSON
+    does not parse is kept empty, so group_reports counts it as unreadable.
+    """
+    args = dict(logGroupName=RELAY_LOGS, startTime=start, endTime=end - 1, filterPattern="report")
+    seen, tokens, found = set(), set(), []
+    for _ in range(WINDOW_PAGES):
+        page = logs.filter_log_events(**args)
+        for event in page.get("events", []):
+            if event["eventId"] in seen:
+                continue
+            seen.add(event["eventId"])
+            _, marker, text = event["message"].partition("report {")
+            if not marker:
+                continue
+            try:
+                line = json.loads("{" + text.strip())
+            except ValueError:
+                line = {}
+            line["seen_ms"] = event.get("timestamp", 0)
+            found.append(line)
+        token = page.get("nextToken")
+        if not token:
+            return found
+        if token in tokens:
+            raise RuntimeError("Report scan did not complete")
+        tokens.add(token)
+        args["nextToken"] = token
+    raise RuntimeError("Report scan exceeded its page budget")
+
+
+# group_reports and report_key copy scripts/usage_report.py, which cannot be
+# packaged into this Lambda; tests/test_operations.py checks that they agree.
+def group_reports(lines):
+    """Group report lines by error type and innermost frame, newest last-seen first."""
+    groups, unreadable = {}, 0
+    for line in lines:
+        report = line.get("report")
+        key = report_key(report)
+        if key is None:
+            unreadable += 1
+            continue
+        seen = line.get("seen_ms", 0)
+        group = groups.setdefault(key, {
+            "error_type": key[0], "frame": key[1], "count": 0, "people": set(),
+            "first_seen_ms": seen, "last_seen_ms": seen,
+            "frames": report["frames"], "message": report.get("message"),
+        })
+        group["count"] += 1
+        group["people"].add(line.get("token", "-"))
+        group["first_seen_ms"] = min(group["first_seen_ms"], seen)
+        if seen >= group["last_seen_ms"]:
+            group["last_seen_ms"] = seen
+            group["frames"] = report["frames"]
+            group["message"] = report.get("message")
+    ordered = sorted(groups.values(), key=lambda g: g["last_seen_ms"], reverse=True)
+    return ordered, unreadable
+
+
+def report_key(report):
+    """The (error type, innermost file:function) a report groups under, or None."""
+    if not isinstance(report, dict):
+        return None
+    error_type = report.get("error_type")
+    frames = report.get("frames")
+    if not isinstance(error_type, str) or not isinstance(frames, list) or not frames:
+        return None
+    if not all(isinstance(frame, list) and len(frame) == 3 for frame in frames):
+        return None
+    file, _, function = frames[-1]
+    return error_type, f"{file}:{function}"
+
+
+def utc(milliseconds):
+    return dt.datetime.fromtimestamp(milliseconds / 1000, dt.timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+
+
+def digest(groups, unreadable, start, end):
+    """The plain-text email: a subject and a body."""
+    total = sum(group["count"] for group in groups) + unreadable
+    subject = f"Mirabel Voice: {total} error report(s) in the last 24 hours"
+    lines = [f"Mirabel Voice error reports from {utc(start)} to {utc(end)}.", ""]
+    for group in groups:
+        file, number, function = group["frames"][-1]
+        lines += [
+            f"{group['error_type']} at {group['frame']}",
+            f"  Count: {group['count']}",
+            f"  People: {', '.join(sorted(group['people']))}",
+            f"  First seen: {utc(group['first_seen_ms'])}",
+            f"  Last seen: {utc(group['last_seen_ms'])}",
+            f"  Innermost frame: {file}:{number} in {function}",
+            f"  Newest message: {group['message'] or '(none)'}",
+            "",
+        ]
+    lines.append(f"Unreadable report lines: {unreadable}")
+    return subject, "\n".join(lines) + "\n"
+
+
+def reports_check(logs, sns, topic, now_ms):
+    """Email the last 24 hours of error reports, grouped; send nothing when there were none."""
+    start = now_ms - REPORTS_WINDOW_MS
+    lines = read_reports(logs, start, now_ms)
+    if not lines:
+        return 0
+    groups, unreadable = group_reports(lines)
+    subject, message = digest(groups, unreadable, start, now_ms)
+    sns.publish(TopicArn=topic, Subject=subject, Message=message)
+    return len(lines)
+
+
 def lambda_handler(event, context):
     kind = event.get("kind")
-    if kind not in {"health", "spend"}:
+    if kind not in {"health", "spend", "reports"}:
         raise ValueError("Unknown check")
+    if kind == "reports":
+        try:
+            count = reports_check(bounded("logs"), bounded("sns"), os.environ["REPORTS_TOPIC"],
+                                  ms(dt.datetime.now(dt.timezone.utc)))
+        except Exception as error:
+            print(json.dumps({"check": kind, "result": "failed", "category": type(error).__name__}))
+            return {"check": kind, "ok": False}
+        print(json.dumps({"check": kind, "result": "ok", "reports": count}))
+        return {"check": kind, "ok": True}
     if kind == "spend":
         cw = bounded("cloudwatch")
         values = []

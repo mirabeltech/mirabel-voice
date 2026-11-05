@@ -15,6 +15,8 @@ FUNCTION = "mirabel-voice-relay"
 MONITOR = "mirabel-voice-monitor"
 TABLE = "mirabel-voice-rate-limits"
 TOPIC = "mirabel-voice-alerts"
+REPORTS = "mirabel-voice-reports"  # the digest's topic and the dashboard share this name
+SMOKE_HOLDER = "Smoke test"
 NAMESPACE = "MirabelVoice/Operations"
 RETIRED_ALARMS = ["mirabel-voice-" + suffix for suffix in (
     "slow", "relay-errors", "relay-throttles", "spend-monitor", "unpriced-usage", "stale-prices",
@@ -30,6 +32,10 @@ def validate(config):
         raise ValueError("AWS reserve must be positive")
     if not config["emails"] or len(config["emails"]) > 10 or any("@" not in e for e in config["emails"]):
         raise ValueError("Supply alert recipients")
+    reports = config.get("report_emails")
+    if not isinstance(reports, list) or not 1 <= len(reports) <= 10 or any(
+            not isinstance(e, str) or "@" not in e for e in reports):
+        raise ValueError("Supply 1 to 10 error-report recipients in report_emails")
     return config
 
 
@@ -55,7 +61,9 @@ def required_permissions(account, region):
                "dynamodb:DescribeTimeToLive"], f"{base}:dynamodb:{region}:{account}:table/{TABLE}"),
         allow(["sns:CreateTopic", "sns:GetTopicAttributes", "sns:ListSubscriptionsByTopic",
                "sns:Subscribe", "sns:Publish"],
-              f"{base}:sns:{region}:{account}:{TOPIC}"),
+              [f"{base}:sns:{region}:{account}:{name}" for name in (TOPIC, REPORTS)]),
+        allow(["cloudwatch:PutDashboard", "cloudwatch:GetDashboard"],
+              f"{base}:cloudwatch::{account}:dashboard/mirabel-voice-*"),
         allow(["cloudwatch:PutMetricAlarm", "cloudwatch:DescribeAlarms"],
               f"{base}:cloudwatch:{region}:{account}:alarm:mirabel-voice-*"),
         allow(["cloudwatch:DeleteAlarms"],
@@ -95,6 +103,48 @@ def alarms(config, topic):
             ComparisonOperator="GreaterThanOrEqualToThreshold", TreatMissingData=missing,
             AlarmActions=[topic], OKActions=[topic] if recovery else [])
     return [alarm("health", "HealthFailed", 1)]
+
+
+def report_queries():
+    """Logs Insights widgets over the relay's `report {...}` and `usage {...}` lines.
+
+    The relay writes each line with sorted keys, so `token` and `version` are
+    always the last two keys, and `error_type` comes first inside `report`.
+    """
+    reports = r"filter @message like /report \{/"
+    person = r'parse @message /"token": "(?<person>[^"]*)", "version": "(?<version>[^"]*)"\}/'
+    return [
+        ("Reports by error type", "table",
+         reports + r' | parse @message /"error_type": "(?<error_type>[^"]*)"/'
+         " | stats count(*) as reports by error_type | sort reports desc"),
+        ("Reports by person", "table",
+         f"{reports} | {person} | stats count(*) as reports by person | sort reports desc"),
+        ("Reports over time", "timeSeries", f"{reports} | stats count(*) as reports by bin(1d)"),
+        ("Latest app version by person", "table",
+         r"filter @message like /usage \{/ | " + person +
+         f' | filter ispresent(person) and person != "-" and person != "{SMOKE_HOLDER}"'
+         " | stats latest(version) as latest_version, max(@timestamp) as last_seen by person"
+         " | sort person asc"),
+    ]
+
+
+def dashboard(region):
+    widgets = [{"type": "log", "x": 12 * (i % 2), "y": 6 * (i // 2), "width": 12, "height": 6,
+                "properties": {"title": title, "view": view, "region": region,
+                               "query": f"SOURCE '/aws/lambda/{FUNCTION}' | {query}"}}
+               for i, (title, view, query) in enumerate(report_queries())]
+    return {"start": "-P30D", "widgets": widgets}
+
+
+def subscribe(sns, name, emails):
+    """Create the topic if needed and subscribe each address not already on it."""
+    topic = sns.create_topic(Name=name)["TopicArn"]
+    subscriptions = sns.get_paginator("list_subscriptions_by_topic").paginate(TopicArn=topic)
+    present = {sub["Endpoint"] for page in subscriptions for sub in page["Subscriptions"] if sub["Protocol"] == "email"}
+    for email in emails:
+        if email not in present:
+            sns.subscribe(TopicArn=topic, Protocol="email", Endpoint=email, ReturnSubscriptionArn=True)
+    return topic
 
 
 def retire_alarms(cw):
@@ -153,6 +203,8 @@ def preflight(session, account, config):
             AlarmNames=[alarm["AlarmName"] for alarm in alarms(config, "preflight-topic")],
             AlarmTypes=["MetricAlarm"])),
         ("sns:GetTopicAttributes", lambda: session.client("sns").get_topic_attributes(TopicArn=f"arn:aws:sns:{config['region']}:{account}:{TOPIC}")),
+        ("sns:GetTopicAttributes", lambda: session.client("sns").get_topic_attributes(TopicArn=f"arn:aws:sns:{config['region']}:{account}:{REPORTS}")),
+        ("cloudwatch:GetDashboard", lambda: session.client("cloudwatch").get_dashboard(DashboardName=REPORTS)),
         ("events:DescribeRule", lambda: session.client("events").describe_rule(Name=MONITOR+"-health")),
         ("iam:GetRole", lambda: session.client("iam").get_role(RoleName=MONITOR+"-role")),
     ]
@@ -161,7 +213,7 @@ def preflight(session, account, config):
         try:
             check()
         except Exception as error:
-            if code(error) not in {"ResourceNotFoundException", "NotFound", "NotFoundException", "NoSuchEntity"}:
+            if code(error) not in {"ResourceNotFoundException", "ResourceNotFound", "NotFound", "NotFoundException", "NoSuchEntity"}:
                 errors.append({"action": action, "error": code(error)})
     if errors:
         return errors
@@ -211,6 +263,9 @@ class RelayDeployment:
         self.environment(variables)
 
 
+SCHEDULES = (("health", "rate(15 minutes)"), ("spend", "rate(1 day)"), ("reports", "cron(0 13 * * ? *)"))
+
+
 def apply(session, account, config, audio, backup_dir):
     import deploy_relay
     region = config["region"]
@@ -239,15 +294,12 @@ def apply(session, account, config, audio, backup_dir):
         ddb.update_time_to_live(TableName=TABLE, TimeToLiveSpecification={"Enabled":True,"AttributeName":"expires"})
     iam.put_role_policy(RoleName=FUNCTION+"-role", PolicyName="mirabel-voice-rate-limit",
         PolicyDocument=json.dumps(policy([allow(["dynamodb:UpdateItem"],table_arn)])))
-    topic = sns.create_topic(Name=TOPIC)["TopicArn"]
-    subscriptions = sns.get_paginator("list_subscriptions_by_topic").paginate(TopicArn=topic)
-    present = {sub["Endpoint"] for page in subscriptions for sub in page["Subscriptions"] if sub["Protocol"] == "email"}
-    for email in config["emails"]:
-        if email not in present:
-            sns.subscribe(TopicArn=topic, Protocol="email", Endpoint=email, ReturnSubscriptionArn=True)
+    topic = subscribe(sns, TOPIC, config["emails"])
+    reports_topic = subscribe(sns, REPORTS, config["report_emails"])
     for alarm in alarms(config, topic):
         cw.put_metric_alarm(**alarm)
     retired_status = retire_alarms(cw)
+    cw.put_dashboard(DashboardName=REPORTS, DashboardBody=json.dumps(dashboard(region)))
     role_name = MONITOR+"-role"
     try:
         monitor_role = iam.get_role(RoleName=role_name)["Role"]["Arn"]
@@ -260,6 +312,7 @@ def apply(session, account, config, audio, backup_dir):
         allow(["logs:FilterLogEvents"],f"arn:aws:logs:{region}:{account}:log-group:/aws/lambda/{FUNCTION}:*"),
         allow(["secretsmanager:GetSecretValue"],f"arn:aws:secretsmanager:{region}:{account}:secret:{token_secret}-*"),
         allow(["cloudwatch:PutMetricData"],"*",Condition={"StringEquals":{"cloudwatch:namespace":NAMESPACE}}),
+        allow(["sns:Publish"],reports_topic),
         monitor_ledger_access(table_arn),
     ])))
     logs = session.client("logs")
@@ -271,7 +324,7 @@ def apply(session, account, config, audio, backup_dir):
     logs.put_retention_policy(logGroupName="/aws/lambda/"+FUNCTION, retentionInDays=90)
     relay_url = lam.get_function_url_config(FunctionName=FUNCTION)["FunctionUrl"].rstrip("/")
     monitor_env = {"RELAY_URL":relay_url,"TOKENS_SECRET":token_secret,"AWS_RESERVE_USD":str(config["aws_reserve_usd"]),
-                   "SPEND_LEDGER_TABLE":TABLE}
+                   "SPEND_LEDGER_TABLE":TABLE,"REPORTS_TOPIC":reports_topic}
     package = package_monitor(audio)
     try:
         lam.get_function(FunctionName=MONITOR)
@@ -296,13 +349,13 @@ def apply(session, account, config, audio, backup_dir):
         deployment.environment(env)
         lam.put_function_concurrency(FunctionName=FUNCTION,ReservedConcurrentExecutions=config["reserved_concurrency"])
         concurrency_changed = True
-        # Do not schedule recurring checks until both one-off checks pass.
-        for kind in ("health","spend"):
+        # Do not schedule recurring checks until every one-off check passes.
+        for kind, _ in SCHEDULES:
             response = lam.invoke(FunctionName=MONITOR,Payload=json.dumps({"kind":kind}).encode())
             result = json.loads(response["Payload"].read())
             if response.get("FunctionError") or result.get("ok") is not True:
                 raise RuntimeError("Deployed monitor check failed: "+kind)
-        for kind, schedule in (("health","rate(15 minutes)"),("spend","rate(1 day)")):
+        for kind, schedule in SCHEDULES:
             name = MONITOR+"-"+kind
             rule = events.put_rule(Name=name,ScheduleExpression=schedule,State="DISABLED")["RuleArn"]
             try:
@@ -318,7 +371,7 @@ def apply(session, account, config, audio, backup_dir):
             events.put_rule(Name=name,ScheduleExpression=schedule,State="ENABLED")
     except Exception as activation_error:
         rollback_errors = []
-        for kind in ("health","spend"):
+        for kind, _ in SCHEDULES:
             try:
                 events.disable_rule(Name=MONITOR+"-"+kind)
             except events.exceptions.ResourceNotFoundException:

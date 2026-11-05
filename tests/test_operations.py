@@ -20,7 +20,7 @@ monitor = load("operations_monitor", "operations/monitor.py")
 setup = load("operations_setup", "scripts/setup_operations.py")
 PRICES = json.loads((ROOT / "docs/pricing.json").read_text())
 CONFIG = dict(requests_per_person_per_minute=20, reserved_concurrency=20, aws_reserve_usd=20,
-              emails=["test@example.invalid"], region="us-east-2")
+              emails=["alerts@example.com"], report_emails=["owner@example.com"], region="us-east-2")
 
 
 def test_estimate_uses_counts_and_marks_unknown_charges():
@@ -332,7 +332,8 @@ def test_preflight_reads_only_named_metric_alarms():
     assert len(requests[0]["AlarmNames"]) == len(setup.alarms(CONFIG, "test-topic"))
 
 
-def test_apply_activates_limits_alarms_and_schedules_without_billing_access(tmp_path, monkeypatch):
+def apply_clients(monkeypatch):
+    """Mocked AWS clients that let apply() run to the end; nothing reaches AWS."""
     import io
     import sys
     from unittest.mock import MagicMock
@@ -344,7 +345,7 @@ def test_apply_activates_limits_alarms_and_schedules_without_billing_access(tmp_
     lam.get_function_url_config.return_value = {"FunctionUrl": "https://relay.invalid/"}
     lam.invoke.side_effect = lambda **kwargs: {"Payload": io.BytesIO(b'{"ok":true}')}
     clients["dynamodb"].describe_time_to_live.return_value = {"TimeToLiveDescription": {"TimeToLiveStatus": "ENABLED"}}
-    clients["sns"].create_topic.return_value = {"TopicArn": "test-topic"}
+    clients["sns"].create_topic.side_effect = lambda Name: {"TopicArn": "arn:aws:sns:us-east-2:123:" + Name}
     clients["sns"].get_paginator.return_value.paginate.return_value = [{"Subscriptions": [{"Protocol": "email", "Endpoint": CONFIG["emails"][0]}]}]
     clients["iam"].get_role.return_value = {"Role": {"Arn": "test-role"}}
     clients["events"].put_rule.return_value = {"RuleArn": "test-rule"}
@@ -358,6 +359,18 @@ def test_apply_activates_limits_alarms_and_schedules_without_billing_access(tmp_
     monkeypatch.setitem(sys.modules, "deploy_relay", SimpleNamespace(TOKENS_SECRET="test-secret", build_package=lambda: b"relay"))
     deployment = MagicMock()
     monkeypatch.setattr(setup, "RelayDeployment", lambda *a: deployment)
+    return clients, deployment
+
+
+def monitor_policy(clients):
+    role = next(c.kwargs for c in clients["iam"].put_role_policy.call_args_list
+                if c.kwargs["RoleName"] == setup.MONITOR + "-role")
+    return json.loads(role["PolicyDocument"])["Statement"]
+
+
+def test_apply_activates_limits_alarms_and_schedules_without_billing_access(tmp_path, monkeypatch):
+    clients, deployment = apply_clients(monkeypatch)
+    lam = clients["lambda"]
     # No budgets client exists: any billing read/write fails this test.
     result = setup.apply(SimpleNamespace(client=clients.__getitem__), "123", CONFIG, None,
                          tmp_path / "backup")
@@ -373,15 +386,13 @@ def test_apply_activates_limits_alarms_and_schedules_without_billing_access(tmp_
         "mirabel-voice-spend-monitor", "mirabel-voice-unpriced-usage", "mirabel-voice-stale-prices",
         "mirabel-voice-estimated-budget-100", "mirabel-voice-estimated-budget-150",
         "mirabel-voice-estimated-budget-180", "mirabel-voice-estimated-budget-200"])
-    assert [json.loads(c.kwargs["Payload"])["kind"] for c in lam.invoke.call_args_list] == ["health", "spend"]
-    assert len([c for c in clients["events"].put_rule.call_args_list if c.kwargs["State"] == "ENABLED"]) == 2
+    assert [json.loads(c.kwargs["Payload"])["kind"] for c in lam.invoke.call_args_list] == ["health", "spend", "reports"]
+    assert len([c for c in clients["events"].put_rule.call_args_list if c.kwargs["State"] == "ENABLED"]) == 3
     enabled = {c.kwargs["Name"]: c.kwargs["ScheduleExpression"]
                for c in clients["events"].put_rule.call_args_list if c.kwargs["State"] == "ENABLED"}
     assert enabled[setup.MONITOR + "-spend"] == "rate(1 day)"
     assert enabled[setup.MONITOR + "-health"] == "rate(15 minutes)"
-    role = next(c.kwargs for c in clients["iam"].put_role_policy.call_args_list
-                if c.kwargs["RoleName"] == setup.MONITOR + "-role")
-    assert "spend-ledger#*" in role["PolicyDocument"]
+    assert "spend-ledger#*" in json.dumps(monitor_policy(clients))
     monitor_env = lam.create_function.call_args or lam.update_function_configuration.call_args
     assert monitor_env.kwargs["Environment"]["Variables"]["SPEND_LEDGER_TABLE"] == setup.TABLE
 
@@ -503,3 +514,201 @@ def test_rollback_does_not_overwrite_another_operators_changes(field):
     with pytest.raises(RuntimeError, match='outside this activation'):
         deployment.restore(b'old', original['Environment']['Variables'])
     assert client.writes == ['code']
+
+
+# --- The daily error-report digest -------------------------------------------
+
+usage_report = load("operations_usage_report", "scripts/usage_report.py")
+ALERTS_ARN = "arn:aws:sns:us-east-2:123:" + setup.TOPIC
+REPORTS_ARN = "arn:aws:sns:us-east-2:123:" + setup.REPORTS
+NOW = monitor.ms(at(2026, 11, 5, 13))
+HOUR = 3_600_000
+
+
+def report_event(n, timestamp, who="cole", error_type="TimeoutError",
+                 inner=("mirabel_voice/relay_client.py", 48, "post"), message="timed out"):
+    line = {"token": who, "version": "0.9.7", "report": {
+        "error_type": error_type, "message": message,
+        "frames": [["mirabel_voice/app.py", 120, "dictate"], list(inner)]}}
+    return dict(eventId=str(n), timestamp=timestamp,
+                message="[INFO]\t2026-11-05T12:00:00Z\treq\treport " + json.dumps(line, sort_keys=True))
+
+
+REPORT_EVENTS = [
+    report_event(1, NOW - 20 * HOUR, message="first"),
+    report_event(2, NOW - 2 * HOUR, who="priya", inner=("mirabel_voice/relay_client.py", 51, "post"),
+                 message="newest"),
+    report_event(3, NOW - 10 * HOUR),
+    report_event(4, NOW - 5 * HOUR, error_type="OSError", inner=("mirabel_voice/audio.py", 9, "record"),
+                 message=None),
+    dict(eventId="5", timestamp=NOW - HOUR, message='INFO report {"token": "cole", "report": {'),
+    dict(eventId="6", timestamp=NOW - HOUR, message='INFO usage {"route": "report", "token": "cole"}'),
+    report_event(7, NOW - 25 * HOUR, message="outside the window"),
+]
+
+
+class Publisher:
+    def __init__(self):
+        self.sent = []
+
+    def publish(self, **kwargs):
+        self.sent.append(kwargs)
+
+
+def test_digest_groups_reports_the_way_the_usage_report_does():
+    lines = monitor.read_reports(FakeLogs(REPORT_EVENTS), NOW - monitor.REPORTS_WINDOW_MS, NOW)
+    assert len(lines) == 5, "the usage line and the line outside the window are not reports"
+    assert monitor.group_reports(lines) == usage_report.group_reports(lines)
+    groups, unreadable = monitor.group_reports(lines)
+    assert unreadable == 1
+    assert [(g["error_type"], g["frame"], g["count"]) for g in groups] == [
+        ("TimeoutError", "mirabel_voice/relay_client.py:post", 3),
+        ("OSError", "mirabel_voice/audio.py:record", 1)]
+    malformed = [{"token": "cole", "report": r} for r in (
+        "text", {"error_type": "OSError", "frames": []}, {"error_type": 1, "frames": [["a", 1, "f"]]},
+        {"error_type": "OSError", "frames": [["a.py", 1]]})]
+    assert monitor.group_reports(malformed) == usage_report.group_reports(malformed) == ([], 4)
+
+
+def test_digest_lists_each_group_and_the_unreadable_count():
+    sns = Publisher()
+    assert monitor.reports_check(FakeLogs(REPORT_EVENTS), sns, REPORTS_ARN, NOW) == 5
+    [email] = sns.sent
+    assert email["TopicArn"] == REPORTS_ARN
+    assert email["Subject"] == "Mirabel Voice: 5 error report(s) in the last 24 hours"
+    body = email["Message"]
+    assert "from 2026-11-04 13:00 UTC to 2026-11-05 13:00 UTC" in body
+    timeout = body.split("TimeoutError at mirabel_voice/relay_client.py:post\n")[1].split("\n\n")[0]
+    assert timeout.splitlines() == [
+        "  Count: 3",
+        "  People: cole, priya",
+        "  First seen: 2026-11-04 17:00 UTC",
+        "  Last seen: 2026-11-05 11:00 UTC",
+        "  Innermost frame: mirabel_voice/relay_client.py:51 in post",
+        "  Newest message: newest",
+    ]
+    assert body.index("TimeoutError at") < body.index("OSError at mirabel_voice/audio.py:record")
+    assert "  Newest message: (none)" in body
+    assert body.rstrip().endswith("Unreadable report lines: 1")
+    assert "outside the window" not in body
+
+
+def test_a_window_with_no_reports_publishes_nothing():
+    sns = Publisher()
+    quiet = [e for e in REPORT_EVENTS if e["eventId"] in {"6", "7"}]
+    assert monitor.reports_check(FakeLogs(quiet), sns, REPORTS_ARN, NOW) == 0
+    assert sns.sent == []
+
+
+def test_digest_publishes_only_to_the_reports_topic(monkeypatch, capsys):
+    sns = Publisher()
+    monkeypatch.setattr(monitor, "bounded", {"logs": FakeLogs(REPORT_EVENTS), "sns": sns}.__getitem__)
+    monkeypatch.setattr(monitor, "ms", lambda moment: NOW)
+    monkeypatch.setenv("REPORTS_TOPIC", REPORTS_ARN)
+    assert monitor.lambda_handler({"kind": "reports"}, None) == {"check": "reports", "ok": True}
+    assert [m["TopicArn"] for m in sns.sent] == [REPORTS_ARN]
+    assert json.loads(capsys.readouterr().out) == {"check": "reports", "result": "ok", "reports": 5}
+
+
+def test_a_failed_digest_reports_failure_without_details(monkeypatch, capsys):
+    logs = SimpleNamespace(filter_log_events=lambda **kwargs: {"events": [], "nextToken": "stuck"})
+    monkeypatch.setattr(monitor, "bounded", {"logs": logs, "sns": Publisher()}.__getitem__)
+    monkeypatch.setenv("REPORTS_TOPIC", REPORTS_ARN)
+    assert monitor.lambda_handler({"kind": "reports"}, None) == {"check": "reports", "ok": False}
+    assert json.loads(capsys.readouterr().out) == {
+        "check": "reports", "result": "failed", "category": "RuntimeError"}
+
+
+def test_alarms_and_retired_alarms_are_unchanged_by_the_digest():
+    assert [a["AlarmName"] for a in setup.alarms(CONFIG, ALERTS_ARN)] == ["mirabel-voice-health"]
+    assert list(setup.MEANINGS) == ["health"]
+    assert setup.RETIRED_ALARMS == [
+        "mirabel-voice-slow", "mirabel-voice-relay-errors", "mirabel-voice-relay-throttles",
+        "mirabel-voice-spend-monitor", "mirabel-voice-unpriced-usage", "mirabel-voice-stale-prices",
+        "mirabel-voice-estimated-budget-100", "mirabel-voice-estimated-budget-150",
+        "mirabel-voice-estimated-budget-180", "mirabel-voice-estimated-budget-200"]
+
+
+def test_monitor_role_may_publish_only_to_the_reports_topic(tmp_path, monkeypatch):
+    clients, _ = apply_clients(monkeypatch)
+    setup.apply(SimpleNamespace(client=clients.__getitem__), "123", CONFIG, None, tmp_path / "backup")
+    publish = [s for s in monitor_policy(clients) if "sns" in json.dumps(s["Action"])]
+    assert publish == [{"Effect": "Allow", "Action": ["sns:Publish"], "Resource": REPORTS_ARN}]
+    monitor_env = (clients["lambda"].create_function.call_args or
+                   clients["lambda"].update_function_configuration.call_args).kwargs
+    assert monitor_env["Environment"]["Variables"]["REPORTS_TOPIC"] == REPORTS_ARN
+
+
+def test_dashboard_permissions_cover_only_mirabel_dashboards():
+    statements = setup.required_permissions("123", "us-east-2")["Statement"]
+    dashboards = [s for s in statements if any("Dashboard" in a for a in s["Action"])]
+    assert dashboards == [{"Effect": "Allow", "Action": ["cloudwatch:PutDashboard", "cloudwatch:GetDashboard"],
+                           "Resource": "arn:aws:cloudwatch::123:dashboard/mirabel-voice-*"}]
+    topics = next(s for s in statements if "sns:Subscribe" in s["Action"])
+    assert topics["Resource"] == [ALERTS_ARN, REPORTS_ARN]
+
+
+def test_dashboard_reads_the_relay_log_group():
+    body = setup.dashboard("us-east-2")
+    titles = [w["properties"]["title"] for w in body["widgets"]]
+    assert titles == ["Reports by error type", "Reports by person", "Reports over time",
+                      "Latest app version by person"]
+    for widget in body["widgets"]:
+        assert widget["type"] == "log"
+        assert widget["properties"]["query"].startswith("SOURCE '/aws/lambda/mirabel-voice-relay' | ")
+        assert widget["properties"]["region"] == "us-east-2"
+
+
+@pytest.mark.parametrize("recipients", [
+    None, [], ["owner@example.com"] * 11, ["not-an-address"], "owner@example.com"])
+def test_report_recipients_must_be_one_to_ten_addresses(recipients):
+    config = dict(CONFIG, report_emails=recipients)
+    if recipients is None:
+        del config["report_emails"]
+    with pytest.raises(ValueError, match="report_emails"):
+        setup.validate(config)
+    assert setup.validate(dict(CONFIG, report_emails=["owner@example.com"] * 10))
+
+
+def test_apply_creates_the_reports_topic_dashboard_and_schedule(tmp_path, monkeypatch):
+    import io
+    clients, _ = apply_clients(monkeypatch)
+    order = []
+
+    def invoke(**kwargs):
+        order.append("invoke " + json.loads(kwargs["Payload"])["kind"])
+        return {"Payload": io.BytesIO(b'{"ok":true}')}
+
+    def put_rule(**kwargs):
+        order.append(kwargs["State"] + " " + kwargs["Name"])
+        return {"RuleArn": "test-rule"}
+
+    clients["lambda"].invoke.side_effect = invoke
+    clients["events"].put_rule.side_effect = put_rule
+    setup.apply(SimpleNamespace(client=clients.__getitem__), "123", CONFIG, None, tmp_path / "backup")
+    sns = clients["sns"]
+    assert [c.kwargs["Name"] for c in sns.create_topic.call_args_list] == [setup.TOPIC, setup.REPORTS]
+    sns.subscribe.assert_called_once_with(TopicArn=REPORTS_ARN, Protocol="email",
+                                          Endpoint="owner@example.com", ReturnSubscriptionArn=True)
+    [put] = clients["cloudwatch"].put_dashboard.call_args_list
+    assert put.kwargs["DashboardName"] == "mirabel-voice-reports"
+    assert json.loads(put.kwargs["DashboardBody"]) == setup.dashboard("us-east-2")
+    rule = setup.MONITOR + "-reports"
+    assert order.index("invoke reports") < order.index("DISABLED " + rule) < order.index("ENABLED " + rule)
+    target = next(c.kwargs for c in clients["events"].put_targets.call_args_list if c.kwargs["Rule"] == rule)
+    assert json.loads(target["Targets"][0]["Input"]) == {"kind": "reports"}
+    schedules = [c.kwargs["ScheduleExpression"] for c in clients["events"].put_rule.call_args_list
+                 if c.kwargs["Name"] == rule]
+    assert set(schedules) == {"cron(0 13 * * ? *)"}
+
+
+def test_a_failed_reports_check_schedules_nothing(tmp_path, monkeypatch):
+    import io
+    clients, _ = apply_clients(monkeypatch)
+    clients["lambda"].invoke.side_effect = lambda **kwargs: {"Payload": io.BytesIO(
+        b'{"ok":false}' if json.loads(kwargs["Payload"])["kind"] == "reports" else b'{"ok":true}')}
+    with pytest.raises(RuntimeError, match="reports"):
+        setup.apply(SimpleNamespace(client=clients.__getitem__), "123", CONFIG, None, tmp_path / "backup")
+    clients["events"].put_rule.assert_not_called()
+    assert [c.kwargs["Name"] for c in clients["events"].disable_rule.call_args_list] == [
+        setup.MONITOR + "-" + kind for kind in ("health", "spend", "reports")]

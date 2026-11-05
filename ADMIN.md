@@ -175,6 +175,21 @@ The error reports come after the versions section. The app sends a report when s
 
 The report lines hold no audio, no dictated text, no keys and no tokens. The person appears by name, as in the usage lines. Keeping them out is the app's job, before it sends: the relay logs what arrives and does not check it.
 
+### The daily error-report email and the dashboard
+
+You don't have to run `--reports` to hear about errors. Once `scripts/setup_operations.py --apply` has been run, the monitor Lambda reads the last 24 hours of report lines every day at 13:00 UTC and emails one plain-text digest to the `mirabel-voice-reports` SNS topic. The digest groups the reports the same way `--reports` does. For each group it gives the count, the people, first and last seen (UTC), the innermost frame and the newest message, and it ends with the number of unreadable report lines. A day with no reports sends no email, so silence means nothing went wrong, provided the monitor itself is running.
+
+The digest goes only to the addresses in `report_emails`. It never goes to `mirabel-voice-alerts`, whose subscribers get the health alarm, and the `emails` list stays health-only. Both lists live in the private operations config (`build_probe\operations-config.json`), never in this repository, which is public. Add a list of 1 to 10 addresses next to `emails`:
+
+```json
+"emails": ["support-owner@example.com"],
+"report_emails": ["you@example.com"]
+```
+
+Setup refuses to run without it. Each new address gets an AWS email asking it to **Confirm subscription**, and no digest arrives until that link is clicked. Applying also runs the digest once before it turns on the daily schedule, so if there were reports in the last 24 hours, the first email comes straight away.
+
+The CloudWatch dashboard `mirabel-voice-reports` shows the last 30 days of the same log group: reports by error type, reports by person, reports per day, and each person's latest app version (from the usage lines). Open it from CloudWatch → Dashboards in the relay's region. Its widgets run Logs Insights queries each time it loads. AWS bills those by the amount of log data scanned, and this log group is small.
+
 ## Rotating a key on a machine that still holds keys
 
 1. Make the new key on the provider dashboard.
