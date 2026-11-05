@@ -4,7 +4,7 @@ on:
     branches: [main]
     tags: ['v*']
   pull_request:
-    branches: [main, ci/skip-docs-only]  # TEMP: second branch for the stacked test PR; remove before merge
+    branches: [main]
   workflow_dispatch:
 permissions:
   contents: read
