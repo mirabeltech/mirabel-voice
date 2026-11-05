@@ -90,3 +90,19 @@ def test_a_plain_string_reply_still_works():
             self.transcriptions.create = lambda **kwargs: "  plain text  "
 
     assert Transcriber(client=BareTextAPI()).transcribe(a_recording()) == "plain text"
+
+
+def test_relay_calls_carry_the_app_version():
+    from mirabel_voice.version import VERSION_HEADER, client_version
+
+    transcriber = Transcriber(relay_url="https://relay.example.on.aws", relay_token=lambda: "t")
+    per_call = transcriber._for_this_call().with_options(timeout=5, max_retries=0)
+    assert per_call.default_headers[VERSION_HEADER] == client_version()
+
+
+def test_direct_calls_carry_no_app_version(monkeypatch):
+    from mirabel_voice.version import VERSION_HEADER
+
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-direct")
+    headers = Transcriber().client.with_options(max_retries=0).default_headers
+    assert VERSION_HEADER not in headers

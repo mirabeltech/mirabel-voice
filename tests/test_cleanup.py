@@ -135,3 +135,19 @@ def test_custom_words_reach_the_translate_prompt():
     client = FakeAnthropic(response=text_response("Clean."))
     Cleaner(translate=True, custom_words=["ChargeBrite"], client=client).clean("dirty")
     assert "ChargeBrite" in client.messages.calls[0]["system"]
+
+
+def test_relay_calls_carry_the_app_version():
+    from mirabel_voice.version import VERSION_HEADER, client_version
+
+    cleaner = Cleaner(relay_url="https://relay.example.on.aws", relay_token="t")
+    per_call = cleaner.client.with_options(api_key="t", timeout=5)
+    assert per_call.default_headers[VERSION_HEADER] == client_version()
+
+
+def test_direct_calls_carry_no_app_version(monkeypatch):
+    from mirabel_voice.version import VERSION_HEADER
+
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-direct")
+    headers = Cleaner().client.with_options(timeout=5).default_headers
+    assert VERSION_HEADER not in headers

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from .audio import Recording
 from .config import LANGUAGES, relay_base
+from .version import VERSION_HEADER, client_version
 
 
 class TranscriptionError(RuntimeError):
@@ -49,6 +50,7 @@ class Transcriber:
                     base_url=relay_base(self.relay_url) + "/v1",
                     api_key=self._current_key() or "signed-out",
                     timeout=self.timeout, max_retries=0,
+                    default_headers={VERSION_HEADER: client_version()},
                 )
             else:
                 self._client = OpenAI(timeout=self.timeout, max_retries=0)

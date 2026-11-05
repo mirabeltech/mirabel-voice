@@ -160,6 +160,7 @@ def test_the_wait_gives_up_at_the_deadline():
 # --- The relay endorsement ---------------------------------------------------
 
 from mirabel_voice.updater import content_hash, relay_endorsement  # noqa: E402
+from mirabel_voice.version import VERSION_HEADER, client_version  # noqa: E402
 
 
 def hash_of_release(tmp_path):
@@ -260,9 +261,10 @@ def test_the_endorsement_asker_presents_the_rotating_credential():
     assert ask() == {"version": "0.5.0", "sha256": "abc"}
     assert ask() == {"version": "0.5.0", "sha256": "abc"}
     assert asked[0] == (
-        "https://relay.example.on.aws/update", {"x-api-key": "first-token"}
+        "https://relay.example.on.aws/update",
+        {"x-api-key": "first-token", VERSION_HEADER: client_version()},
     )
-    assert asked[1][1] == {"x-api-key": "second-token"}
+    assert asked[1][1] == {"x-api-key": "second-token", VERSION_HEADER: client_version()}
 
 
 def test_a_signed_out_machine_asks_nothing():
