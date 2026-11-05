@@ -89,3 +89,5 @@ Revisions required to the draft: `Ctrl+Win` default + `win` key alias; double-ta
 | App blocks paste | Keystroke fallback + `Shift+Alt+Z` re-paste |
 | Cleanup rewrites meaning | Strict contract prompt; cleanup can be toggled off in tray |
 | Latency misses target on long dictation | Cap recording at 5 min; document that length scales latency |
+
+<!-- CI docs-only skip test; not for merge -->
