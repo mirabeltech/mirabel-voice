@@ -30,6 +30,12 @@
       "version": "0.9.6",
       "sha256": "6e9554b5b770dcc79caca903fc5d873192db90e3d255ea68f3c39bc9e4f19368",
       "approved": true
+    },
+    {
+      "filename": "MirabelVoice-0.9.7-python.zip",
+      "version": "0.9.7",
+      "sha256": "ade2be4051d35b0f0a7c496778a0e68157412433442aac213ca4d6a439ed427e",
+      "approved": true
     }
   ]
 }
