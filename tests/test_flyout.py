@@ -5,6 +5,7 @@ Everything else - the choices offered, the key capture, the menu
 shapes - is logic, and runs without a desktop.
 """
 
+import gc
 import threading
 from types import SimpleNamespace
 
@@ -568,7 +569,18 @@ def test_focus_changes_keep_settings_open_and_disarm_capture(focused, cancelled)
     assert bool(stopped) is cancelled
 
 
-def test_settings_controls_and_focus_loss_do_not_close_native_window(monkeypatch):
+@pytest.fixture
+def collect_tk_on_main_thread():
+    # Tk widget trees are reference cycles, so destroy() leaves them as
+    # garbage. Left alone, the next collection can run on any thread, and
+    # finalizing Tcl objects off the interpreter's thread kills the whole
+    # run with 0x80000003 (issue #98). Collect here, after the test frame
+    # is gone, on the thread that created the interpreter.
+    yield
+    gc.collect()
+
+
+def test_settings_controls_and_focus_loss_do_not_close_native_window(monkeypatch, collect_tk_on_main_thread):
     import tkinter as tk
     from mirabel_voice import audio
 
