@@ -51,7 +51,9 @@ jobs:
           echo "Code changed: **$code**" >> "$GITHUB_STEP_SUMMARY"
   bundle:
     needs: changes
-    if: needs.changes.outputs.code == 'true'
+    # Skips only on an explicit 'false'. If changes fails, the output is
+    # empty and everything runs in full.
+    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -96,7 +98,15 @@ jobs:
           if-no-files-found: error
   hardware:
     needs: [changes, bundle]
-    if: needs.changes.outputs.code == 'true'
+    # Branch protection requires each leg by its matrix name. A job-level
+    # if: that is false skips the matrix before it expands and reports one
+    # plain `hardware` check, so the required names never arrive (run
+    # 41954561754). So the legs start whenever bundle passed or was skipped
+    # for a docs-only pull request. On a docs-only pull request each leg runs
+    # on Ubuntu, skips every real step, and passes in a few seconds.
+    if: >-
+      ${{ !cancelled() && (needs.bundle.result == 'success' ||
+      (needs.bundle.result == 'skipped' && needs.changes.outputs.code == 'false')) }}
     strategy:
       fail-fast: false
       matrix:
@@ -106,20 +116,28 @@ jobs:
             cpu: ARM64
           - runner: windows-latest
             cpu: AMD64
-    runs-on: ${{ matrix.runner }}
+    runs-on: ${{ needs.changes.outputs.code == 'false' && 'ubuntu-latest' || matrix.runner }}
+    env:
+      CODE: ${{ needs.changes.outputs.code }}
     steps:
+      - name: Skip, no code changed
+        if: env.CODE == 'false'
+        run: echo "Docs-only pull request; the bundle was not built, so there is nothing to check on ${{ matrix.cpu }}."
       - uses: actions/checkout@v4
+        if: env.CODE != 'false'
       - uses: actions/download-artifact@v4
+        if: env.CODE != 'false'
         with:
           name: python-bundle-test-only
           path: dist
       - name: Verify installation, repair and recovery on this CPU
+        if: env.CODE != 'false'
         shell: powershell
         run: |
           $zip = Get-ChildItem dist/MirabelVoice-*-python.zip | Select-Object -First 1
           scripts/verify_bundle.ps1 -Bundle $zip.FullName
       - name: Check the shortcut, injection and native libraries on this CPU
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && env.CODE != 'false' }}
         shell: powershell
         run: |
           $zip = Get-ChildItem dist/MirabelVoice-*-python.zip | Select-Object -First 1
