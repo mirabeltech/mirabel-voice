@@ -222,3 +222,78 @@ def test_an_empty_window_still_lists_the_expected_people(tmp_path, monkeypatch, 
     assert "Nobody called the relay." in out
     assert "Installed but never seen (1):" in out
     assert "  cole@example.com" in out
+
+
+# --- The error reports section -----------------------------------------------
+
+from usage_report import group_reports, report_errors  # noqa: E402
+
+INNER = ["mirabel_voice/relay_client.py", 48, "post"]
+
+
+def reported(who, at, inner=INNER, error_type="TimeoutError", message="timed out"):
+    return {
+        "token": who, "version": "0.9.7", "seen_ms": at,
+        "report": {"error_type": error_type, "message": message,
+                   "frames": [["mirabel_voice/app.py", 120, "dictate"], inner]},
+    }
+
+
+def test_the_same_failure_on_several_machines_is_one_group():
+    groups, unreadable = group_reports([
+        reported("cole", 1_000, message="first"),
+        reported("priya", 3_000, inner=["mirabel_voice/relay_client.py", 51, "post"], message="newest"),
+        reported("cole", 2_000),
+    ])
+    assert unreadable == 0
+    [group] = groups
+    assert (group["error_type"], group["frame"]) == ("TimeoutError", "mirabel_voice/relay_client.py:post")
+    assert group["count"] == 3
+    assert group["people"] == {"cole", "priya"}
+    assert (group["first_seen_ms"], group["last_seen_ms"]) == (1_000, 3_000)
+    assert group["message"] == "newest"
+    assert group["frames"][-1] == ["mirabel_voice/relay_client.py", 51, "post"]
+
+
+def test_a_different_innermost_frame_is_its_own_group_newest_first():
+    groups, _ = group_reports([
+        reported("cole", 5_000, inner=["mirabel_voice/audio.py", 9, "record"]),
+        reported("cole", 1_000),
+        reported("cole", 2_000, error_type="OSError"),
+    ])
+    assert [(g["error_type"], g["frame"]) for g in groups] == [
+        ("TimeoutError", "mirabel_voice/audio.py:record"),
+        ("OSError", "mirabel_voice/relay_client.py:post"),
+        ("TimeoutError", "mirabel_voice/relay_client.py:post"),
+    ]
+
+
+def test_reports_that_cannot_be_grouped_are_counted_and_noted(capsys):
+    groups, unreadable = group_reports([
+        reported("cole", 1_000),
+        {"token": "cole", "seen_ms": 2_000, "report": {"error_type": "OSError", "frames": []}},
+        {"token": "cole", "seen_ms": 3_000, "report": {"error_type": "OSError", "frames": [["a.py", 1]]}},
+        {"token": "cole", "seen_ms": 4_000, "report": "not an object"},
+    ])
+    assert len(groups) == 1
+    assert unreadable == 3
+    report_errors(groups, unreadable, 30)
+    out = capsys.readouterr().out
+    assert "TimeoutError at mirabel_voice/relay_client.py:post" in out
+    assert "skipped 3 unreadable report lines" in out
+
+
+def test_the_reports_section_runs_only_with_the_flag(monkeypatch, capsys):
+    read = []
+    monkeypatch.setattr(usage_report.deploy_relay, "open_session", lambda *args: object())
+    monkeypatch.setattr(usage_report, "read_usage", lambda session, days: [])
+    monkeypatch.setattr(
+        usage_report, "read_reports",
+        lambda session, days: read.append(days) or [reported("cole", 1_000)],
+    )
+    assert usage_report.main([]) == 0
+    assert "Error reports" not in capsys.readouterr().out
+    assert usage_report.main(["--reports", "--days", "7"]) == 0
+    out = capsys.readouterr().out
+    assert read == [7]
+    assert out.index("App versions") < out.index("Error reports, last 7 days.")

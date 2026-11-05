@@ -163,6 +163,16 @@ python scripts\usage_report.py --days 30 --expected $HOME\mirabel-people.txt
 
 The report then lists everyone in the file with no call in the window under "Installed but never seen". A name there is not proof of a broken install. It can be a copy that fails before the app starts, but also one that is signed out, or one with automatic updates off that nobody dictated with in the window. Keep the file outside this repository: it holds people's email addresses, and the repository is public. If the file can't be read, the report stops before it signs in to AWS.
 
+To see what has been going wrong on people's machines, add `--reports`:
+
+```powershell
+python scripts\usage_report.py --days 30 --reports
+```
+
+The error reports come after the versions section. The app sends a report when something fails, and the relay writes it to CloudWatch as one `report` line and keeps nothing else. The reports are grouped: a group is one kind of failure, the same error type raised from the same innermost place in the code (file and function), however many people hit it. Each group shows how many reports it holds, from whom, when it was first and last seen (UTC), and the stack and message of the newest one. The group seen most recently comes first. A report too malformed to group is counted at the bottom as `skipped N unreadable report lines`.
+
+The report lines hold no audio, no dictated text, no keys and no tokens. The person appears by name, as in the usage lines. Keeping them out is the app's job, before it sends: the relay logs what arrives and does not check it.
+
 ## Rotating a key on a machine that still holds keys
 
 1. Make the new key on the provider dashboard.
