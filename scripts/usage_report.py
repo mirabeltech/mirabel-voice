@@ -285,12 +285,19 @@ def summarize(lines: list[dict], prices: dict) -> dict:
     return people
 
 
+def column(values, minimum: int) -> int:
+    """A left-aligned column wide enough for its longest value plus a two-space gap."""
+    return max([minimum, *(len(str(value)) + 2 for value in values)])
+
+
 def report(people: dict, prices: dict, days: int) -> None:
     """Print the report."""
+    name = column([who for who in people if who not in ("-", SMOKE_HOLDER)] + ["Everyone"], 24)
+    rule = max(78, name + 52)
     say(f"Relay usage, last {days} days. Rates checked {prices['checked']}.")
-    say("=" * 78)
-    say(f"{'Person':<24}{'Dictations':>11}{'Minutes':>9}{'Transcribe':>12}{'Cleanup':>10}{'Total':>10}")
-    say("-" * 78)
+    say("=" * rule)
+    say(f"{'Person':<{name}}{'Dictations':>11}{'Minutes':>9}{'Transcribe':>12}{'Cleanup':>10}{'Total':>10}")
+    say("-" * rule)
     totals = {
         "dictations": 0, "token_priced": 0, "minutes": 0.0,
         "transcribe_cost": 0.0, "cleanup_cost": 0.0,
@@ -311,17 +318,17 @@ def report(people: dict, prices: dict, days: int) -> None:
             continue
         cost = person["transcribe_cost"] + person["cleanup_cost"]
         say(
-            f"{who:<24}{person['dictations']:>11}{person['minutes']:>9.1f}"
+            f"{who:<{name}}{person['dictations']:>11}{person['minutes']:>9.1f}"
             f"{'$' + format(person['transcribe_cost'], '.4f'):>12}"
             f"{'$' + format(person['cleanup_cost'], '.4f'):>10}"
             f"{'$' + format(cost, '.4f'):>10}"
         )
         for key in totals:
             totals[key] += person[key]
-    say("-" * 78)
+    say("-" * rule)
     grand = totals["transcribe_cost"] + totals["cleanup_cost"]
     say(
-        f"{'Everyone':<24}{totals['dictations']:>11}{totals['minutes']:>9.1f}"
+        f"{'Everyone':<{name}}{totals['dictations']:>11}{totals['minutes']:>9.1f}"
         f"{'$' + format(totals['transcribe_cost'], '.4f'):>12}"
         f"{'$' + format(totals['cleanup_cost'], '.4f'):>10}"
         f"{'$' + format(grand, '.4f'):>10}"
@@ -349,15 +356,18 @@ def report_versions(people: dict, expected: list[str] | None, days: int) -> None
     """Print the versions section."""
     from datetime import datetime, timezone
 
+    name = column(people, 32)
+    latest = column([person["latest"] for person in people.values()], 12)
+    rule = max(78, name + latest + 18)
     say(f"App versions, last {days} days. Times are UTC.")
-    say("=" * 78)
-    say(f"{'Person':<32}{'Latest':<12}{'Last seen':<18}Other versions")
-    say("-" * 78)
+    say("=" * rule)
+    say(f"{'Person':<{name}}{'Latest':<{latest}}{'Last seen':<18}Other versions")
+    say("-" * rule)
     for who in sorted(people):
         person = people[who]
         seen = datetime.fromtimestamp(person["last_seen_ms"] / 1000, tz=timezone.utc)
         others = ", ".join(person["others"])
-        say(f"{who:<32}{person['latest']:<12}{seen:%Y-%m-%d %H:%M}  {others}".rstrip())
+        say(f"{who:<{name}}{person['latest']:<{latest}}{seen:%Y-%m-%d %H:%M}  {others}".rstrip())
     if not people:
         say("Nobody called the relay.")
     if expected is None:
