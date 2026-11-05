@@ -28,9 +28,11 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "operations"))
 
 import deploy_relay
 from deploy_relay import DEFAULT_REGION, FUNCTION, SMOKE_HOLDER, Stop, say
+from monitor import group_reports
 
 LOG_GROUP = f"/aws/lambda/{FUNCTION}"
 PRICES = Path(__file__).resolve().parent.parent / "docs" / "pricing.json"
@@ -153,55 +155,6 @@ def versions(lines: list[dict]) -> dict[str, dict]:
     for person in people.values():
         person["others"] = sorted(person.pop("seen") - {person["latest"]})
     return people
-
-
-def group_reports(lines: list[dict]) -> tuple[list[dict], int]:
-    """Group report lines by error type and innermost frame.
-
-    The same failure on several machines is one group. Each group keeps
-    how many reports and from whom, when it was first and last seen,
-    and the newest report's frames and message. Groups come newest
-    last-seen first. A line with no report, or whose report lacks an error
-    type or readable [file, line, function] frames, cannot be grouped; it
-    is counted instead.
-    """
-    groups: dict[tuple[str, str], dict] = {}
-    unreadable = 0
-    for line in lines:
-        report = line.get("report")
-        key = _report_key(report)
-        if key is None:
-            unreadable += 1
-            continue
-        seen = line.get("seen_ms", 0)
-        group = groups.setdefault(key, {
-            "error_type": key[0], "frame": key[1], "count": 0, "people": set(),
-            "first_seen_ms": seen, "last_seen_ms": seen,
-            "frames": report["frames"], "message": report.get("message"),
-        })
-        group["count"] += 1
-        group["people"].add(line.get("token", "-"))
-        group["first_seen_ms"] = min(group["first_seen_ms"], seen)
-        if seen >= group["last_seen_ms"]:
-            group["last_seen_ms"] = seen
-            group["frames"] = report["frames"]
-            group["message"] = report.get("message")
-    ordered = sorted(groups.values(), key=lambda g: g["last_seen_ms"], reverse=True)
-    return ordered, unreadable
-
-
-def _report_key(report) -> tuple[str, str] | None:
-    """The (error type, innermost file:function) a report groups under."""
-    if not isinstance(report, dict):
-        return None
-    error_type = report.get("error_type")
-    frames = report.get("frames")
-    if not isinstance(error_type, str) or not isinstance(frames, list) or not frames:
-        return None
-    if not all(isinstance(frame, list) and len(frame) == 3 for frame in frames):
-        return None
-    file, _, function = frames[-1]
-    return error_type, f"{file}:{function}"
 
 
 def read_expected(path: Path) -> list[str]:

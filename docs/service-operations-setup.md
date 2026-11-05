@@ -1,5 +1,18 @@
 # Activate usage limits and monitoring
 
+## Daily error-report digest and dashboard, November 5, 2026 (prepared, not applied)
+
+Tommy asked to hear about the app's error reports without running `scripts/usage_report.py --reports` by hand (issue #116). He chose a daily digest over a metric alarm or one email per error, asked for a dashboard, and wants the digest to go to him only. `scripts/setup_operations.py` now prepares this. Nothing changes in AWS until he runs `--apply`.
+
+- **New topic `mirabel-voice-reports`**, subscribed from a new private-config list, `report_emails` (1 to 10 addresses). `validate()` refuses a config without it. `emails` and `mirabel-voice-alerts` stay health-only.
+- **New monitor kind `reports`**, run by the EventBridge rule `mirabel-voice-monitor-reports` at `cron(0 13 * * ? *)`, daily at 13:00 UTC. It reads the last 24 hours of `report {...}` lines from `/aws/lambda/mirabel-voice-relay`, groups them with `group_reports` (which `scripts/usage_report.py --reports` now imports from `operations/monitor.py`, so the two always group alike), and publishes one plain-text email to `mirabel-voice-reports`. Each newest message is cut to 500 characters, text SNS cannot encode is replaced with `?`, and the body stops adding groups at 250,000 bytes (SNS's limit is 262,144) with a line saying how many more `--reports` shows. An empty window publishes nothing. A failure logs only the check, `failed` and the exception class, and returns `ok: false`. No metric or alarm watches it.
+- **New dashboard `mirabel-voice-reports`**, with four Logs Insights widgets over the relay log group for the last 30 days: reports by error type, by person and per day, and each person's latest app version from the usage lines. The queries pull fields out of the log text with regular expressions. They depend on the relay writing each line with sorted keys, so `token` and `version` come last. They have not been run against the live logs yet.
+- **Monitor role**: gains `sns:Publish` on `mirabel-voice-reports` only. Its environment gains `REPORTS_TOPIC`.
+- **Operator permissions** (`administrator-permissions.json`): the SNS statement now covers both topics, and a new statement allows `cloudwatch:PutDashboard` and `cloudwatch:GetDashboard` on `dashboard/mirabel-voice-*` only. Preflight also reads the reports topic and the dashboard.
+- **Unchanged**: `alarms()`, `MEANINGS` and `RETIRED_ALARMS`. `health` is still the only alarm, and spending alerts stay removed.
+
+`--apply` still does everything it did before. It saves a backup, refreshes the rate-limit table and its role policy, puts the `health` alarm and retires the old ones, redeploys the monitor, sets log retention, **redeploys the relay from this checkout and sets its environment and reserved concurrency to the config values**, then runs the one-off checks. `reports` is now the third one-off check after `health` and `spend`, and any reports from the last 24 hours go out by email then. All three rules are scheduled only after all three checks pass. A failure disables all three rules and rolls back the relay, as before.
+
 ## Spending alerts removed, October 2, 2026
 
 Tommy decided that Mirabel Voice's spending is too small to monitor. The service does spend money, mostly OpenAI and Anthropic usage (about $0.90 of AI usage in September), but nothing alerts on it any more. These were deleted with an administrator sign-in:
