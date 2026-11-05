@@ -160,6 +160,16 @@ def raised_from(call):
     raise AssertionError("did not raise")
 
 
+def test_frame_paths_are_scrubbed(monkeypatch):
+    from pathlib import Path
+
+    monkeypatch.setenv("USERPROFILE", str(Path(__file__).parent))
+    built = build("crash", raised(RuntimeError("boom")))
+
+    assert built["frames"]
+    assert all(file.startswith("%USERPROFILE%") for file, _, _ in built["frames"])
+
+
 def test_build_never_raises_on_an_error_without_a_traceback():
     built = build("crash", None)
     assert built["error_type"] == "NoneType"
@@ -247,6 +257,7 @@ def test_a_failed_send_keeps_the_rest(tmp_path, answer):
 
     assert len(relay.sent) == 2
     assert [r["error_type"] for r in reporter.queued()] == ["Error1", "Error2"]
+    assert "the-token" not in (tmp_path / "reports.json").read_text()
 
 
 @pytest.mark.parametrize("credential", [None, lambda: None])
@@ -307,6 +318,13 @@ def test_record_does_nothing_without_a_relay(unconfigured, tmp_path, monkeypatch
     assert not (tmp_path / "reports.json").exists()
 
 
+def test_record_never_raises_on_an_error_without_a_traceback(unconfigured, tmp_path):
+    report.configure(RELAY, "the-token", tmp_path)
+    report.record("crash", None, wait=True)
+
+    assert json.loads((tmp_path / "reports.json").read_text())[0]["error_type"] == "NoneType"
+
+
 def test_waiting_writes_before_returning_and_sends_nothing(unconfigured, tmp_path, monkeypatch):
     report.configure(RELAY, "mv-secret-token", tmp_path, secrets=["mv-secret-token"])
     monkeypatch.setattr(report, "_ensure_worker", lambda: pytest.fail("a worker started"))
@@ -335,3 +353,45 @@ def test_the_worker_queues_and_sends(unconfigured, tmp_path, monkeypatch):
     assert sent.wait(5)
     assert relay.sent[0][1]["trigger"] == "microphone"
     assert any(t.name == "mirabel-voice-reports" for t in threading.enumerate())
+
+
+def test_flush_later_sends_what_an_earlier_run_queued(unconfigured, tmp_path):
+    import threading
+
+    make(tmp_path)[0].add(a_report())
+    relay = FakeRelay()
+    sent = threading.Event()
+
+    def post(*args):
+        status = relay(*args)
+        sent.set()
+        return status
+
+    report.configure(RELAY, "the-token", tmp_path)
+    report._reporter.post = post
+    report.flush_later(0)
+
+    assert sent.wait(5)
+    assert relay.sent[0][1]["error_type"] == "Error0"
+
+
+def test_a_failed_send_is_retried_later(unconfigured, tmp_path, monkeypatch):
+    import threading
+
+    monkeypatch.setattr(report, "RETRY_SECONDS", 0.05)
+    make(tmp_path)[0].add(a_report())
+    relay = FakeRelay(500)
+    retried = threading.Event()
+
+    def post(*args):
+        status = relay(*args)
+        if len(relay.sent) == 2:
+            retried.set()
+        return status
+
+    report.configure(RELAY, "the-token", tmp_path)
+    report._reporter.post = post
+    report.flush_later(0)
+
+    assert retried.wait(5)
+    assert [sent[1]["error_type"] for sent in relay.sent] == ["Error0", "Error0"]
